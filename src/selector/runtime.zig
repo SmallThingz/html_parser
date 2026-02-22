@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const tables = @import("../html/tables.zig");
+const tags = @import("../html/tags.zig");
 
 pub const Error = error{
     InvalidSelector,
@@ -148,6 +149,7 @@ const Parser = struct {
                 out.has_tag = 1;
                 out.tag = self.parseIdent() orelse return error.InvalidSelector;
                 self.lowerRange(out.tag);
+                out.tag_hash = tags.hashBytes(out.tag.slice(self.source));
                 consumed = true;
             }
         }
@@ -205,31 +207,31 @@ const Parser = struct {
                         if (!self.consumeIf('~')) {
                             if (!self.consumeIf('|')) {
                                 if (!self.consumeIf(']')) return error.InvalidSelector;
-                                return .{ .name = name, .op = .exists, .value = .{} };
+                                return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .exists, .value = .{} };
                             }
                             if (!self.consumeIf('=')) return error.InvalidSelector;
                             const v = try self.parseAttrValueThenClose();
-                            return .{ .name = name, .op = .dash_match, .value = v };
+                            return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .dash_match, .value = v };
                         }
                         if (!self.consumeIf('=')) return error.InvalidSelector;
                         const v = try self.parseAttrValueThenClose();
-                        return .{ .name = name, .op = .includes, .value = v };
+                        return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .includes, .value = v };
                     }
                     if (!self.consumeIf('=')) return error.InvalidSelector;
                     const v = try self.parseAttrValueThenClose();
-                    return .{ .name = name, .op = .contains, .value = v };
+                    return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .contains, .value = v };
                 }
                 if (!self.consumeIf('=')) return error.InvalidSelector;
                 const v = try self.parseAttrValueThenClose();
-                return .{ .name = name, .op = .suffix, .value = v };
+                return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .suffix, .value = v };
             }
             if (!self.consumeIf('=')) return error.InvalidSelector;
             const v = try self.parseAttrValueThenClose();
-            return .{ .name = name, .op = .prefix, .value = v };
+            return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .prefix, .value = v };
         }
 
         const v = try self.parseAttrValueThenClose();
-        return .{ .name = name, .op = .eq, .value = v };
+        return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .eq, .value = v };
     }
 
     fn parseAttrValueThenClose(self: *Parser) Error!ast.Range {
@@ -413,6 +415,14 @@ fn parseNthExpr(expr: []const u8) ?ast.NthExpr {
 
     const only = std.fmt.parseInt(i32, expr, 10) catch return null;
     return .{ .a = 0, .b = only };
+}
+
+fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
+    var h: u32 = 2166136261;
+    for (bytes) |c| {
+        h = (h ^ @as(u32, tables.lower(c))) *% 16777619;
+    }
+    return h;
 }
 
 test "runtime selector parser covers all attribute operators" {

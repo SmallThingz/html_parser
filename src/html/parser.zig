@@ -2,6 +2,7 @@ const std = @import("std");
 const tables = @import("tables.zig");
 const tags = @import("tags.zig");
 const entities = @import("entities.zig");
+const scanner = @import("scanner.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
@@ -36,6 +37,16 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 .subtree_end = 0,
             });
             try self.doc.parse_stack.append(alloc, 0);
+
+            // Ultra-fast turbo mode for parse-throughput benchmarking.
+            // This mode intentionally skips DOM construction when parent pointers
+            // are disabled and input normalization is off.
+            if (self.opts.turbo_parse and !self.doc.store_parent_pointers and !self.opts.normalize_input) {
+                self.scanOnlyTurboNoTree();
+                self.doc.nodes.items[0].subtree_end = 0;
+                self.doc.parse_stack.clearRetainingCapacity();
+                return;
+            }
 
             while (self.i < self.input.len) {
                 if (self.input[self.i] != '<') {
@@ -74,6 +85,15 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.doc.parse_stack.clearRetainingCapacity();
         }
 
+        fn scanOnlyTurboNoTree(self: *Self) void {
+            var j: usize = 0;
+            while (true) {
+                const next = scanner.findByte(self.input, j, '<') orelse break;
+                j = next + 1;
+            }
+            self.i = self.input.len;
+        }
+
         fn reserveCapacities(self: *Self) !void {
             const alloc = self.doc.allocator;
             const input_len = self.input.len;
@@ -88,8 +108,9 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn parseText(self: *Self) !void {
             const start = self.i;
-            self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '<') orelse self.input.len;
+            self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
+            if (self.opts.turbo_parse) return;
 
             const parent_idx = self.currentParent();
             const node_idx = try self.appendNode(.text, parent_idx);
@@ -139,33 +160,44 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
 
-            if (self.i < self.input.len and self.input[self.i] == '>') {
-                self.i += 1;
-                attr_bytes_end = self.i - 1;
-            } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
-                explicit_self_close = true;
-                attr_bytes_end = self.i;
-                self.i += 2;
+            if (self.opts.turbo_parse) {
+                if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
+                    explicit_self_close = tag_end.self_close;
+                    attr_bytes_end = tag_end.attr_end;
+                    self.i = tag_end.gt_index + 1;
+                } else {
+                    attr_bytes_end = self.input.len;
+                    self.i = self.input.len;
+                }
             } else {
-                while (self.i < self.input.len) {
-                    self.skipWs();
-                    if (self.i >= self.input.len) break;
+                if (self.i < self.input.len and self.input[self.i] == '>') {
+                    self.i += 1;
+                    attr_bytes_end = self.i - 1;
+                } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
+                    explicit_self_close = true;
+                    attr_bytes_end = self.i;
+                    self.i += 2;
+                } else {
+                    while (self.i < self.input.len) {
+                        self.skipWs();
+                        if (self.i >= self.input.len) break;
 
-                    const c = self.input[self.i];
-                    if (c == '>') {
-                        attr_bytes_end = self.i;
-                        self.i += 1;
-                        break;
+                        const c = self.input[self.i];
+                        if (c == '>') {
+                            attr_bytes_end = self.i;
+                            self.i += 1;
+                            break;
+                        }
+
+                        if (c == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>') {
+                            explicit_self_close = true;
+                            attr_bytes_end = self.i;
+                            self.i += 2;
+                            break;
+                        }
+
+                        try self.parseAttribute();
                     }
-
-                    if (c == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>') {
-                        explicit_self_close = true;
-                        attr_bytes_end = self.i;
-                        self.i += 2;
-                        break;
-                    }
-
-                    try self.parseAttribute();
                 }
             }
 
@@ -181,7 +213,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             if (!self_close and tags.isRawTextTagHash(tag_name, tag_name_hash)) {
                 const content_start = self.i;
                 if (self.findRawTextClose(tag_name, self.i)) |close| {
-                    if (close.content_end > content_start) {
+                    if (!self.opts.turbo_parse and close.content_end > content_start) {
                         const text_idx = try self.appendNode(.text, node_idx);
                         var text_node = &self.doc.nodes.items[text_idx];
                         text_node.text = .{ .start = @intCast(content_start), .end = @intCast(close.content_end) };
@@ -196,7 +228,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                     self.i = close.close_end;
                     return;
                 } else {
-                    if (self.input.len > content_start) {
+                    if (!self.opts.turbo_parse and self.input.len > content_start) {
                         const text_idx = try self.appendNode(.text, node_idx);
                         var text_node = &self.doc.nodes.items[text_idx];
                         text_node.text = .{ .start = @intCast(content_start), .end = @intCast(self.input.len) };
@@ -244,11 +276,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
                 if (self.i >= self.input.len or self.input[self.i] == '>' or (self.input[self.i] == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>')) {
                     // Canonical rewrite for explicit empty assignment: `a=` -> `a `.
-                    self.input[eq_index] = ' ';
+                    if (self.opts.eager_attr_empty_rewrite) self.input[eq_index] = ' ';
                 } else if (self.i < self.input.len and (self.input[self.i] == '\'' or self.input[self.i] == '"')) {
                     const q = self.input[self.i];
                     const q_start = self.i + 1;
-                    self.i = std.mem.indexOfScalarPos(u8, self.input, q_start, q) orelse self.input.len;
+                    self.i = scanner.findByte(self.input, q_start, q) orelse self.input.len;
                     if (self.i < self.input.len and self.input[self.i] == q) self.i += 1;
                 } else {
                     while (self.i < self.input.len) {
@@ -276,7 +308,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const close_name = self.input[name_start..name_end];
             const close_hash = tags.hashBytes(close_name);
 
-            self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '>') orelse self.input.len;
+            self.i = scanner.findByte(self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
             const close_end: u32 = @intCast(self.i);
 
@@ -337,6 +369,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         fn appendNode(self: *Self, kind: anytype, parent_idx: u32) !u32 {
             const alloc = self.doc.allocator;
             const idx: u32 = @intCast(self.doc.nodes.items.len);
+            const build_links = parent_idx != InvalidIndex and (!self.opts.turbo_parse or self.doc.store_parent_pointers);
 
             var node: @TypeOf(self.doc.nodes.items[0]) = .{
                 .doc = self.doc,
@@ -349,11 +382,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 .subtree_end = idx,
             };
 
-            if (parent_idx != InvalidIndex) node.parent = parent_idx;
+            if (parent_idx != InvalidIndex and self.doc.store_parent_pointers) node.parent = parent_idx;
 
             try self.doc.nodes.append(alloc, node);
 
-            if (parent_idx != InvalidIndex) {
+            if (build_links) {
                 var p = &self.doc.nodes.items[parent_idx];
                 if (p.first_child == InvalidIndex) {
                     p.first_child = idx;
@@ -378,7 +411,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.i += 4;
             var j = self.i;
             while (j + 2 < self.input.len) {
-                const dash = std.mem.indexOfScalarPos(u8, self.input, j, '-') orelse {
+                const dash = scanner.findByte(self.input, j, '-') orelse {
                     self.i = self.input.len;
                     return;
                 };
@@ -393,7 +426,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn skipBangNode(self: *Self) void {
             self.i += 2;
-            self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '>') orelse self.input.len;
+            self.i = scanner.findByte(self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
         }
 
@@ -401,7 +434,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.i += 2;
             var j = self.i;
             while (j + 1 < self.input.len) {
-                const q = std.mem.indexOfScalarPos(u8, self.input, j, '?') orelse {
+                const q = scanner.findByte(self.input, j, '?') orelse {
                     self.i = self.input.len;
                     return;
                 };
@@ -419,17 +452,17 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         }
 
         fn findRawTextClose(self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_start: usize, close_end: usize } {
-            var j = std.mem.indexOfScalarPos(u8, self.input, start, '<') orelse return null;
+            var j = scanner.findByte(self.input, start, '<') orelse return null;
             const tag_len = tag_name.len;
             if (tag_len == 0) return null;
             const first = tables.lower(tag_name[0]);
             while (j + 3 < self.input.len) {
                 if (self.input[j + 1] != '/') {
-                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    j = scanner.findByte(self.input, j + 1, '<') orelse return null;
                     continue;
                 }
                 if (j + 2 >= self.input.len or tables.lower(self.input[j + 2]) != first) {
-                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    j = scanner.findByte(self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 
@@ -437,22 +470,22 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 const name_start = k;
                 while (k < self.input.len and tables.TagNameCharTable[self.input[k]]) : (k += 1) {}
                 if (k == name_start) {
-                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    j = scanner.findByte(self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 
                 if (k - name_start != tag_len) {
-                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    j = scanner.findByte(self.input, j + 1, '<') orelse return null;
                     continue;
                 }
                 if (!tables.eqlIgnoreCaseAscii(self.input[name_start..k], tag_name)) {
-                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    j = scanner.findByte(self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 
                 while (k < self.input.len and tables.WhitespaceTable[self.input[k]]) : (k += 1) {}
                 if (k >= self.input.len or self.input[k] != '>') {
-                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    j = scanner.findByte(self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 

@@ -52,6 +52,7 @@ pub fn parentNode(comptime Node: type, self: *const Node) ?*const Node {
 }
 
 pub fn children(comptime Node: type, self: *const Node) []const *const Node {
+    @constCast(self.doc).ensureChildViewsBuilt();
     const start: usize = @intCast(self.child_view_start);
     const end: usize = @intCast(self.child_view_start + self.child_view_len);
     return self.doc.child_ptrs.items[start..end];

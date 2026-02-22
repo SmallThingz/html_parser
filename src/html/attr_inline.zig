@@ -15,9 +15,19 @@ const RawValue = struct {
     next_start: usize,
 };
 
+const LookupKind = enum(u8) {
+    generic,
+    id,
+    class,
+    href,
+};
+
 pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const u8 {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
+    const lookup_kind = classifyLookupName(name);
+    const lookup_hash = if (lookup_kind == .generic) hashIgnoreCaseAscii(name) else 0;
+    const input_normalized = mut_doc.input_was_normalized;
 
     var i: usize = node.attr_bytes_start;
     const end: usize = node.attr_bytes_end;
@@ -39,7 +49,7 @@ pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const 
 
         const name_end = i;
         const attr_name = source[name_start..name_end];
-        const is_target = matchesLookupName(attr_name, name);
+        const is_target = matchesLookupName(attr_name, name, lookup_kind, lookup_hash, input_normalized);
 
         if (i >= end) {
             if (is_target) return "";
@@ -327,16 +337,45 @@ fn firstUnresolvedMatch(selected_names: []const []const u8, out_values: []const 
     var idx: usize = 0;
     while (idx < selected_names.len) : (idx += 1) {
         if (out_values[idx] != null) continue;
-        if (matchesLookupName(name, selected_names[idx])) return idx;
+        if (matchesLookupName(name, selected_names[idx], .generic, hashIgnoreCaseAscii(selected_names[idx]), false)) return idx;
     }
     return null;
 }
 
-fn matchesLookupName(attr_name: []const u8, lookup: []const u8) bool {
-    if (isExactAsciiWord(lookup, "id")) return isExactAsciiWord(attr_name, "id");
-    if (isExactAsciiWord(lookup, "class")) return isExactAsciiWord(attr_name, "class");
-    if (isExactAsciiWord(lookup, "href")) return isExactAsciiWord(attr_name, "href");
+fn matchesLookupName(attr_name: []const u8, lookup: []const u8, lookup_kind: LookupKind, lookup_hash: u32, input_normalized: bool) bool {
+    switch (lookup_kind) {
+        .id => return isExactAsciiWord(attr_name, "id"),
+        .class => return isExactAsciiWord(attr_name, "class"),
+        .href => return isExactAsciiWord(attr_name, "href"),
+        .generic => {},
+    }
+
+    if (attr_name.len != lookup.len) return false;
+    if (hashIgnoreCaseAscii(attr_name) != lookup_hash) return false;
+    if (input_normalized and isAlreadyLowerAscii(lookup)) return std.mem.eql(u8, attr_name, lookup);
     return tables.eqlIgnoreCaseAscii(attr_name, lookup);
+}
+
+fn classifyLookupName(lookup: []const u8) LookupKind {
+    if (isExactAsciiWord(lookup, "id")) return .id;
+    if (isExactAsciiWord(lookup, "class")) return .class;
+    if (isExactAsciiWord(lookup, "href")) return .href;
+    return .generic;
+}
+
+fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
+    var h: u32 = 2166136261;
+    for (bytes) |c| {
+        h = (h ^ @as(u32, tables.lower(c))) *% 16777619;
+    }
+    return h;
+}
+
+fn isAlreadyLowerAscii(bytes: []const u8) bool {
+    for (bytes) |c| {
+        if (c >= 'A' and c <= 'Z') return false;
+    }
+    return true;
 }
 
 fn isExactAsciiWord(value: []const u8, comptime lower: []const u8) bool {

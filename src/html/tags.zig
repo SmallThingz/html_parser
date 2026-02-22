@@ -1,17 +1,32 @@
+const std = @import("std");
 const tables = @import("tables.zig");
 
-pub const TagHashValue = u32;
+pub const TagHashValue = u64;
+const InvalidTagHash: TagHashValue = std.math.maxInt(TagHashValue);
 
 pub const TagHash = struct {
-    value_: TagHashValue = 0x811c9dc5,
+    value_: TagHashValue = 0,
 
     pub fn init() TagHash {
         return .{};
     }
 
     pub fn update(self: *TagHash, c: u8) void {
-        const lowered: TagHashValue = @as(TagHashValue, tables.lower(c));
-        self.value_ = (self.value_ ^ lowered) *% 0x01000193;
+        if (self.value_ == InvalidTagHash) return;
+        if ((self.value_ >> (64 - 5)) != 0) {
+            self.value_ = InvalidTagHash;
+            return;
+        }
+
+        const code: TagHashValue = switch (c) {
+            'a'...'z', 'A'...'Z' => (@as(TagHashValue, c & 0x1f) + 5),
+            '1'...'6' => (@as(TagHashValue, c & 0x0f) - 1),
+            else => {
+                self.value_ = InvalidTagHash;
+                return;
+            },
+        };
+        self.value_ = (self.value_ << 5) | code;
     }
 
     pub fn value(self: TagHash) TagHashValue {
@@ -163,6 +178,7 @@ fn closesPHash(new_tag: []const u8, new_hash: TagHashValue) bool {
 }
 
 fn hashEq(name: []const u8, name_hash: TagHashValue, expected_hash: TagHashValue, expected_name: []const u8) bool {
-    if (name_hash != expected_hash) return false;
-    return tables.eqlIgnoreCaseAscii(name, expected_name);
+    if (name_hash == expected_hash) return true;
+    if (name_hash == InvalidTagHash) return tables.eqlIgnoreCaseAscii(name, expected_name);
+    return false;
 }

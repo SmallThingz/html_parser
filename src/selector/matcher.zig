@@ -6,6 +6,8 @@ const attr_inline = @import("../html/attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 const MaxProbeEntries: usize = 24;
+const HashId: u32 = hashIgnoreCaseAscii("id");
+const HashClass: u32 = hashIgnoreCaseAscii("class");
 
 pub fn queryOne(comptime Doc: type, comptime NodeT: type, doc: *const Doc, selector: ast.Selector, scope_root: u32) ?*const NodeT {
     const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
@@ -76,19 +78,21 @@ fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, 
 
     if (comp.has_tag != 0) {
         const tag = comp.tag.slice(selector.source);
-        const tag_hash = tags.hashBytes(tag);
+        const tag_hash: tags.TagHashValue = if (comp.tag_hash != 0) @intCast(comp.tag_hash) else tags.hashBytes(tag);
         if (node.tag_hash != tag_hash) return false;
-        if (!tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag)) return false;
+        if (doc.input_was_normalized) {
+            if (!std.mem.eql(u8, node.name.slice(doc.source), tag)) return false;
+        } else if (!tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag)) return false;
     }
 
     if (comp.has_id != 0) {
         const id = comp.id.slice(selector.source);
-        const value = attrValue(doc, node, &attr_probe, "id") orelse return false;
+        const value = attrValueByHash(doc, node, &attr_probe, "id", HashId) orelse return false;
         if (!std.mem.eql(u8, value, id)) return false;
     }
 
     if (comp.class_len != 0) {
-        const class_attr = attrValue(doc, node, &attr_probe, "class") orelse return false;
+        const class_attr = attrValueByHash(doc, node, &attr_probe, "class", HashClass) orelse return false;
         if (!hasAllClassesOnePass(selector, comp, class_attr)) return false;
     }
 
@@ -115,10 +119,14 @@ fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, 
 
 fn matchesNotSimple(doc: anytype, node: anytype, probe: *AttrProbe, selector_source: []const u8, item: ast.NotSimple) bool {
     return switch (item.kind) {
-        .tag => tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), item.text.slice(selector_source)),
+        .tag => blk: {
+            const tag = item.text.slice(selector_source);
+            if (doc.input_was_normalized) break :blk std.mem.eql(u8, node.name.slice(doc.source), tag);
+            break :blk tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag);
+        },
         .id => blk: {
             const id = item.text.slice(selector_source);
-            const v = attrValue(doc, node, probe, "id") orelse break :blk false;
+            const v = attrValueByHash(doc, node, probe, "id", HashId) orelse break :blk false;
             break :blk std.mem.eql(u8, v, id);
         },
         .class => hasClass(doc, node, probe, item.text.slice(selector_source)),
@@ -147,7 +155,8 @@ fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
 
 fn matchesAttrSelector(doc: anytype, node: anytype, probe: *AttrProbe, selector_source: []const u8, sel: ast.AttrSelector) bool {
     const name = sel.name.slice(selector_source);
-    const raw = attrValue(doc, node, probe, name) orelse return false;
+    const name_hash = if (sel.name_hash != 0) sel.name_hash else hashIgnoreCaseAscii(name);
+    const raw = attrValueByHash(doc, node, probe, name, name_hash) orelse return false;
     const value = sel.value.slice(selector_source);
 
     return switch (sel.op) {
@@ -177,7 +186,7 @@ fn tokenIncludes(value: []const u8, token: []const u8) bool {
 }
 
 fn hasClass(doc: anytype, node: anytype, probe: *AttrProbe, class_name: []const u8) bool {
-    const class_attr = attrValue(doc, node, probe, "class") orelse return false;
+    const class_attr = attrValueByHash(doc, node, probe, "class", HashClass) orelse return false;
     return tokenIncludes(class_attr, class_name);
 }
 
@@ -220,7 +229,11 @@ fn hasAllClassesOnePass(selector: ast.Selector, comp: ast.Compound, class_attr: 
 }
 
 fn attrValue(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8) ?[]const u8 {
-    if (findProbeEntry(probe, name)) |idx| {
+    return attrValueByHash(doc, node, probe, name, hashIgnoreCaseAscii(name));
+}
+
+fn attrValueByHash(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8, name_hash: u32) ?[]const u8 {
+    if (findProbeEntry(probe, name, name_hash, doc.input_was_normalized)) |idx| {
         var entry = &probe.entries[idx];
         if (!entry.resolved) {
             entry.value = attr_inline.getAttrValue(doc, node, name);
@@ -234,6 +247,7 @@ fn attrValue(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8) ?
         const idx = probe.count;
         probe.entries[idx] = .{
             .name = name,
+            .name_hash = name_hash,
             .resolved = true,
             .value = value,
         };
@@ -247,6 +261,7 @@ fn attrValue(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8) ?
 
 const AttrProbeEntry = struct {
     name: []const u8 = "",
+    name_hash: u32 = 0,
     resolved: bool = false,
     value: ?[]const u8 = null,
 };
@@ -257,12 +272,26 @@ const AttrProbe = struct {
     entries: [MaxProbeEntries]AttrProbeEntry = [_]AttrProbeEntry{.{}} ** MaxProbeEntries,
 };
 
-fn findProbeEntry(probe: *const AttrProbe, needle: []const u8) ?usize {
+fn findProbeEntry(probe: *const AttrProbe, needle: []const u8, needle_hash: u32, input_was_normalized: bool) ?usize {
     var i: usize = 0;
     while (i < probe.count) : (i += 1) {
-        if (tables.eqlIgnoreCaseAscii(probe.entries[i].name, needle)) return i;
+        const entry = probe.entries[i];
+        if (entry.name_hash != needle_hash) continue;
+        if (input_was_normalized) {
+            if (std.mem.eql(u8, entry.name, needle)) return i;
+            continue;
+        }
+        if (tables.eqlIgnoreCaseAscii(entry.name, needle)) return i;
     }
     return null;
+}
+
+fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
+    var h: u32 = 2166136261;
+    for (bytes) |c| {
+        h = (h ^ @as(u32, tables.lower(c))) *% 16777619;
+    }
+    return h;
 }
 
 fn parentElement(doc: anytype, node_index: u32) ?u32 {

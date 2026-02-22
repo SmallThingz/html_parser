@@ -13,6 +13,9 @@ pub const ParseOptions = struct {
     store_parent_pointers: bool = true,
     normalize_input: bool = true,
     normalize_text_on_parse: bool = false,
+    eager_child_views: bool = true,
+    eager_attr_empty_rewrite: bool = true,
+    turbo_parse: bool = false,
     permissive_recovery: bool = true,
 };
 
@@ -173,6 +176,8 @@ pub const Document = struct {
     allocator: std.mem.Allocator,
     source: []u8 = &[_]u8{},
     store_parent_pointers: bool = true,
+    child_views_ready: bool = false,
+    input_was_normalized: bool = true,
 
     nodes: std.ArrayListUnmanaged(Node) = .{},
     child_ptrs: std.ArrayListUnmanaged(*const Node) = .{},
@@ -208,6 +213,7 @@ pub const Document = struct {
         self.nodes.clearRetainingCapacity();
         self.child_ptrs.clearRetainingCapacity();
         self.parse_stack.clearRetainingCapacity();
+        self.child_views_ready = false;
         _ = self.query_one_arena.reset(.retain_capacity);
         _ = self.query_all_arena.reset(.retain_capacity);
         self.invalidateRuntimeSelectorCaches();
@@ -219,8 +225,11 @@ pub const Document = struct {
         self.clear();
         self.source = input;
         self.store_parent_pointers = opts.store_parent_pointers;
+        self.input_was_normalized = opts.normalize_input;
         try parser.parseInto(Document, self, input, opts);
-        try self.buildChildViews();
+        if (opts.eager_child_views) {
+            try self.buildChildViews();
+        }
     }
 
     pub fn queryOne(self: *const Document, comptime selector: []const u8) ?*const Node {
@@ -292,7 +301,9 @@ pub const Document = struct {
         while (i < self.nodes.items.len) : (i += 1) {
             const n = &self.nodes.items[i];
             if (n.kind != .element) continue;
-            if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return n;
+            if (self.input_was_normalized) {
+                if (std.mem.eql(u8, n.name.slice(self.source), name)) return n;
+            } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return n;
         }
         return null;
     }
@@ -337,6 +348,11 @@ pub const Document = struct {
         return sel;
     }
 
+    pub fn ensureChildViewsBuilt(self: *Document) void {
+        if (self.child_views_ready) return;
+        self.buildChildViews() catch @panic("out of memory building child views");
+    }
+
     fn buildChildViews(self: *Document) !void {
         const alloc = self.allocator;
         self.child_ptrs.clearRetainingCapacity();
@@ -356,6 +372,8 @@ pub const Document = struct {
                 child = self.nodes.items[child].next_sibling;
             }
         }
+
+        self.child_views_ready = true;
     }
 };
 
@@ -958,4 +976,86 @@ test "multiple class predicates in one compound match correctly" {
     try expectDocQueryComptime(&doc, "div.alpha.beta.gamma", &.{"x"});
     try expectDocQueryRuntime(&doc, "div.alpha.beta.gamma", &.{"x"});
     try expectDocQueryRuntime(&doc, "div.alpha.beta.delta", &.{});
+}
+
+test "turbo parse mode preserves selector/query behavior for representative input" {
+    const alloc = std.testing.allocator;
+
+    var strict_doc = Document.init(alloc);
+    defer strict_doc.deinit();
+    var turbo_doc = Document.init(alloc);
+    defer turbo_doc.deinit();
+
+    var strict_html = ("<html><body>" ++
+        "<div id='x' class='alpha beta' data-k='v' data-q='1>2'>x</div>" ++
+        "<img id='im' src='a.png' />" ++
+        "<a id='a1' href='https://example.com' class='nav button'>ok</a>" ++
+        "<p id='p1'>a<span id='s1'>b</span></p>" ++
+        "<div id='e' a= ></div>" ++
+        "</body></html>").*;
+    var turbo_html = strict_html;
+
+    try strict_doc.parse(&strict_html, .{});
+    try turbo_doc.parse(&turbo_html, .{
+        .eager_child_views = false,
+        .eager_attr_empty_rewrite = false,
+        .turbo_parse = true,
+    });
+
+    const selectors = [_][]const u8{
+        "div#x[data-k=v]",
+        "img#im",
+        "a[href^=https][class*=button]:not(.missing)",
+        "p#p1 > span#s1",
+        "div[a]",
+    };
+
+    for (selectors) |sel| {
+        const a = try strict_doc.queryOneRuntime(sel);
+        const b = try turbo_doc.queryOneRuntime(sel);
+        try std.testing.expect((a == null) == (b == null));
+    }
+
+    const strict_empty = (strict_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    const turbo_empty = (turbo_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings(strict_empty, turbo_empty);
+}
+
+test "turbo scanner handles quoted > and self-closing tails" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='a' data-q='x>y' data-n=abc></div><img id='i' src='x' /><br id='b'>".*;
+    try doc.parse(&html, .{
+        .eager_child_views = false,
+        .eager_attr_empty_rewrite = false,
+        .turbo_parse = true,
+    });
+
+    try std.testing.expect(doc.queryOne("div#a[data-q='x>y']") != null);
+    try std.testing.expect(doc.queryOne("img#i[src='x']") != null);
+    try std.testing.expect(doc.queryOne("br#b") != null);
+}
+
+test "children() lazily builds child views when eager child views are disabled" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='root'><span id='a'></span><span id='b'></span></div>".*;
+    try doc.parse(&html, .{ .eager_child_views = false });
+    try std.testing.expect(!doc.child_views_ready);
+
+    const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
+    const before_len = doc.child_ptrs.items.len;
+    const kids = root.children();
+    try std.testing.expectEqual(@as(usize, 2), kids.len);
+    try std.testing.expect(doc.child_views_ready);
+    try std.testing.expect(doc.child_ptrs.items.len >= before_len);
+    const after_first = doc.child_ptrs.items.len;
+
+    const again = root.children();
+    try std.testing.expectEqual(@as(usize, 2), again.len);
+    try std.testing.expectEqual(after_first, doc.child_ptrs.items.len);
 }

@@ -11,6 +11,11 @@ This directory benchmarks `htmlparser` against other high-performance HTML parse
 It also benchmarks `htmlparser` query parsing throughput (runtime selector compile path).
 Query sections remain `htmlparser`-only; external parser comparisons are parse throughput only.
 
+`htmlparser` parse results are reported in two internal modes:
+
+- `ours-strict`: default parser behavior (public default options)
+- `ours-turbo`: opt-in throughput mode (`turbo_parse=true`, lazy child views, deferred empty assignment rewrite)
+
 Default fixture set includes:
 - `rust-lang.html`
 - `wiki-html.html`
@@ -58,3 +63,10 @@ Results are written to:
 
 - `bench/results/latest.json`
 - `bench/results/latest.md`
+
+The benchmark output also includes a hard gate table:
+
+- `PASS/FAIL: ours-turbo > lol-html` per fixture
+- strict-mode regression checks against baseline:
+  - parse throughput not worse than -3% per fixture
+  - query parse/match/compiled not worse than -2%

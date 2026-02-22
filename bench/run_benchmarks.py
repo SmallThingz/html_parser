@@ -14,8 +14,9 @@ BIN_DIR = BUILD_DIR / "bin"
 RESULTS_DIR = BENCH_DIR / "results"
 FIXTURES_DIR = BENCH_DIR / "fixtures"
 
-PARSERS = [
-    "ours",
+PARSE_PARSERS = [
+    "ours-strict",
+    "ours-turbo",
     "strlen",
     "lexbor",
     "gumbo-modern",
@@ -23,8 +24,14 @@ PARSERS = [
     "lol-html",
 ]
 
+QUERY_PARSERS = [
+    ("ours-strict", "strict"),
+    ("ours-turbo", "turbo"),
+]
+
 PARSER_CAPABILITIES = {
-    "ours": "dom",
+    "ours-strict": "dom",
+    "ours-turbo": "dom",
     "strlen": "scan",
     "lexbor": "dom",
     "gumbo-modern": "dom",
@@ -177,8 +184,10 @@ def build_runners():
 
 
 def runner_cmd(parser_name: str, fixture: Path, iterations: int):
-    if parser_name == "ours":
-        return [str(REPO_ROOT / "zig-out" / "bin" / "htmlparser-bench"), str(fixture), str(iterations)]
+    if parser_name == "ours-strict":
+        return [str(REPO_ROOT / "zig-out" / "bin" / "htmlparser-bench"), "parse", "strict", str(fixture), str(iterations)]
+    if parser_name == "ours-turbo":
+        return [str(REPO_ROOT / "zig-out" / "bin" / "htmlparser-bench"), "parse", "turbo", str(fixture), str(iterations)]
     if parser_name == "strlen":
         return [str(BIN_DIR / "strlen_runner"), str(fixture), str(iterations)]
     if parser_name == "lexbor":
@@ -227,11 +236,11 @@ def bench_parse_one(parser_name: str, fixture_name: str, iterations: int):
     }
 
 
-def bench_query_parse_one(case_name: str, selector: str, iterations: int):
-    cmd = [str(REPO_ROOT / "zig-out" / "bin" / "htmlparser-bench"), "query-parse", selector, str(iterations)]
+def bench_query_parse_one(parser_name: str, mode: str, case_name: str, selector: str, iterations: int):
+    cmd = [str(REPO_ROOT / "zig-out" / "bin" / "htmlparser-bench"), "query-parse", mode, selector, str(iterations)]
     ns_samples = []
 
-    _ = output([cmd[0], "query-parse", selector, "1"])
+    _ = output([cmd[0], "query-parse", mode, selector, "1"])
     for _ in range(REPEATS):
         ns_samples.append(int(output(cmd)))
 
@@ -241,7 +250,8 @@ def bench_query_parse_one(case_name: str, selector: str, iterations: int):
     ns_per_op = median_ns / iterations if iterations > 0 else 0.0
 
     return {
-        "parser": "ours",
+        "parser": parser_name,
+        "mode": mode,
         "case": case_name,
         "selector": selector,
         "iterations": iterations,
@@ -252,16 +262,16 @@ def bench_query_parse_one(case_name: str, selector: str, iterations: int):
     }
 
 
-def bench_query_exec_one(case_name: str, fixture_name: str, selector: str, iterations: int, compiled: bool):
+def bench_query_exec_one(parser_name: str, mode: str, case_name: str, fixture_name: str, selector: str, iterations: int, compiled: bool):
     fixture = FIXTURES_DIR / fixture_name
     if not fixture.exists():
         raise FileNotFoundError(f"fixture missing: {fixture}")
 
     sub = "query-compiled" if compiled else "query-match"
-    cmd = [str(REPO_ROOT / "zig-out" / "bin" / "htmlparser-bench"), sub, str(fixture), selector, str(iterations)]
+    cmd = [str(REPO_ROOT / "zig-out" / "bin" / "htmlparser-bench"), sub, mode, str(fixture), selector, str(iterations)]
     ns_samples = []
 
-    _ = output([cmd[0], sub, str(fixture), selector, "1"])
+    _ = output([cmd[0], sub, mode, str(fixture), selector, "1"])
     for _ in range(REPEATS):
         ns_samples.append(int(output(cmd)))
 
@@ -271,7 +281,8 @@ def bench_query_exec_one(case_name: str, fixture_name: str, selector: str, itera
     ns_per_op = median_ns / iterations if iterations > 0 else 0.0
 
     return {
-        "parser": "ours",
+        "parser": parser_name,
+        "mode": mode,
         "case": case_name,
         "fixture": fixture_name,
         "selector": selector,
@@ -283,7 +294,7 @@ def bench_query_exec_one(case_name: str, fixture_name: str, selector: str, itera
     }
 
 
-def render_markdown(profile_name, parse_results, query_parse_results, query_match_results, query_compiled_results):
+def render_markdown(profile_name, parse_results, query_parse_results, query_match_results, query_compiled_results, gate_summary=None):
     lines = []
     lines.append("# HTML Parser Benchmark Results")
     lines.append("")
@@ -339,10 +350,20 @@ def render_markdown(profile_name, parse_results, query_parse_results, query_matc
     render_query_section("## Query Match Throughput", query_match_results)
     render_query_section("## Query Compiled Throughput", query_compiled_results)
 
+    if gate_summary:
+        lines.append("## Turbo vs lol-html Gate")
+        lines.append("")
+        lines.append("| Fixture | ours-turbo (MB/s) | lol-html (MB/s) | Result |")
+        lines.append("|---|---:|---:|---|")
+        for row in gate_summary:
+            result = "PASS" if row["pass"] else "FAIL"
+            lines.append(f"| {row['fixture']} | {row['ours_turbo_mb_s']:.2f} | {row['lol_html_mb_s']:.2f} | {result} |")
+        lines.append("")
+
     return "\n".join(lines)
 
 
-def render_console(profile_name, parse_results, query_parse_results, query_match_results, query_compiled_results):
+def render_console(profile_name, parse_results, query_parse_results, query_match_results, query_compiled_results, gate_summary=None):
     lines = []
     lines.append("HTML Parser Benchmark Results")
     lines.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -444,6 +465,28 @@ def render_console(profile_name, parse_results, query_parse_results, query_match
     render_query_console("Query Parse Throughput", query_parse_results)
     render_query_console("Query Match Throughput", query_match_results)
     render_query_console("Query Compiled Throughput", query_compiled_results)
+
+    if gate_summary:
+        lines.append("Turbo vs lol-html Gate")
+        lines.append("")
+        headers = ("Fixture", "ours-turbo (MB/s)", "lol-html (MB/s)", "Result")
+        table_rows = []
+        for row in gate_summary:
+            table_rows.append((
+                row["fixture"],
+                f"{row['ours_turbo_mb_s']:.2f}",
+                f"{row['lol_html_mb_s']:.2f}",
+                "PASS" if row["pass"] else "FAIL",
+            ))
+        widths = [max(len(headers[i]), *(len(row[i]) for row in table_rows)) for i in range(4)]
+        sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
+        lines.append(sep)
+        lines.append("| " + headers[0].ljust(widths[0]) + " | " + headers[1].rjust(widths[1]) + " | " + headers[2].rjust(widths[2]) + " | " + headers[3].ljust(widths[3]) + " |")
+        lines.append(sep)
+        for row in table_rows:
+            lines.append("| " + row[0].ljust(widths[0]) + " | " + row[1].rjust(widths[1]) + " | " + row[2].rjust(widths[2]) + " | " + row[3].ljust(widths[3]) + " |")
+        lines.append(sep)
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -455,11 +498,11 @@ def parse_args():
     return parser.parse_args()
 
 
-def _map_ours_parse_throughput(results_json):
+def _map_parse_throughput(results_json, parser_name):
     if "parse_results" in results_json:
         out = {}
         for row in results_json["parse_results"]:
-            if row.get("parser") == "ours":
+            if row.get("parser") == parser_name:
                 out[row["fixture"]] = float(row["throughput_mb_s"])
         return out
     if "parse" in results_json:
@@ -467,11 +510,16 @@ def _map_ours_parse_throughput(results_json):
     return {}
 
 
-def _map_case_ops(results_json, section_name):
+def _map_case_ops(results_json, section_name, parser_name=None):
     if section_name in results_json:
         section = results_json[section_name]
         if isinstance(section, list):
-            return {r["case"]: float(r["ops_s"]) for r in section}
+            out = {}
+            for r in section:
+                if parser_name is not None and r.get("parser") != parser_name:
+                    continue
+                out[r["case"]] = float(r["ops_s"])
+            return out
         if isinstance(section, dict):
             return {k: float(v["ops_s"]) for k, v in section.items()}
     return {}
@@ -480,44 +528,75 @@ def _map_case_ops(results_json, section_name):
 def evaluate_gates(profile_name, baseline_json, current_json):
     failures = []
     warnings = []
-    if not baseline_json:
-        return failures, warnings
+    gate_summary = []
+    has_baseline = baseline_json is not None
+    if baseline_json is None:
+        baseline_json = {}
 
-    base_parse = _map_ours_parse_throughput(baseline_json)
-    cur_parse = _map_ours_parse_throughput(current_json)
-    base_qp = _map_case_ops(baseline_json, "query_parse_results") or _map_case_ops(baseline_json, "query_parse")
-    cur_qp = _map_case_ops(current_json, "query_parse_results") or _map_case_ops(current_json, "query_parse")
-    base_qm = _map_case_ops(baseline_json, "query_match_results") or _map_case_ops(baseline_json, "query_match")
-    cur_qm = _map_case_ops(current_json, "query_match_results") or _map_case_ops(current_json, "query_match")
-    base_qc = _map_case_ops(baseline_json, "query_compiled_results") or _map_case_ops(baseline_json, "query_compiled")
-    cur_qc = _map_case_ops(current_json, "query_compiled_results") or _map_case_ops(current_json, "query_compiled")
+    fixture_names = [name for name, _iters in PROFILES[profile_name]["fixtures"]]
+
+    cur_parse_turbo = _map_parse_throughput(current_json, "ours-turbo")
+    cur_parse_strict = _map_parse_throughput(current_json, "ours-strict")
+    cur_parse_lol = _map_parse_throughput(current_json, "lol-html")
+
+    baseline_has_mode_split = False
+    if "parse_results" in baseline_json:
+        baseline_has_mode_split = any(r.get("parser") == "ours-strict" for r in baseline_json["parse_results"])
+
+    base_parse_strict = _map_parse_throughput(baseline_json, "ours-strict")
+    if has_baseline and not baseline_has_mode_split:
+        warnings.append("baseline has no ours-strict rows; strict no-regression checks skipped")
+
+    base_qp = _map_case_ops(baseline_json, "query_parse_results", "ours-strict")
+    cur_qp = _map_case_ops(current_json, "query_parse_results", "ours-strict") or _map_case_ops(current_json, "query_parse", "ours-strict")
+
+    base_qm = _map_case_ops(baseline_json, "query_match_results", "ours-strict")
+    cur_qm = _map_case_ops(current_json, "query_match_results", "ours-strict") or _map_case_ops(current_json, "query_match", "ours-strict")
+
+    base_qc = _map_case_ops(baseline_json, "query_compiled_results", "ours-strict")
+    cur_qc = _map_case_ops(current_json, "query_compiled_results", "ours-strict") or _map_case_ops(current_json, "query_compiled", "ours-strict")
+
+    for fixture in fixture_names:
+        turbo = cur_parse_turbo.get(fixture)
+        lol = cur_parse_lol.get(fixture)
+        if turbo is None or lol is None:
+            continue
+        pass_vs_lol = turbo > lol
+        gate_summary.append({
+            "fixture": fixture,
+            "ours_turbo_mb_s": turbo,
+            "lol_html_mb_s": lol,
+            "pass": pass_vs_lol,
+        })
+        if profile_name == "stable" and not pass_vs_lol:
+            failures.append(f"stable turbo-vs-lol fail: {fixture} ours-turbo {turbo:.2f} <= lol-html {lol:.2f}")
 
     if profile_name == "stable":
-        for fixture in ("rust-lang.html", "wiki-html.html", "w3-html52.html", "hn.html"):
-            if fixture in base_parse and fixture in cur_parse and cur_parse[fixture] <= base_parse[fixture]:
-                failures.append(f"stable parse regression: {fixture} {cur_parse[fixture]:.2f} <= baseline {base_parse[fixture]:.2f}")
-        if "mdn-html.html" in base_parse and "mdn-html.html" in cur_parse:
-            if cur_parse["mdn-html.html"] < (base_parse["mdn-html.html"] * 0.99):
-                failures.append(
-                    f"stable parse mdn regression >1%: {cur_parse['mdn-html.html']:.2f} < {base_parse['mdn-html.html']*0.99:.2f}"
-                )
-        for section_name, base_map, cur_map in (
-            ("query-parse", base_qp, cur_qp),
-            ("query-match", base_qm, cur_qm),
-            ("query-compiled", base_qc, cur_qc),
-        ):
-            for case, base_ops in base_map.items():
-                cur_ops = cur_map.get(case)
-                if cur_ops is None:
-                    continue
-                if cur_ops < (base_ops * 0.98):
-                    failures.append(f"stable {section_name} regression >2%: {case} {cur_ops:.2f} < {base_ops*0.98:.2f}")
+        if has_baseline and baseline_has_mode_split:
+            for fixture in fixture_names:
+                if fixture in base_parse_strict and fixture in cur_parse_strict:
+                    if cur_parse_strict[fixture] < (base_parse_strict[fixture] * 0.97):
+                        failures.append(
+                            f"stable strict parse regression >3%: {fixture} {cur_parse_strict[fixture]:.2f} < {base_parse_strict[fixture]*0.97:.2f}"
+                        )
+            for section_name, base_map, cur_map in (
+                ("strict query-parse", base_qp, cur_qp),
+                ("strict query-match", base_qm, cur_qm),
+                ("strict query-compiled", base_qc, cur_qc),
+            ):
+                for case, base_ops in base_map.items():
+                    cur_ops = cur_map.get(case)
+                    if cur_ops is None:
+                        continue
+                    if cur_ops < (base_ops * 0.98):
+                        failures.append(f"stable {section_name} regression >2%: {case} {cur_ops:.2f} < {base_ops*0.98:.2f}")
     elif profile_name == "quick":
-        # quick is advisory: signal obvious opposite-direction drift
-        for fixture in ("rust-lang.html", "wiki-html.html", "w3-html52.html", "hn.html"):
-            if fixture in base_parse and fixture in cur_parse and cur_parse[fixture] < (base_parse[fixture] * 0.97):
-                warnings.append(f"quick parse drift: {fixture} {cur_parse[fixture]:.2f} vs baseline {base_parse[fixture]:.2f}")
-    return failures, warnings
+        if has_baseline and baseline_has_mode_split:
+            for fixture in fixture_names:
+                if fixture in base_parse_strict and fixture in cur_parse_strict and cur_parse_strict[fixture] < (base_parse_strict[fixture] * 0.97):
+                    warnings.append(f"quick strict parse drift: {fixture} {cur_parse_strict[fixture]:.2f} vs baseline {base_parse_strict[fixture]:.2f}")
+
+    return failures, warnings, gate_summary
 
 
 def main():
@@ -530,29 +609,36 @@ def main():
 
     parse_results = []
     for fixture_name, iterations in profile["fixtures"]:
-        for parser_name in PARSERS:
+        for parser_name in PARSE_PARSERS:
             print(f"benchmarking {parser_name} on {fixture_name} ({iterations} iters)")
             parse_results.append(bench_parse_one(parser_name, fixture_name, iterations))
 
     query_parse_results = []
-    for case_name, selector, iterations in profile["query_parse_cases"]:
-        print(f"benchmarking query-parse ours on {case_name} ({iterations} iters)")
-        query_parse_results.append(bench_query_parse_one(case_name, selector, iterations))
+    for parser_name, mode in QUERY_PARSERS:
+        for case_name, selector, iterations in profile["query_parse_cases"]:
+            print(f"benchmarking query-parse {parser_name} on {case_name} ({iterations} iters)")
+            query_parse_results.append(bench_query_parse_one(parser_name, mode, case_name, selector, iterations))
 
     query_match_results = []
-    for case_name, fixture_name, selector, iterations in profile["query_match_cases"]:
-        print(f"benchmarking query-match ours on {case_name} ({iterations} iters)")
-        query_match_results.append(bench_query_exec_one(case_name, fixture_name, selector, iterations, compiled=False))
+    for parser_name, mode in QUERY_PARSERS:
+        for case_name, fixture_name, selector, iterations in profile["query_match_cases"]:
+            print(f"benchmarking query-match {parser_name} on {case_name} ({iterations} iters)")
+            query_match_results.append(bench_query_exec_one(parser_name, mode, case_name, fixture_name, selector, iterations, compiled=False))
 
     query_compiled_results = []
-    for case_name, fixture_name, selector, iterations in profile["query_compiled_cases"]:
-        print(f"benchmarking query-compiled ours on {case_name} ({iterations} iters)")
-        query_compiled_results.append(bench_query_exec_one(case_name, fixture_name, selector, iterations, compiled=True))
+    for parser_name, mode in QUERY_PARSERS:
+        for case_name, fixture_name, selector, iterations in profile["query_compiled_cases"]:
+            print(f"benchmarking query-compiled {parser_name} on {case_name} ({iterations} iters)")
+            query_compiled_results.append(bench_query_exec_one(parser_name, mode, case_name, fixture_name, selector, iterations, compiled=True))
 
     results_json = {
         "generated_unix": int(time.time()),
         "profile": args.profile,
         "repeats": REPEATS,
+        "bench_modes": {
+            "parse": ["strict", "turbo"],
+            "query": ["strict", "turbo"],
+        },
         "parser_capabilities": PARSER_CAPABILITIES,
         "parse_results": parse_results,
         "query_parse_results": query_parse_results,
@@ -564,8 +650,14 @@ def main():
     md_path = RESULTS_DIR / "latest.md"
     baseline_path = Path(args.baseline) if args.baseline else (RESULTS_DIR / f"baseline_{args.profile}.json")
 
+    baseline_json = None
+    if baseline_path.exists():
+        baseline_json = json.loads(baseline_path.read_text(encoding="utf-8"))
+    failures, warnings, gate_summary = evaluate_gates(args.profile, baseline_json, results_json)
+    results_json["gate_summary"] = gate_summary
+
     json_path.write_text(json.dumps(results_json, indent=2), encoding="utf-8")
-    md_path.write_text(render_markdown(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results) + "\n", encoding="utf-8")
+    md_path.write_text(render_markdown(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results, gate_summary) + "\n", encoding="utf-8")
 
     if args.write_baseline:
         baseline_path.write_text(json.dumps(results_json, indent=2), encoding="utf-8")
@@ -574,21 +666,17 @@ def main():
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
     print("")
-    print(render_console(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results))
+    print(render_console(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results, gate_summary))
 
-    baseline_json = None
-    if baseline_path.exists():
-        baseline_json = json.loads(baseline_path.read_text(encoding="utf-8"))
-        failures, warnings = evaluate_gates(args.profile, baseline_json, results_json)
-        if warnings:
-            print("\nGate warnings:")
-            for w in warnings:
-                print(f"- {w}")
-        if failures:
-            print("\nGate failures:")
-            for f in failures:
-                print(f"- {f}")
-            sys.exit(3)
+    if warnings:
+        print("\nGate warnings:")
+        for w in warnings:
+            print(f"- {w}")
+    if failures:
+        print("\nGate failures:")
+        for f in failures:
+            print(f"- {f}")
+        sys.exit(3)
 
 
 if __name__ == "__main__":

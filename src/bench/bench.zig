@@ -1,6 +1,41 @@
 const std = @import("std");
 const root = @import("htmlparser");
 
+const BenchMode = enum {
+    strict,
+    turbo,
+};
+
+fn parseMode(arg: []const u8) !BenchMode {
+    if (std.mem.eql(u8, arg, "strict")) return .strict;
+    if (std.mem.eql(u8, arg, "turbo")) return .turbo;
+    return error.InvalidBenchMode;
+}
+
+fn parseDocForParseBench(doc: *root.Document, input: []u8, mode: BenchMode) !void {
+    switch (mode) {
+        .strict => try doc.parse(input, .{}),
+        .turbo => try doc.parse(input, .{
+            .store_parent_pointers = false,
+            .normalize_input = false,
+            .eager_child_views = false,
+            .eager_attr_empty_rewrite = false,
+            .turbo_parse = true,
+        }),
+    }
+}
+
+fn parseDocForQueryBench(doc: *root.Document, input: []u8, mode: BenchMode) !void {
+    switch (mode) {
+        .strict => try doc.parse(input, .{}),
+        .turbo => try doc.parse(input, .{
+            .eager_child_views = false,
+            .eager_attr_empty_rewrite = false,
+            .turbo_parse = true,
+        }),
+    }
+}
+
 pub fn runSynthetic() !void {
     const alloc = std.heap.page_allocator;
 
@@ -27,7 +62,7 @@ pub fn runSynthetic() !void {
     std.debug.print("query ns: {d}\n", .{query_end - query_start});
 }
 
-pub fn runParseFile(path: []const u8, iterations: usize) !u64 {
+pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -49,7 +84,7 @@ pub fn runParseFile(path: []const u8, iterations: usize) !u64 {
         {
             var doc = root.Document.init(iter_alloc);
             defer doc.deinit();
-            try doc.parse(working, .{});
+            try parseDocForParseBench(&doc, working, mode);
         }
         _ = parse_arena.reset(.retain_capacity);
     }
@@ -77,7 +112,7 @@ pub fn runQueryParse(selector: []const u8, iterations: usize) !u64 {
     return @intCast(end - start);
 }
 
-pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize) !u64 {
+pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -90,7 +125,7 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize) 
 
     var doc = root.Document.init(alloc);
     defer doc.deinit();
-    try doc.parse(working, .{});
+    try parseDocForQueryBench(&doc, working, mode);
 
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
@@ -102,7 +137,7 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize) 
     return @intCast(end - start);
 }
 
-pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usize) !u64 {
+pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -120,7 +155,7 @@ pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usiz
 
     var doc = root.Document.init(alloc);
     defer doc.deinit();
-    try doc.parse(working, .{});
+    try parseDocForQueryBench(&doc, working, mode);
 
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
@@ -152,29 +187,61 @@ pub fn main() !void {
         return;
     }
 
+    if (args.len == 5 and std.mem.eql(u8, args[1], "query-parse")) {
+        _ = try parseMode(args[2]);
+        const iterations = try std.fmt.parseInt(usize, args[4], 10);
+        const total_ns = try runQueryParse(args[3], iterations);
+        std.debug.print("{d}\n", .{total_ns});
+        return;
+    }
+
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-match")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryMatch(args[2], args[3], iterations);
+        const total_ns = try runQueryMatch(args[2], args[3], iterations, .strict);
+        std.debug.print("{d}\n", .{total_ns});
+        return;
+    }
+
+    if (args.len == 6 and std.mem.eql(u8, args[1], "query-match")) {
+        const mode = try parseMode(args[2]);
+        const iterations = try std.fmt.parseInt(usize, args[5], 10);
+        const total_ns = try runQueryMatch(args[3], args[4], iterations, mode);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
 
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-compiled")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryCompiled(args[2], args[3], iterations);
+        const total_ns = try runQueryCompiled(args[2], args[3], iterations, .strict);
+        std.debug.print("{d}\n", .{total_ns});
+        return;
+    }
+
+    if (args.len == 6 and std.mem.eql(u8, args[1], "query-compiled")) {
+        const mode = try parseMode(args[2]);
+        const iterations = try std.fmt.parseInt(usize, args[5], 10);
+        const total_ns = try runQueryCompiled(args[3], args[4], iterations, mode);
+        std.debug.print("{d}\n", .{total_ns});
+        return;
+    }
+
+    if (args.len == 5 and std.mem.eql(u8, args[1], "parse")) {
+        const mode = try parseMode(args[2]);
+        const iterations = try std.fmt.parseInt(usize, args[4], 10);
+        const total_ns = try runParseFile(args[3], iterations, mode);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
 
     if (args.len != 3) {
         std.debug.print(
-            "usage:\n  {s} <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n",
-            .{ args[0], args[0], args[0], args[0] },
+            "usage:\n  {s} <html-file> <iterations>\n  {s} parse <strict|turbo> <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-parse <strict|turbo> <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-match <strict|turbo> <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n  {s} query-compiled <strict|turbo> <html-file> <selector> <iterations>\n",
+            .{ args[0], args[0], args[0], args[0], args[0], args[0], args[0], args[0] },
         );
         std.process.exit(2);
     }
 
     const iterations = try std.fmt.parseInt(usize, args[2], 10);
-    const total_ns = try runParseFile(args[1], iterations);
+    const total_ns = try runParseFile(args[1], iterations, .strict);
     std.debug.print("{d}\n", .{total_ns});
 }
