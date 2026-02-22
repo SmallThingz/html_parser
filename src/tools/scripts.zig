@@ -1581,6 +1581,267 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
     std.debug.print("Wrote report: {s}\n", .{json_out});
 }
 
+fn cmpStringSlice(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+fn collectMarkdownFiles(alloc: std.mem.Allocator) ![][]const u8 {
+    var files = std.ArrayList([]const u8).empty;
+    errdefer files.deinit(alloc);
+
+    const root_docs = [_][]const u8{
+        "README.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "CHANGELOG.md",
+        "bench/README.md",
+    };
+    for (root_docs) |p| {
+        if (common.fileExists(p)) {
+            try files.append(alloc, try alloc.dupe(u8, p));
+        }
+    }
+
+    var docs_dir = try std.fs.cwd().openDir("docs", .{ .iterate = true });
+    defer docs_dir.close();
+    var walker = try docs_dir.walk(alloc);
+    defer walker.deinit();
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.path, ".md")) continue;
+        const joined = try std.fs.path.join(alloc, &[_][]const u8{ "docs", entry.path });
+        try files.append(alloc, joined);
+    }
+
+    std.mem.sort([]const u8, files.items, {}, cmpStringSlice);
+    return files.toOwnedSlice(alloc);
+}
+
+fn collectExampleFiles(alloc: std.mem.Allocator) ![][]const u8 {
+    var files = std.ArrayList([]const u8).empty;
+    errdefer files.deinit(alloc);
+
+    var examples_dir = try std.fs.cwd().openDir("examples", .{ .iterate = true });
+    defer examples_dir.close();
+    var walker = try examples_dir.walk(alloc);
+    defer walker.deinit();
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.path, ".zig")) continue;
+        const joined = try std.fs.path.join(alloc, &[_][]const u8{ "examples", entry.path });
+        try files.append(alloc, joined);
+    }
+
+    std.mem.sort([]const u8, files.items, {}, cmpStringSlice);
+    return files.toOwnedSlice(alloc);
+}
+
+fn loadBuildStepSet(alloc: std.mem.Allocator) !std.StringHashMap(void) {
+    const out = try common.runCaptureStdout(alloc, &[_][]const u8{ "zig", "build", "--list-steps" }, REPO_ROOT);
+    defer alloc.free(out);
+
+    var set = std.StringHashMap(void).init(alloc);
+    var lines = std.mem.splitScalar(u8, out, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r");
+        if (line.len == 0) continue;
+        const first_ws = std.mem.indexOfAny(u8, line, " \t") orelse line.len;
+        const step = line[0..first_ws];
+        if (step.len == 0) continue;
+        try set.put(try alloc.dupe(u8, step), {});
+    }
+    return set;
+}
+
+fn trimMarkdownLinkTarget(raw: []const u8) []const u8 {
+    var target = std.mem.trim(u8, raw, " \t\r");
+    if (target.len >= 2 and target[0] == '<' and target[target.len - 1] == '>') {
+        target = target[1 .. target.len - 1];
+    }
+    if (target.len == 0) return target;
+    if (target[0] != '<') {
+        const ws_idx = std.mem.indexOfAny(u8, target, " \t\r") orelse target.len;
+        target = target[0..ws_idx];
+    }
+    return target;
+}
+
+fn sliceBeforeFirstAny(haystack: []const u8, chars: []const u8) []const u8 {
+    const idx = std.mem.indexOfAny(u8, haystack, chars) orelse haystack.len;
+    return haystack[0..idx];
+}
+
+fn isRemoteLink(target: []const u8) bool {
+    if (std.mem.startsWith(u8, target, "http://")) return true;
+    if (std.mem.startsWith(u8, target, "https://")) return true;
+    if (std.mem.startsWith(u8, target, "mailto:")) return true;
+    if (std.mem.startsWith(u8, target, "tel:")) return true;
+    return std.mem.indexOf(u8, target, "://") != null;
+}
+
+fn validateMarkdownLink(alloc: std.mem.Allocator, md_path: []const u8, line_no: usize, target_raw: []const u8, ok: *bool) !void {
+    const target = trimMarkdownLinkTarget(target_raw);
+    if (target.len == 0) return;
+    if (target[0] == '#') return;
+    if (isRemoteLink(target)) return;
+
+    const path_only = sliceBeforeFirstAny(target, "#?");
+    if (path_only.len == 0) return;
+
+    if (std.mem.startsWith(u8, path_only, "/")) {
+        std.debug.print("docs-check: {s}:{d}: absolute markdown path is not allowed: {s}\n", .{ md_path, line_no, target });
+        ok.* = false;
+        return;
+    }
+
+    const base_dir = std.fs.path.dirname(md_path) orelse ".";
+    const resolved = try std.fs.path.join(alloc, &[_][]const u8{ base_dir, path_only });
+    defer alloc.free(resolved);
+
+    if (common.fileExists(resolved)) return;
+
+    if (std.mem.endsWith(u8, path_only, "/")) {
+        const with_readme = try std.fs.path.join(alloc, &[_][]const u8{ resolved, "README.md" });
+        defer alloc.free(with_readme);
+        if (common.fileExists(with_readme)) return;
+    }
+
+    std.debug.print("docs-check: {s}:{d}: unresolved markdown link: {s}\n", .{ md_path, line_no, target });
+    ok.* = false;
+}
+
+fn checkMarkdownLinks(alloc: std.mem.Allocator, md_path: []const u8, content: []const u8, ok: *bool) !void {
+    var in_fence = false;
+    var line_no: usize = 0;
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    while (lines.next()) |line_raw| {
+        line_no += 1;
+        const line = std.mem.trimRight(u8, line_raw, "\r");
+        const trimmed = std.mem.trimLeft(u8, line, " \t");
+        if (std.mem.startsWith(u8, trimmed, "```")) {
+            in_fence = !in_fence;
+            continue;
+        }
+        if (in_fence) continue;
+
+        var i: usize = 0;
+        while (i < line.len) {
+            const open = std.mem.indexOfScalarPos(u8, line, i, '[') orelse break;
+            const close = std.mem.indexOfScalarPos(u8, line, open + 1, ']') orelse {
+                i = open + 1;
+                continue;
+            };
+            if (close + 1 >= line.len or line[close + 1] != '(') {
+                i = close + 1;
+                continue;
+            }
+            const end = std.mem.indexOfScalarPos(u8, line, close + 2, ')') orelse {
+                i = close + 2;
+                continue;
+            };
+            try validateMarkdownLink(alloc, md_path, line_no, line[close + 2 .. end], ok);
+            i = end + 1;
+        }
+    }
+}
+
+fn checkLocalAbsolutePaths(md_path: []const u8, content: []const u8, ok: *bool) void {
+    if (std.mem.indexOf(u8, content, "/home/") != null or
+        std.mem.indexOf(u8, content, "/Users/") != null or
+        std.mem.indexOf(u8, content, "C:\\Users\\") != null)
+    {
+        std.debug.print("docs-check: {s}: contains machine-local absolute path\n", .{md_path});
+        ok.* = false;
+    }
+}
+
+fn parseStepAfterBuild(content: []const u8, start: usize) ?[]const u8 {
+    var i = start;
+    while (i < content.len and content[i] != '\n') {
+        while (i < content.len and std.ascii.isWhitespace(content[i])) : (i += 1) {}
+        if (i >= content.len or content[i] == '\n') return null;
+
+        const tok_start = i;
+        while (i < content.len and !std.ascii.isWhitespace(content[i])) : (i += 1) {}
+        const tok = std.mem.trim(u8, content[tok_start..i], "`'\",;()[]");
+        if (tok.len == 0) continue;
+        if (std.mem.eql(u8, tok, "--")) continue;
+        if (tok[0] == '-') continue;
+        return tok;
+    }
+    return null;
+}
+
+fn checkDocumentedBuildCommands(md_path: []const u8, content: []const u8, step_set: *const std.StringHashMap(void), ok: *bool) void {
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, content, pos, "zig build")) |found| {
+        if (found > 0 and !std.ascii.isWhitespace(content[found - 1]) and content[found - 1] != '`') {
+            pos = found + 1;
+            continue;
+        }
+        const after_build = found + "zig build".len;
+        if (after_build < content.len and !std.ascii.isWhitespace(content[after_build])) {
+            pos = found + 1;
+            continue;
+        }
+
+        const cmd_start = found + "zig build".len;
+        const step = parseStepAfterBuild(content, cmd_start) orelse {
+            pos = found + 1;
+            continue;
+        };
+        if (!step_set.contains(step)) {
+            std.debug.print("docs-check: {s}: references unknown zig build step '{s}'\n", .{ md_path, step });
+            ok.* = false;
+        }
+        pos = found + 1;
+    }
+}
+
+fn runDocsCheck(alloc: std.mem.Allocator) !void {
+    const markdown_files = try collectMarkdownFiles(alloc);
+    defer alloc.free(markdown_files);
+    var step_set = try loadBuildStepSet(alloc);
+    defer step_set.deinit();
+
+    var ok = true;
+    var checked: usize = 0;
+    for (markdown_files) |md_path| {
+        const content = try common.readFileAlloc(alloc, md_path);
+        defer alloc.free(content);
+        checked += 1;
+
+        checkLocalAbsolutePaths(md_path, content, &ok);
+        try checkMarkdownLinks(alloc, md_path, content, &ok);
+        checkDocumentedBuildCommands(md_path, content, &step_set, &ok);
+    }
+
+    if (!ok) return error.DocsCheckFailed;
+    std.debug.print("docs-check: OK ({d} markdown files)\n", .{checked});
+}
+
+fn runExamplesCheck(alloc: std.mem.Allocator) !void {
+    const example_files = try collectExampleFiles(alloc);
+    defer alloc.free(example_files);
+    if (example_files.len == 0) return error.NoExamplesFound;
+
+    for (example_files) |example_path| {
+        std.debug.print("examples-check: zig test {s}\n", .{example_path});
+        const root_mod = try std.fmt.allocPrint(alloc, "-Mroot={s}", .{example_path});
+        const html_mod = "-Mhtmlparser=src/root.zig";
+        const argv = [_][]const u8{
+            "zig",
+            "test",
+            "--dep",
+            "htmlparser",
+            root_mod,
+            html_mod,
+        };
+        try common.runInherit(alloc, &argv, REPO_ROOT);
+    }
+    std.debug.print("examples-check: OK ({d} examples)\n", .{example_files.len});
+}
+
 fn usage() void {
     std.debug.print(
         \\Usage:
@@ -1588,6 +1849,8 @@ fn usage() void {
         \\  htmlparser-tools setup-fixtures [--refresh]
         \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--baseline path] [--write-baseline]
         \\  htmlparser-tools run-external-suites [--mode strict|turbo|both] [--max-html5lib-cases N] [--json-out path]
+        \\  htmlparser-tools docs-check
+        \\  htmlparser-tools examples-check
         \\
     , .{});
 }
@@ -1626,6 +1889,14 @@ pub fn main() !void {
     }
     if (std.mem.eql(u8, cmd, "run-external-suites")) {
         try runExternalSuites(alloc, rest);
+        return;
+    }
+    if (std.mem.eql(u8, cmd, "docs-check")) {
+        try runDocsCheck(alloc);
+        return;
+    }
+    if (std.mem.eql(u8, cmd, "examples-check")) {
+        try runExamplesCheck(alloc);
         return;
     }
 

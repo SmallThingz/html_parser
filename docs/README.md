@@ -1,10 +1,9 @@
-# Usage (Legacy Redirect)
-
-This page is retained for backward links.
-
-Use these current docs instead:
+# Documentation Index
 
 - [Getting Started](getting-started.md)
 - [API Reference](api-reference.md)
 - [Selector Reference](selectors.md)
+- [Performance Guide](performance.md)
+- [Conformance Notes](conformance.md)
+- [Architecture](architecture.md)
 - [Troubleshooting](troubleshooting.md)

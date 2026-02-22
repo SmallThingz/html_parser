@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+jobs:
+  docs-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Zig fmt check
+        shell: bash
+        run: |
+          files=$(find . -type f -name '*.zig' \
+            -not -path './.zig-cache/*' \
+            -not -path './zig-out/*' \
+            -not -path './bench/parsers/*' \
+            -not -path './bench/build/*')
+          zig fmt --check $files
+
+      - name: Unit tests
+        run: zig build test
+
+      - name: Docs check
+        run: zig build docs-check
+
+      - name: Examples check
+        run: zig build examples-check

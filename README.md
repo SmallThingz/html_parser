@@ -1,39 +1,46 @@
 # htmlparser
 
-A high-throughput, destructive, non-alloc-first HTML parser and selector engine written in Zig.
+`htmlparser` is a high-throughput, destructive, non-alloc-first HTML parser and selector engine written in Zig.
 
-## Status
-
-This library is tuned for speed and permissive parsing behavior. It is ready for integration in systems where:
-
-- input can be mutable (`[]u8`) and may be rewritten in place,
-- browser-perfect HTML5 behavior is not required,
-- query/navigation hot paths should avoid allocations.
+It is designed for systems where input can be mutable (`[]u8`), parsing can be permissive, and query/navigation hot paths should avoid allocations.
 
 Target Zig version: `0.15.2`.
 
-## Key Features
+## Key Properties
 
-- Document and fragment parsing.
-- CSS-like selector queries:
-  - `queryOne` / `queryAll` (compile-time selector strings),
-  - `queryOneRuntime` / `queryAllRuntime` (runtime selector strings),
-  - `queryOneCompiled` / `queryAllCompiled` (precompiled selectors).
-- Element navigation:
+- Mutable, in-place parsing (`[]u8` input is rewritten during parse and lazy decode paths).
+- Fast selector queries:
+  - compile-time selectors (`queryOne`, `queryAll`),
+  - runtime selectors (`queryOneRuntime`, `queryAllRuntime`),
+  - precompiled runtime selectors (`queryOneCompiled`, `queryAllCompiled`).
+- Element navigation without query-time allocations:
   - `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children`.
-- In-place attribute engine:
-  - lazy parse/decode of attribute values,
-  - no attribute-object allocation in the query hot path.
-- `innerText` with configurable whitespace normalization.
-- Optional turbo parsing mode for benchmark-oriented throughput.
+- In-place attribute state machine with lazy parse/decode.
+- Optional throughput mode (`turbo_parse = true`) for benchmark-oriented parse workloads.
 
-## Quick Start
+## Installation
+
+As a local dependency (path-based):
+
+```bash
+zig fetch --save path:.
+```
+
+Then import in Zig code:
+
+```zig
+const html = @import("htmlparser");
+```
+
+## Quick Start (Test-Backed)
+
+This snippet matches `examples/basic_parse_query.zig`.
 
 ```zig
 const std = @import("std");
 const html = @import("htmlparser");
 
-test "quick start" {
+test "basic parse + query" {
     var doc = html.Document.init(std.testing.allocator);
     defer doc.deinit();
 
@@ -45,50 +52,43 @@ test "quick start" {
 }
 ```
 
-## Documentation
+## API Surface Summary
 
-- `/home/a/projects/zig/htmlparser/docs/overview.md`
-- `/home/a/projects/zig/htmlparser/docs/usage.md`
-- `/home/a/projects/zig/htmlparser/docs/selectors.md`
-- `/home/a/projects/zig/htmlparser/docs/performance.md`
+| Type/API | Purpose |
+|---|---|
+| `Document` | Parse owner, node storage, query entrypoint. |
+| `Node` | Borrowed handle for navigation, attributes, text extraction, scoped queries. |
+| `Selector` | Compiled selector representation (`compile` / `compileRuntime`). |
+| `ParseOptions` | Parse behavior knobs (normalization, parent pointers, turbo mode). |
+| `TextOptions` | Text extraction options (`normalize_whitespace`). |
 
-## Running Tests
+## Operational Caveats
 
-```bash
-zig test /home/a/projects/zig/htmlparser/src/root.zig
-```
+- Input is mutable and destructively parsed.
+- `*const Node` pointers are valid while the owning `Document` is alive and not reparsed/cleared.
+- `queryAllRuntime` iterators are invalidated by newer `queryAllRuntime` calls on the same document.
+- `innerText` may allocate when concatenation is required.
 
-or:
+## Build and Validation
 
 ```bash
 zig build test
+zig build docs-check
+zig build examples-check
+zig build ship-check
 ```
 
-## Benchmarking
+## Benchmarking and Conformance
 
 ```bash
 zig build bench-compare
-```
-
-This runs parse/query benchmark suites and writes reports under `bench/results/`.
-
-Direct tooling command:
-
-```bash
-zig build tools -- run-benchmarks --profile quick
-```
-
-
-## Conformance
-
-```bash
 zig build conformance
 ```
 
-Runs external selector and parser conformance suites in both `strict` and `turbo` parse modes and writes JSON results to `bench/results/external_suite_report.json`.
+## Documentation
 
-Direct tooling command:
+See `docs/README.md`.
 
-```bash
-zig build tools -- run-external-suites --mode both
-```
+## License
+
+MIT. See `LICENSE`.

@@ -1,49 +1,69 @@
 # Selector Reference
 
-## Supported (v1)
+## Supported Selector Features
+
+Simple selectors:
 
 - Tag: `div`
+- Universal: `*`
 - ID: `#main`
 - Class: `.item`
-- Attribute selectors:
-  - `[a]`
-  - `[a=v]`
-  - `[a^=v]`
-  - `[a$=v]`
-  - `[a*=v]`
-  - `[a~=v]`
-  - `[a|=v]`
-- Combinators:
-  - descendant: `a b`
-  - child: `a > b`
-  - adjacent sibling: `a + b`
-  - general sibling: `a ~ b`
-- Grouping: `a, b, c`
-- Pseudo-classes:
-  - `:first-child`
-  - `:last-child`
-  - `:nth-child(An+B)`
-  - `:not(...)` (simple selector only)
 
-## Compile-Time Selectors
+Attribute selectors:
+
+- `[a]`
+- `[a=v]`
+- `[a^=v]`
+- `[a$=v]`
+- `[a*=v]`
+- `[a~=v]`
+- `[a|=v]`
+
+Combinators:
+
+- Descendant: `a b`
+- Child: `a > b`
+- Adjacent sibling: `a + b`
+- General sibling: `a ~ b`
+
+Grouping:
+
+- `a, b, c`
+
+Pseudo classes:
+
+- `:first-child`
+- `:last-child`
+- `:nth-child(An+B)`
+- `:not(...)` (simple selector payload)
+
+`nth-child` parser supports common shorthand forms:
+
+- `odd`
+- `even`
+- `3n+1`
+- `+3n-2`
+- `-n+6`
+
+## Compilation Modes
+
+Compile-time (invalid selectors fail compilation):
 
 ```zig
 const first = doc.queryOne("div#app > a.nav");
-var all = doc.queryAll("ul#menu li.item");
+var it = doc.queryAll("ul#menu li.item");
+_ = .{ first, it };
 ```
 
-Invalid compile-time selectors fail at compile time.
-
-## Runtime Selectors
+Runtime (invalid selectors return `error.InvalidSelector`):
 
 ```zig
-const node = try doc.queryOneRuntime("div#app > a.nav");
-var it = try doc.queryAllRuntime("ul#menu li.item");
+const one = try doc.queryOneRuntime("div#app > a.nav");
+var all = try doc.queryAllRuntime("ul#menu li.item");
+_ = .{ one, all };
 ```
 
-Invalid runtime selectors return `error.InvalidSelector`.
-
-## Compiled Runtime Selectors
+Compiled runtime selectors:
 
 ```zig
 var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -54,4 +74,7 @@ const n = doc.queryOneCompiled(&sel);
 _ = n;
 ```
 
-Use this for high-frequency repeated queries.
+## Current Non-Goals
+
+- Full browser CSS selector parity is not guaranteed.
+- This engine targets high-throughput server-side use cases with pragmatic semantics.

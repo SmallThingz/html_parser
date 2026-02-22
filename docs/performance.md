@@ -1,40 +1,42 @@
-# Performance and Benchmarking
+# Performance Guide
 
-## What Is Optimized
+## Modes
 
-- Parse hot loops use table-driven character classes and scanner jump primitives.
-- Attribute matching uses an in-place lazy attribute state machine.
-- Compile-time selectors remove runtime parse overhead for static queries.
-- Runtime query wrappers include one-entry selector caches for repeated selectors.
+- `strict` mode (`turbo_parse = false`): default semantics and eager parse behavior.
+- `turbo` mode (`turbo_parse = true`): parse-throughput-oriented path that defers non-essential work.
 
-## Running Benchmarks
+Typical turbo configuration:
 
-### Full comparison
+```zig
+try doc.parse(&input, .{
+    .turbo_parse = true,
+    .eager_child_views = false,
+    .eager_attr_empty_rewrite = false,
+});
+```
+
+## Benchmark Commands
 
 ```bash
 zig build bench-compare
-# or directly:
 zig build tools -- run-benchmarks --profile quick
+zig build tools -- run-benchmarks --profile stable
 ```
 
-### Manual benchmark executable
-
-```bash
-zig build bench -- parse
-zig build bench -- query-match
-```
-
-## Bench Output
-
-Benchmark reports are written to:
+Output artifacts:
 
 - `bench/results/latest.md`
 - `bench/results/latest.json`
 
-The parse table may include streaming parsers (for example `lol-html`) as parse-only comparators.
+## Throughput Notes
 
-## Practical Tuning
+- Parse throughput is benchmarked against `strlen`, `lexbor`, `gumbo-modern`, `html5ever`, and parse-only `lol-html`.
+- Query parse/match sections are measured on `htmlparser` only.
+- For repeated runtime selector workloads, prefer `Selector.compileRuntime` + `query*Compiled` APIs.
 
-- For lowest latency query loops, precompile selectors once and call `queryOneCompiled` / `queryAllCompiled`.
-- For max parse throughput experiments, set `turbo_parse = true`.
-- If your workflow calls `children()` heavily, `eager_child_views = true` avoids first-call lazy build cost.
+## Methodology
+
+- ReleaseFast builds.
+- Fixed fixture set under `bench/fixtures/`.
+- Iteration profiles: `quick` and `stable`.
+- Create+destroy per parse iteration for parity.
