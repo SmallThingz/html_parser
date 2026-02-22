@@ -176,8 +176,10 @@ pub const Document = struct {
     child_ptrs: std.ArrayListUnmanaged(*const Node) = .{},
     parse_stack: std.ArrayListUnmanaged(u32) = .{},
 
-    query_one_arena: std.heap.ArenaAllocator,
-    query_all_arena: std.heap.ArenaAllocator,
+    query_one_arena: std.heap.ArenaAllocator = undefined,
+    query_all_arena: std.heap.ArenaAllocator = undefined,
+    query_one_arena_inited: bool = false,
+    query_all_arena_inited: bool = false,
     query_all_generation: u64 = 1,
     query_one_cached_selector: []const u8 = "",
     query_one_cached_compiled: ?ast.Selector = null,
@@ -189,8 +191,6 @@ pub const Document = struct {
     pub fn init(allocator: std.mem.Allocator) Document {
         return .{
             .allocator = allocator,
-            .query_one_arena = std.heap.ArenaAllocator.init(allocator),
-            .query_all_arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
 
@@ -198,16 +198,16 @@ pub const Document = struct {
         self.nodes.deinit(self.allocator);
         self.child_ptrs.deinit(self.allocator);
         self.parse_stack.deinit(self.allocator);
-        self.query_one_arena.deinit();
-        self.query_all_arena.deinit();
+        if (self.query_one_arena_inited) self.query_one_arena.deinit();
+        if (self.query_all_arena_inited) self.query_all_arena.deinit();
     }
 
     pub fn clear(self: *Document) void {
         self.nodes.clearRetainingCapacity();
         self.child_ptrs.clearRetainingCapacity();
         self.parse_stack.clearRetainingCapacity();
-        _ = self.query_one_arena.reset(.retain_capacity);
-        _ = self.query_all_arena.reset(.retain_capacity);
+        if (self.query_one_arena_inited) _ = self.query_one_arena.reset(.retain_capacity);
+        if (self.query_all_arena_inited) _ = self.query_all_arena.reset(.retain_capacity);
         self.invalidateRuntimeSelectorCaches();
         self.query_all_generation +%= 1;
         if (self.query_all_generation == 0) self.query_all_generation = 1;
@@ -314,6 +314,7 @@ pub const Document = struct {
             return self.query_one_cached_compiled.?;
         }
 
+        self.ensureQueryOneArena();
         _ = self.query_one_arena.reset(.retain_capacity);
         const sel = try ast.Selector.compileRuntime(self.query_one_arena.allocator(), selector);
         self.query_one_cached_selector = sel.source;
@@ -327,6 +328,7 @@ pub const Document = struct {
             return self.query_all_cached_compiled.?;
         }
 
+        self.ensureQueryAllArena();
         _ = self.query_all_arena.reset(.retain_capacity);
         const sel = try ast.Selector.compileRuntime(self.query_all_arena.allocator(), selector);
         self.query_all_cached_selector = sel.source;
@@ -335,25 +337,64 @@ pub const Document = struct {
         return sel;
     }
 
+    fn ensureQueryOneArena(self: *Document) void {
+        if (self.query_one_arena_inited) return;
+        self.query_one_arena = std.heap.ArenaAllocator.init(self.allocator);
+        self.query_one_arena_inited = true;
+    }
+
+    fn ensureQueryAllArena(self: *Document) void {
+        if (self.query_all_arena_inited) return;
+        self.query_all_arena = std.heap.ArenaAllocator.init(self.allocator);
+        self.query_all_arena_inited = true;
+    }
+
     fn buildChildViews(self: *Document) !void {
         const alloc = self.allocator;
+        const node_count = self.nodes.items.len;
         self.child_ptrs.clearRetainingCapacity();
-        const child_ptr_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
-        try self.child_ptrs.ensureTotalCapacity(alloc, child_ptr_count);
+        if (node_count == 0) return;
 
-        var i: u32 = 0;
-        while (i < self.nodes.items.len) : (i += 1) {
-            var n = &self.nodes.items[i];
-            n.child_view_start = @intCast(self.child_ptrs.items.len);
-            n.child_view_len = 0;
-
-            var child = n.first_child;
-            while (child != InvalidIndex) {
-                self.child_ptrs.appendAssumeCapacity(&self.nodes.items[child]);
-                n.child_view_len += 1;
-                child = self.nodes.items[child].next_sibling;
-            }
+        var i: usize = 0;
+        while (i < node_count) : (i += 1) {
+            self.nodes.items[i].child_view_start = 0;
+            self.nodes.items[i].child_view_len = 0;
         }
+
+        var total_children: usize = 0;
+        i = 1;
+        while (i < node_count) : (i += 1) {
+            const p = self.nodes.items[i].parent;
+            if (p == InvalidIndex) continue;
+            self.nodes.items[p].child_view_len += 1;
+            total_children += 1;
+        }
+
+        try self.child_ptrs.resize(alloc, total_children);
+
+        var offset: u32 = 0;
+        i = 0;
+        while (i < node_count) : (i += 1) {
+            var n = &self.nodes.items[i];
+            n.child_view_start = offset;
+            offset += n.child_view_len;
+        }
+
+        try self.parse_stack.resize(alloc, node_count);
+        @memset(self.parse_stack.items, 0);
+
+        i = 1;
+        while (i < node_count) : (i += 1) {
+            const p = self.nodes.items[i].parent;
+            if (p == InvalidIndex) continue;
+
+            const write_off = self.parse_stack.items[p];
+            const dst_index: usize = @intCast(self.nodes.items[p].child_view_start + write_off);
+            self.child_ptrs.items[dst_index] = &self.nodes.items[i];
+            self.parse_stack.items[p] = write_off + 1;
+        }
+
+        self.parse_stack.clearRetainingCapacity();
     }
 };
 

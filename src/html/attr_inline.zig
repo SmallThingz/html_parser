@@ -8,6 +8,13 @@ const RawKind = enum {
     naked,
 };
 
+const LookupKind = enum(u2) {
+    generic,
+    id,
+    class,
+    href,
+};
+
 const RawValue = struct {
     kind: RawKind,
     start: usize,
@@ -18,6 +25,7 @@ const RawValue = struct {
 pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const u8 {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
+    const lookup_kind = classifyLookupName(name);
 
     var i: usize = node.attr_bytes_start;
     const end: usize = node.attr_bytes_end;
@@ -39,7 +47,7 @@ pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const 
 
         const name_end = i;
         const attr_name = source[name_start..name_end];
-        const is_target = matchesLookupName(attr_name, name);
+        const is_target = matchesLookupNamePreclassified(attr_name, name, lookup_kind);
 
         if (i >= end) {
             if (is_target) return "";
@@ -333,10 +341,28 @@ fn firstUnresolvedMatch(selected_names: []const []const u8, out_values: []const 
 }
 
 fn matchesLookupName(attr_name: []const u8, lookup: []const u8) bool {
-    if (isExactAsciiWord(lookup, "id")) return isExactAsciiWord(attr_name, "id");
-    if (isExactAsciiWord(lookup, "class")) return isExactAsciiWord(attr_name, "class");
-    if (isExactAsciiWord(lookup, "href")) return isExactAsciiWord(attr_name, "href");
-    return tables.eqlIgnoreCaseAscii(attr_name, lookup);
+    const kind = classifyLookupName(lookup);
+    return matchesLookupNameWithKind(attr_name, lookup, kind);
+}
+
+fn matchesLookupNamePreclassified(attr_name: []const u8, lookup: []const u8, lookup_kind: LookupKind) bool {
+    return matchesLookupNameWithKind(attr_name, lookup, lookup_kind);
+}
+
+fn matchesLookupNameWithKind(attr_name: []const u8, lookup: []const u8, lookup_kind: LookupKind) bool {
+    return switch (lookup_kind) {
+        .id => isExactAsciiWord(attr_name, "id"),
+        .class => isExactAsciiWord(attr_name, "class"),
+        .href => isExactAsciiWord(attr_name, "href"),
+        .generic => tables.eqlIgnoreCaseAscii(attr_name, lookup),
+    };
+}
+
+fn classifyLookupName(lookup: []const u8) LookupKind {
+    if (isExactAsciiWord(lookup, "id")) return .id;
+    if (isExactAsciiWord(lookup, "class")) return .class;
+    if (isExactAsciiWord(lookup, "href")) return .href;
+    return .generic;
 }
 
 fn isExactAsciiWord(value: []const u8, comptime lower: []const u8) bool {
