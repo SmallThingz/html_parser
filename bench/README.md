@@ -36,6 +36,10 @@ FORCE_REFRESH=1 ./bench/setup_fixtures.sh
 
 ```bash
 ./bench/run_benchmarks.py
+# default profile is quick
+./bench/run_benchmarks.py --profile quick
+# low-noise acceptance profile
+./bench/run_benchmarks.py --profile stable
 ```
 
 Or run the full setup + comparison from Zig build:

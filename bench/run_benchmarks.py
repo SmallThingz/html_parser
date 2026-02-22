@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import statistics
 import subprocess
@@ -13,14 +14,6 @@ BIN_DIR = BUILD_DIR / "bin"
 RESULTS_DIR = BENCH_DIR / "results"
 FIXTURES_DIR = BENCH_DIR / "fixtures"
 
-FIXTURES = [
-    ("rust-lang.html", 300),
-    ("wiki-html.html", 40),
-    ("mdn-html.html", 60),
-    ("w3-html52.html", 12),
-    ("hn.html", 120),
-]
-
 PARSERS = [
     "ours",
     "strlen",
@@ -29,21 +22,52 @@ PARSERS = [
     "html5ever",
 ]
 
-QUERY_PARSE_CASES = [
-    ("simple", "li.x", 1_000_000),
-    ("complex", "ul > li.item[data-prefix^=pre]:not(.skip) span.name", 400_000),
-    ("grouped", "li#li1, li#li2, li:nth-child(2n+1)", 400_000),
-]
-
-QUERY_MATCH_CASES = [
-    ("attr-heavy-button", "rust-lang.html", "a[href^=https][class*=button]:not(.missing)", 300_000),
-    ("attr-heavy-nav", "rust-lang.html", "a[href^=https][class*=nav]:not(.missing)", 300_000),
-]
-
-QUERY_COMPILED_CASES = [
-    ("attr-heavy-button", "rust-lang.html", "a[href^=https][class*=button]:not(.missing)", 300_000),
-    ("attr-heavy-nav", "rust-lang.html", "a[href^=https][class*=nav]:not(.missing)", 300_000),
-]
+PROFILES = {
+    "quick": {
+        "fixtures": [
+            ("rust-lang.html", 150),
+            ("wiki-html.html", 20),
+            ("mdn-html.html", 30),
+            ("w3-html52.html", 12),
+            ("hn.html", 60),
+        ],
+        "query_parse_cases": [
+            ("simple", "li.x", 100_000),
+            ("complex", "ul > li.item[data-prefix^=pre]:not(.skip) span.name", 40_000),
+            ("grouped", "li#li1, li#li2, li:nth-child(2n+1)", 40_000),
+        ],
+        "query_match_cases": [
+            ("attr-heavy-button", "rust-lang.html", "a[href^=https][class*=button]:not(.missing)", 30_000),
+            ("attr-heavy-nav", "rust-lang.html", "a[href^=https][class*=nav]:not(.missing)", 30_000),
+        ],
+        "query_compiled_cases": [
+            ("attr-heavy-button", "rust-lang.html", "a[href^=https][class*=button]:not(.missing)", 30_000),
+            ("attr-heavy-nav", "rust-lang.html", "a[href^=https][class*=nav]:not(.missing)", 30_000),
+        ],
+    },
+    "stable": {
+        "fixtures": [
+            ("rust-lang.html", 1500),
+            ("wiki-html.html", 200),
+            ("mdn-html.html", 300),
+            ("w3-html52.html", 120),
+            ("hn.html", 600),
+        ],
+        "query_parse_cases": [
+            ("simple", "li.x", 1_000_000),
+            ("complex", "ul > li.item[data-prefix^=pre]:not(.skip) span.name", 400_000),
+            ("grouped", "li#li1, li#li2, li:nth-child(2n+1)", 400_000),
+        ],
+        "query_match_cases": [
+            ("attr-heavy-button", "rust-lang.html", "a[href^=https][class*=button]:not(.missing)", 1_000_000),
+            ("attr-heavy-nav", "rust-lang.html", "a[href^=https][class*=nav]:not(.missing)", 1_000_000),
+        ],
+        "query_compiled_cases": [
+            ("attr-heavy-button", "rust-lang.html", "a[href^=https][class*=button]:not(.missing)", 1_000_000),
+            ("attr-heavy-nav", "rust-lang.html", "a[href^=https][class*=nav]:not(.missing)", 1_000_000),
+        ],
+    },
+}
 
 REPEATS = 5
 
@@ -232,11 +256,12 @@ def bench_query_exec_one(case_name: str, fixture_name: str, selector: str, itera
     }
 
 
-def render_markdown(parse_results, query_parse_results, query_match_results, query_compiled_results):
+def render_markdown(profile_name, parse_results, query_parse_results, query_match_results, query_compiled_results):
     lines = []
     lines.append("# HTML Parser Benchmark Results")
     lines.append("")
     lines.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    lines.append(f"Profile: `{profile_name}`")
     lines.append("")
     lines.append("## Parse Throughput")
     lines.append("")
@@ -283,10 +308,11 @@ def render_markdown(parse_results, query_parse_results, query_match_results, que
     return "\n".join(lines)
 
 
-def render_console(parse_results, query_parse_results, query_match_results, query_compiled_results):
+def render_console(profile_name, parse_results, query_parse_results, query_match_results, query_compiled_results):
     lines = []
     lines.append("HTML Parser Benchmark Results")
     lines.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    lines.append(f"Profile: {profile_name}")
     lines.append("")
 
     grouped = {}
@@ -345,34 +371,44 @@ def render_console(parse_results, query_parse_results, query_match_results, quer
     return "\n".join(lines)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run HTML parser benchmark suite")
+    parser.add_argument("--profile", choices=sorted(PROFILES.keys()), default="quick", help="benchmark profile to run")
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+    profile = PROFILES[args.profile]
+
     ensure_dirs()
     ensure_external_parsers_built()
     build_runners()
 
     parse_results = []
-    for fixture_name, iterations in FIXTURES:
+    for fixture_name, iterations in profile["fixtures"]:
         for parser_name in PARSERS:
             print(f"benchmarking {parser_name} on {fixture_name} ({iterations} iters)")
             parse_results.append(bench_parse_one(parser_name, fixture_name, iterations))
 
     query_parse_results = []
-    for case_name, selector, iterations in QUERY_PARSE_CASES:
+    for case_name, selector, iterations in profile["query_parse_cases"]:
         print(f"benchmarking query-parse ours on {case_name} ({iterations} iters)")
         query_parse_results.append(bench_query_parse_one(case_name, selector, iterations))
 
     query_match_results = []
-    for case_name, fixture_name, selector, iterations in QUERY_MATCH_CASES:
+    for case_name, fixture_name, selector, iterations in profile["query_match_cases"]:
         print(f"benchmarking query-match ours on {case_name} ({iterations} iters)")
         query_match_results.append(bench_query_exec_one(case_name, fixture_name, selector, iterations, compiled=False))
 
     query_compiled_results = []
-    for case_name, fixture_name, selector, iterations in QUERY_COMPILED_CASES:
+    for case_name, fixture_name, selector, iterations in profile["query_compiled_cases"]:
         print(f"benchmarking query-compiled ours on {case_name} ({iterations} iters)")
         query_compiled_results.append(bench_query_exec_one(case_name, fixture_name, selector, iterations, compiled=True))
 
     results_json = {
         "generated_unix": int(time.time()),
+        "profile": args.profile,
         "repeats": REPEATS,
         "parse_results": parse_results,
         "query_parse_results": query_parse_results,
@@ -384,12 +420,12 @@ def main():
     md_path = RESULTS_DIR / "latest.md"
 
     json_path.write_text(json.dumps(results_json, indent=2), encoding="utf-8")
-    md_path.write_text(render_markdown(parse_results, query_parse_results, query_match_results, query_compiled_results) + "\n", encoding="utf-8")
+    md_path.write_text(render_markdown(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results) + "\n", encoding="utf-8")
 
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
     print("")
-    print(render_console(parse_results, query_parse_results, query_match_results, query_compiled_results))
+    print(render_console(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results))
 
 
 if __name__ == "__main__":
