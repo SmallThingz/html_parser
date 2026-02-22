@@ -1,17 +1,6 @@
 const std = @import("std");
 const root = @import("htmlparser");
 
-const BenchMode = enum {
-    inline_mode,
-    legacy,
-
-    fn parse(arg: []const u8) !BenchMode {
-        if (std.mem.eql(u8, arg, "inline")) return .inline_mode;
-        if (std.mem.eql(u8, arg, "legacy")) return .legacy;
-        return error.InvalidMode;
-    }
-};
-
 pub fn runSynthetic() !void {
     const alloc = std.heap.page_allocator;
 
@@ -38,14 +27,7 @@ pub fn runSynthetic() !void {
     std.debug.print("query ns: {d}\n", .{query_end - query_start});
 }
 
-inline fn parseWithMode(doc: *root.Document, working: []u8, mode: BenchMode) !void {
-    switch (mode) {
-        .inline_mode => try doc.parse(working, .{ .attr_storage_mode = .inplace }),
-        .legacy => try doc.parse(working, .{ .attr_storage_mode = .legacy }),
-    }
-}
-
-pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
+pub fn runParseFile(path: []const u8, iterations: usize) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -67,7 +49,7 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
         {
             var doc = root.Document.init(iter_alloc);
             defer doc.deinit();
-            try parseWithMode(&doc, working, mode);
+            try doc.parse(working, .{});
         }
         _ = parse_arena.reset(.retain_capacity);
     }
@@ -95,7 +77,7 @@ pub fn runQueryParse(selector: []const u8, iterations: usize) !u64 {
     return @intCast(end - start);
 }
 
-pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
+pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -108,12 +90,42 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, 
 
     var doc = root.Document.init(alloc);
     defer doc.deinit();
-    try parseWithMode(&doc, working, mode);
+    try doc.parse(working, .{});
 
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         _ = doc.queryOneRuntime(selector) catch null;
+    }
+    const end = std.time.nanoTimestamp();
+
+    return @intCast(end - start);
+}
+
+pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usize) !u64 {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
+    const input = try std.fs.cwd().readFileAlloc(alloc, path, std.math.maxInt(usize));
+    defer alloc.free(input);
+
+    const working = try alloc.dupe(u8, input);
+    defer alloc.free(working);
+
+    var sel_arena = std.heap.ArenaAllocator.init(alloc);
+    defer sel_arena.deinit();
+
+    const sel = try root.Selector.compileRuntime(sel_arena.allocator(), selector);
+
+    var doc = root.Document.init(alloc);
+    defer doc.deinit();
+    try doc.parse(working, .{});
+
+    const start = std.time.nanoTimestamp();
+    var i: usize = 0;
+    while (i < iterations) : (i += 1) {
+        _ = doc.queryOneCompiled(&sel);
     }
     const end = std.time.nanoTimestamp();
 
@@ -133,31 +145,36 @@ pub fn main() !void {
         return;
     }
 
-    if ((args.len == 4 or args.len == 5) and std.mem.eql(u8, args[1], "query-parse")) {
+    if (args.len == 4 and std.mem.eql(u8, args[1], "query-parse")) {
         const iterations = try std.fmt.parseInt(usize, args[3], 10);
         const total_ns = try runQueryParse(args[2], iterations);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
 
-    if ((args.len == 5 or args.len == 6) and std.mem.eql(u8, args[1], "query-match")) {
+    if (args.len == 5 and std.mem.eql(u8, args[1], "query-match")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const mode: BenchMode = if (args.len == 6) try BenchMode.parse(args[5]) else .inline_mode;
-        const total_ns = try runQueryMatch(args[2], args[3], iterations, mode);
+        const total_ns = try runQueryMatch(args[2], args[3], iterations);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
 
-    if (args.len != 3 and args.len != 4) {
+    if (args.len == 5 and std.mem.eql(u8, args[1], "query-compiled")) {
+        const iterations = try std.fmt.parseInt(usize, args[4], 10);
+        const total_ns = try runQueryCompiled(args[2], args[3], iterations);
+        std.debug.print("{d}\n", .{total_ns});
+        return;
+    }
+
+    if (args.len != 3) {
         std.debug.print(
-            "usage:\n  {s} <html-file> <iterations> [inline|legacy]\n  {s} query-parse <selector> <iterations> [inline|legacy]\n  {s} query-match <html-file> <selector> <iterations> [inline|legacy]\n",
-            .{ args[0], args[0], args[0] },
+            "usage:\n  {s} <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n",
+            .{ args[0], args[0], args[0], args[0] },
         );
         std.process.exit(2);
     }
 
     const iterations = try std.fmt.parseInt(usize, args[2], 10);
-    const mode: BenchMode = if (args.len == 4) try BenchMode.parse(args[3]) else .inline_mode;
-    const total_ns = try runParseFile(args[1], iterations, mode);
+    const total_ns = try runParseFile(args[1], iterations);
     std.debug.print("{d}\n", .{total_ns});
 }

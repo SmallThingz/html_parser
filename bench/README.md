@@ -2,6 +2,7 @@
 
 This directory benchmarks `htmlparser` against other high-performance HTML parsers:
 
+- `strlen` baseline (C) for raw string scan comparison
 - `lexbor` (C, HTML5 parser)
 - `gumbo-modern` (maintained Gumbo fork, C, HTML5 parser)
 - `html5ever` (Rust, browser-grade HTML5 parser)
@@ -20,6 +21,15 @@ Default fixture set includes:
 ```bash
 ./bench/setup_parsers.sh
 ./bench/setup_fixtures.sh
+```
+
+`setup_fixtures.sh` now caches downloads: existing non-empty fixture files are reused.
+To force refresh all fixture downloads:
+
+```bash
+./bench/setup_fixtures.sh --refresh
+# or
+FORCE_REFRESH=1 ./bench/setup_fixtures.sh
 ```
 
 ## Run

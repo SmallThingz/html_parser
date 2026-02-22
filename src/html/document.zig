@@ -8,17 +8,11 @@ const node_api = @import("node.zig");
 
 pub const InvalidIndex: u32 = std.math.maxInt(u32);
 
-pub const AttrStorageMode = enum(u1) {
-    inplace,
-    legacy,
-};
-
 pub const ParseOptions = struct {
     store_parent_pointers: bool = true,
     normalize_input: bool = true,
     normalize_text_on_parse: bool = false,
     permissive_recovery: bool = true,
-    attr_storage_mode: AttrStorageMode = .inplace,
 };
 
 pub const TextOptions = node_api.TextOptions;
@@ -46,13 +40,6 @@ pub const Span = struct {
     }
 };
 
-pub const Attribute = struct {
-    node_index: u32,
-    name: Span,
-    value: Span,
-    eq_index: u32 = InvalidIndex,
-};
-
 pub const Node = struct {
     doc: *Document,
     index: u32,
@@ -66,9 +53,6 @@ pub const Node = struct {
     close_start: u32 = 0,
     close_end: u32 = 0,
 
-    // Legacy attribute-object storage range.
-    attr_start: u32 = 0,
-    attr_len: u32 = 0,
     // In-place attribute byte range inside the opening tag.
     attr_bytes_start: u32 = 0,
     attr_bytes_end: u32 = 0,
@@ -126,7 +110,11 @@ pub const Node = struct {
 
     pub fn queryOne(self: *const @This(), comptime selector: []const u8) ?*const @This() {
         const sel = comptime ast.Selector.compile(selector);
-        return matcher.queryOne(Document, @This(), self.doc, sel, self.index);
+        return self.queryOneCompiled(&sel);
+    }
+
+    pub fn queryOneCompiled(self: *const @This(), sel: *const ast.Selector) ?*const @This() {
+        return matcher.queryOne(Document, @This(), self.doc, sel.*, self.index);
     }
 
     pub fn queryOneRuntime(self: *const @This(), selector: []const u8) runtime_selector.Error!?*const @This() {
@@ -135,7 +123,11 @@ pub const Node = struct {
 
     pub fn queryAll(self: *const @This(), comptime selector: []const u8) QueryIter {
         const sel = comptime ast.Selector.compile(selector);
-        return .{ .doc = self.doc, .selector = sel, .scope_root = self.index, .next_index = self.index + 1 };
+        return self.queryAllCompiled(&sel);
+    }
+
+    pub fn queryAllCompiled(self: *const @This(), sel: *const ast.Selector) QueryIter {
+        return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
     }
 
     pub fn queryAllRuntime(self: *const @This(), selector: []const u8) runtime_selector.Error!QueryIter {
@@ -179,16 +171,20 @@ pub const Document = struct {
     allocator: std.mem.Allocator,
     source: []u8 = &[_]u8{},
     store_parent_pointers: bool = true,
-    attr_storage_mode: AttrStorageMode = .inplace,
 
     nodes: std.ArrayListUnmanaged(Node) = .{},
-    attrs: std.ArrayListUnmanaged(Attribute) = .{},
     child_ptrs: std.ArrayListUnmanaged(*const Node) = .{},
     parse_stack: std.ArrayListUnmanaged(u32) = .{},
 
     query_one_arena: std.heap.ArenaAllocator,
     query_all_arena: std.heap.ArenaAllocator,
     query_all_generation: u64 = 1,
+    query_one_cached_selector: []const u8 = "",
+    query_one_cached_compiled: ?ast.Selector = null,
+    query_one_cache_valid: bool = false,
+    query_all_cached_selector: []const u8 = "",
+    query_all_cached_compiled: ?ast.Selector = null,
+    query_all_cache_valid: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Document {
         return .{
@@ -200,7 +196,6 @@ pub const Document = struct {
 
     pub fn deinit(self: *Document) void {
         self.nodes.deinit(self.allocator);
-        self.attrs.deinit(self.allocator);
         self.child_ptrs.deinit(self.allocator);
         self.parse_stack.deinit(self.allocator);
         self.query_one_arena.deinit();
@@ -209,11 +204,11 @@ pub const Document = struct {
 
     pub fn clear(self: *Document) void {
         self.nodes.clearRetainingCapacity();
-        self.attrs.clearRetainingCapacity();
         self.child_ptrs.clearRetainingCapacity();
         self.parse_stack.clearRetainingCapacity();
         _ = self.query_one_arena.reset(.retain_capacity);
         _ = self.query_all_arena.reset(.retain_capacity);
+        self.invalidateRuntimeSelectorCaches();
         self.query_all_generation +%= 1;
         if (self.query_all_generation == 0) self.query_all_generation = 1;
     }
@@ -222,14 +217,17 @@ pub const Document = struct {
         self.clear();
         self.source = input;
         self.store_parent_pointers = opts.store_parent_pointers;
-        self.attr_storage_mode = opts.attr_storage_mode;
         try parser.parseInto(Document, self, input, opts);
         try self.buildChildViews();
     }
 
     pub fn queryOne(self: *const Document, comptime selector: []const u8) ?*const Node {
         const sel = comptime ast.Selector.compile(selector);
-        return matcher.queryOne(Document, Node, self, sel, InvalidIndex);
+        return self.queryOneCompiled(&sel);
+    }
+
+    pub fn queryOneCompiled(self: *const Document, sel: *const ast.Selector) ?*const Node {
+        return matcher.queryOne(Document, Node, self, sel.*, InvalidIndex);
     }
 
     pub fn queryOneRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!?*const Node {
@@ -238,28 +236,18 @@ pub const Document = struct {
 
     fn queryOneRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!?*const Node {
         const mut_self: *Document = @constCast(self);
-        const arena = &mut_self.query_one_arena;
-        _ = arena.reset(.retain_capacity);
-
-        const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
-        const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
-        const end_excl: u32 = if (scope_root == InvalidIndex)
-            @as(u32, @intCast(self.nodes.items.len))
-        else
-            self.nodes.items[scope_root].subtree_end + 1;
-
-        var i = start;
-        while (i < end_excl and i < self.nodes.items.len) : (i += 1) {
-            const node = &self.nodes.items[i];
-            if (node.kind != .element) continue;
-            if (matcher.matchesSelectorAt(Document, self, sel, i)) return node;
-        }
-        return null;
+        const sel = try mut_self.getOrCompileQueryOneSelector(selector);
+        if (scope_root == InvalidIndex) return self.queryOneCompiled(&sel);
+        return matcher.queryOne(Document, Node, self, sel, scope_root);
     }
 
     pub fn queryAll(self: *const Document, comptime selector: []const u8) QueryIter {
         const sel = comptime ast.Selector.compile(selector);
-        return .{ .doc = self, .selector = sel, .scope_root = InvalidIndex, .next_index = 1 };
+        return self.queryAllCompiled(&sel);
+    }
+
+    pub fn queryAllCompiled(self: *const Document, sel: *const ast.Selector) QueryIter {
+        return .{ .doc = self, .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
     }
 
     pub fn queryAllRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!QueryIter {
@@ -268,19 +256,21 @@ pub const Document = struct {
 
     fn queryAllRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!QueryIter {
         const mut_self: *Document = @constCast(self);
-        const arena = &mut_self.query_all_arena;
-        _ = arena.reset(.retain_capacity);
         mut_self.query_all_generation +%= 1;
         if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
 
-        const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
-        return .{
-            .doc = self,
-            .selector = sel,
-            .scope_root = scope_root,
-            .next_index = if (scope_root == InvalidIndex) 1 else scope_root + 1,
-            .runtime_generation = mut_self.query_all_generation,
-        };
+        const sel = try mut_self.getOrCompileQueryAllSelector(selector);
+        var out = if (scope_root == InvalidIndex)
+            self.queryAllCompiled(&sel)
+        else
+            QueryIter{
+                .doc = self,
+                .selector = sel,
+                .scope_root = scope_root,
+                .next_index = scope_root + 1,
+            };
+        out.runtime_generation = mut_self.query_all_generation;
+        return out;
     }
 
     pub fn html(self: *const Document) ?*const Node {
@@ -310,9 +300,46 @@ pub const Document = struct {
         return &self.nodes.items[idx];
     }
 
+    fn invalidateRuntimeSelectorCaches(self: *Document) void {
+        self.query_one_cache_valid = false;
+        self.query_one_cached_selector = "";
+        self.query_one_cached_compiled = null;
+        self.query_all_cache_valid = false;
+        self.query_all_cached_selector = "";
+        self.query_all_cached_compiled = null;
+    }
+
+    fn getOrCompileQueryOneSelector(self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
+        if (self.query_one_cache_valid and std.mem.eql(u8, self.query_one_cached_selector, selector)) {
+            return self.query_one_cached_compiled.?;
+        }
+
+        _ = self.query_one_arena.reset(.retain_capacity);
+        const sel = try ast.Selector.compileRuntime(self.query_one_arena.allocator(), selector);
+        self.query_one_cached_selector = sel.source;
+        self.query_one_cached_compiled = sel;
+        self.query_one_cache_valid = true;
+        return sel;
+    }
+
+    fn getOrCompileQueryAllSelector(self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
+        if (self.query_all_cache_valid and std.mem.eql(u8, self.query_all_cached_selector, selector)) {
+            return self.query_all_cached_compiled.?;
+        }
+
+        _ = self.query_all_arena.reset(.retain_capacity);
+        const sel = try ast.Selector.compileRuntime(self.query_all_arena.allocator(), selector);
+        self.query_all_cached_selector = sel.source;
+        self.query_all_cached_compiled = sel;
+        self.query_all_cache_valid = true;
+        return sel;
+    }
+
     fn buildChildViews(self: *Document) !void {
         const alloc = self.allocator;
         self.child_ptrs.clearRetainingCapacity();
+        const child_ptr_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
+        try self.child_ptrs.ensureTotalCapacity(alloc, child_ptr_count);
 
         var i: u32 = 0;
         while (i < self.nodes.items.len) : (i += 1) {
@@ -322,7 +349,7 @@ pub const Document = struct {
 
             var child = n.first_child;
             while (child != InvalidIndex) {
-                try self.child_ptrs.append(alloc, &self.nodes.items[child]);
+                self.child_ptrs.appendAssumeCapacity(&self.nodes.items[child]);
                 n.child_view_len += 1;
                 child = self.nodes.items[child].next_sibling;
             }
@@ -582,6 +609,15 @@ test "node-scoped queries return complete descendants only" {
     try expectNodeQueryComptime(sibs, "a.link", &.{ "a1", "a2", "a3" });
     try expectNodeQueryRuntime(sibs, "a + span.marker", &.{"after_a2"});
     try expectNodeQueryRuntime(sibs, "li", &.{});
+
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const sel = try ast.Selector.compileRuntime(arena.allocator(), "a.link");
+    var it = sibs.queryAllCompiled(&sel);
+    try expectIterIds(&it, &.{ "a1", "a2", "a3" });
+    const first = sibs.queryOneCompiled(&sel) orelse return error.TestUnexpectedResult;
+    const id = first.getAttributeValue("id") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("a1", id);
 }
 
 test "innerText normalizes whitespace by default" {
@@ -676,7 +712,7 @@ test "inplace attribute parser rewrites explicit empty assignment to name-only" 
     defer doc.deinit();
 
     var html = "<div id='x' b a=   ></div>".*;
-    try doc.parse(&html, .{ .attr_storage_mode = .inplace });
+    try doc.parse(&html, .{});
 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
     const a = node.getAttributeValue("a") orelse return error.TestUnexpectedResult;
@@ -697,7 +733,7 @@ test "inplace attr lazy parse updates state markers and supports selector-trigge
     defer doc.deinit();
 
     var html = "<div id='x' q='&amp;z' n=a&amp;b></div>".*;
-    try doc.parse(&html, .{ .attr_storage_mode = .inplace });
+    try doc.parse(&html, .{});
 
     const by_selector = try doc.queryOneRuntime("div[q='&z'][n='a&b']");
     try std.testing.expect(by_selector != null);
@@ -720,6 +756,28 @@ test "inplace attr lazy parse updates state markers and supports selector-trigge
     try std.testing.expect(span[n_pos + 2] != 0);
 }
 
+test "attribute matching short-circuits and does not parse later attrs on early failure" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x' href='/local' class='button'></div>".*;
+    try doc.parse(&html, .{});
+
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const sel = try ast.Selector.compileRuntime(arena.allocator(), "div[href^=https][class*=button]");
+    try std.testing.expect(doc.queryOneCompiled(&sel) == null);
+    try std.testing.expect((try doc.queryOneRuntime("div[href^=https][class*=button]")) == null);
+
+    const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
+    const span = doc.source[node.attr_bytes_start..node.attr_bytes_end];
+    const class_pos = std.mem.indexOf(u8, span, "class") orelse return error.TestUnexpectedResult;
+    const marker_pos = class_pos + "class".len;
+    try std.testing.expect(marker_pos < span.len);
+    try std.testing.expectEqual(@as(u8, '='), span[marker_pos]);
+}
+
 test "inplace extended skip metadata preserves traversal for following attributes" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
@@ -737,7 +795,7 @@ test "inplace extended skip metadata preserves traversal for following attribute
     const html = try builder.toOwnedSlice(alloc);
     defer alloc.free(html);
 
-    try doc.parse(html, .{ .attr_storage_mode = .inplace });
+    try doc.parse(html, .{});
 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
     const a = node.getAttributeValue("a") orelse return error.TestUnexpectedResult;
@@ -748,17 +806,13 @@ test "inplace extended skip metadata preserves traversal for following attribute
     try std.testing.expectEqualStrings("ok", b);
 }
 
-test "selector results parity between inplace and legacy attr storage" {
+test "compiled selector APIs are equivalent to runtime string wrappers" {
     const alloc = std.testing.allocator;
-    var doc_inplace = Document.init(alloc);
-    defer doc_inplace.deinit();
-    var doc_legacy = Document.init(alloc);
-    defer doc_legacy.deinit();
+    var doc = Document.init(alloc);
+    defer doc.deinit();
 
-    var html_inplace = selector_fixture_html.*;
-    var html_legacy = selector_fixture_html.*;
-    try doc_inplace.parse(&html_inplace, .{ .attr_storage_mode = .inplace });
-    try doc_legacy.parse(&html_legacy, .{ .attr_storage_mode = .legacy });
+    var html = selector_fixture_html.*;
+    try doc.parse(&html, .{});
 
     const cases = [_]struct { selector: []const u8, expected: []const []const u8 }{
         .{ .selector = "li", .expected = &.{ "li1", "li2", "li3" } },
@@ -767,10 +821,46 @@ test "selector results parity between inplace and legacy attr storage" {
         .{ .selector = "li:not([data-k=x])", .expected = &.{ "li1", "li2" } },
         .{ .selector = "ul li > span.name", .expected = &.{ "name1", "name2", "name3" } },
         .{ .selector = "a.hot ~ a.link", .expected = &.{"a3"} },
+        .{ .selector = "a[href^=https][class*=button]:not(.missing)", .expected = &.{} },
+        .{ .selector = "a[href^=https][class*=nav]:not(.missing)", .expected = &.{} },
     };
 
     inline for (cases) |case| {
-        try expectDocQueryRuntime(&doc_inplace, case.selector, case.expected);
-        try expectDocQueryRuntime(&doc_legacy, case.selector, case.expected);
+        var arena = std.heap.ArenaAllocator.init(alloc);
+        defer arena.deinit();
+        const sel = try ast.Selector.compileRuntime(arena.allocator(), case.selector);
+        try expectDocQueryRuntime(&doc, case.selector, case.expected);
+
+        var it = doc.queryAllCompiled(&sel);
+        try expectIterIds(&it, case.expected);
+        const first = doc.queryOneCompiled(&sel);
+        if (case.expected.len == 0) {
+            try std.testing.expect(first == null);
+        } else {
+            const node = first orelse return error.TestUnexpectedResult;
+            const id = node.getAttributeValue("id") orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqualStrings(case.expected[0], id);
+        }
     }
+}
+
+test "runtime query selector caches are invalidated on parse and clear" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html_a = "<div class='x'></div>".*;
+    try doc.parse(&html_a, .{});
+
+    try std.testing.expect((try doc.queryOneRuntime("div.x")) != null);
+    try std.testing.expect((try doc.queryOneRuntime("div.x")) != null);
+
+    var html_b = "<section class='x'></section>".*;
+    try doc.parse(&html_b, .{});
+    try std.testing.expect((try doc.queryOneRuntime("div.x")) == null);
+
+    doc.clear();
+    var html_c = "<div class='x'></div>".*;
+    try doc.parse(&html_c, .{});
+    try std.testing.expect((try doc.queryOneRuntime("div.x")) != null);
 }

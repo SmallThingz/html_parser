@@ -1,9 +1,5 @@
 const std = @import("std");
 
-pub fn containsEntity(slice: []const u8) bool {
-    return std.mem.indexOfScalar(u8, slice, '&') != null;
-}
-
 const Decoded = struct {
     consumed: usize,
     bytes: [4]u8,
@@ -11,8 +7,17 @@ const Decoded = struct {
 };
 
 pub fn decodeInPlace(slice: []u8) usize {
-    var r: usize = 0;
-    var w: usize = 0;
+    return decodeInPlaceFrom(slice, 0);
+}
+
+pub fn decodeInPlaceIfEntity(slice: []u8) usize {
+    const first = std.mem.indexOfScalar(u8, slice, '&') orelse return slice.len;
+    return decodeInPlaceFrom(slice, first);
+}
+
+fn decodeInPlaceFrom(slice: []u8, start_index: usize) usize {
+    var r: usize = start_index;
+    var w: usize = start_index;
 
     while (r < slice.len) {
         const amp_rel = std.mem.indexOfScalarPos(u8, slice, r, '&') orelse {

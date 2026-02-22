@@ -27,6 +27,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn parse(self: *Self) !void {
             const alloc = self.doc.allocator;
+            try self.reserveCapacities();
 
             try self.doc.nodes.append(alloc, .{
                 .doc = self.doc,
@@ -37,20 +38,27 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             try self.doc.parse_stack.append(alloc, 0);
 
             while (self.i < self.input.len) {
-                if (self.input[self.i] == '<') {
-                    if (self.startsWith("<!--")) {
-                        self.skipComment();
-                    } else if (self.startsWith("</")) {
-                        self.parseClosingTag();
-                    } else if (self.startsWith("<!")) {
-                        self.skipBangNode();
-                    } else if (self.startsWith("<?")) {
-                        self.skipPi();
-                    } else {
-                        try self.parseOpeningTag();
-                    }
-                } else {
+                if (self.input[self.i] != '<') {
                     try self.parseText();
+                    continue;
+                }
+
+                if (self.i + 1 >= self.input.len) {
+                    self.i += 1;
+                    continue;
+                }
+
+                switch (self.input[self.i + 1]) {
+                    '/' => self.parseClosingTag(),
+                    '?' => self.skipPi(),
+                    '!' => {
+                        if (self.i + 3 < self.input.len and self.input[self.i + 2] == '-' and self.input[self.i + 3] == '-') {
+                            self.skipComment();
+                        } else {
+                            self.skipBangNode();
+                        }
+                    },
+                    else => try self.parseOpeningTag(),
                 }
             }
 
@@ -66,9 +74,21 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.doc.parse_stack.clearRetainingCapacity();
         }
 
+        fn reserveCapacities(self: *Self) !void {
+            const alloc = self.doc.allocator;
+            const input_len = self.input.len;
+            const estimated_nodes = @max(@as(usize, 16), (input_len / 12) + 8);
+            const estimated_stack = @max(@as(usize, 8), (input_len / 256) + 8);
+            const estimated_child_ptrs = estimated_nodes - 1;
+
+            try self.doc.nodes.ensureTotalCapacity(alloc, estimated_nodes);
+            try self.doc.parse_stack.ensureTotalCapacity(alloc, estimated_stack);
+            try self.doc.child_ptrs.ensureTotalCapacity(alloc, estimated_child_ptrs);
+        }
+
         fn parseText(self: *Self) !void {
             const start = self.i;
-            while (self.i < self.input.len and self.input[self.i] != '<') : (self.i += 1) {}
+            self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
 
             const parent_idx = self.currentParent();
@@ -109,7 +129,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             node.attr_bytes_start = @intCast(self.i);
             node.attr_bytes_end = @intCast(self.i);
-            node.attr_start = @intCast(self.doc.attrs.items.len);
 
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
@@ -132,7 +151,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                     break;
                 }
 
-                try self.parseAttribute(node_idx);
+                try self.parseAttribute();
             }
 
             if (self.i == self.input.len and attr_bytes_end < self.i) {
@@ -141,7 +160,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             node.open_end = @intCast(self.i);
             node.attr_bytes_end = @intCast(attr_bytes_end);
-            node.attr_len = @as(u32, @intCast(self.doc.attrs.items.len)) - node.attr_start;
 
             const self_close = explicit_self_close or tags.isVoidTag(tag_name);
 
@@ -189,56 +207,37 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             try self.doc.parse_stack.append(self.doc.allocator, node_idx);
         }
 
-        fn parseAttribute(self: *Self, node_index: u32) !void {
+        fn parseAttribute(self: *Self) !void {
             const name_start = self.i;
             while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {}
             if (self.i == name_start) {
                 self.i += 1;
                 return;
             }
-            const name_end = self.i;
 
-            if (self.opts.normalize_input) tables.toLowerInPlace(self.input[name_start..name_end]);
+            if (self.opts.normalize_input) tables.toLowerInPlace(self.input[name_start..self.i]);
 
-            var eq_index: u32 = InvalidIndex;
-            var value_start = self.i;
-            var value_end = self.i;
-
-            self.skipWs();
+            if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
             if (self.i < self.input.len and self.input[self.i] == '=') {
-                eq_index = @intCast(self.i);
+                const eq_index: usize = self.i;
                 self.i += 1;
-                self.skipWs();
+                if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
 
                 if (self.i >= self.input.len or self.input[self.i] == '>' or (self.input[self.i] == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>')) {
                     // Canonical rewrite for explicit empty assignment: `a=` -> `a `.
-                    self.input[@as(usize, eq_index)] = ' ';
+                    self.input[eq_index] = ' ';
                 } else if (self.i < self.input.len and (self.input[self.i] == '\'' or self.input[self.i] == '"')) {
                     const q = self.input[self.i];
-                    self.i += 1;
-                    value_start = self.i;
-                    while (self.i < self.input.len and self.input[self.i] != q) : (self.i += 1) {}
-                    value_end = self.i;
+                    const q_start = self.i + 1;
+                    self.i = std.mem.indexOfScalarPos(u8, self.input, q_start, q) orelse self.input.len;
                     if (self.i < self.input.len and self.input[self.i] == q) self.i += 1;
                 } else {
-                    value_start = self.i;
                     while (self.i < self.input.len) {
                         const c = self.input[self.i];
                         if (c == '>' or c == '/' or tables.WhitespaceTable[c]) break;
                         self.i += 1;
                     }
-                    value_end = self.i;
                 }
-            }
-
-            if (self.opts.attr_storage_mode == .legacy) {
-                const alloc = self.doc.allocator;
-                try self.doc.attrs.append(alloc, .{
-                    .node_index = node_index,
-                    .name = .{ .start = @intCast(name_start), .end = @intCast(name_end) },
-                    .value = .{ .start = @intCast(value_start), .end = @intCast(value_end) },
-                    .eq_index = eq_index,
-                });
             }
         }
 
@@ -253,8 +252,8 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             if (name_end > name_start and self.opts.normalize_input) tables.toLowerInPlace(self.input[name_start..name_end]);
             const close_name = self.input[name_start..name_end];
 
-            while (self.i < self.input.len and self.input[self.i] != '>') : (self.i += 1) {}
-            if (self.i < self.input.len and self.input[self.i] == '>') self.i += 1;
+            self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '>') orelse self.input.len;
+            if (self.i < self.input.len) self.i += 1;
             const close_end: u32 = @intCast(self.i);
 
             if (close_name.len == 0) return;
@@ -349,7 +348,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn skipBangNode(self: *Self) void {
             self.i += 2;
-            while (self.i < self.input.len and self.input[self.i] != '>') : (self.i += 1) {}
+            self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
         }
 
@@ -364,29 +363,36 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.i = self.input.len;
         }
 
-        fn startsWith(self: *Self, pattern: []const u8) bool {
-            if (self.i + pattern.len > self.input.len) return false;
-            return std.mem.eql(u8, self.input[self.i .. self.i + pattern.len], pattern);
-        }
-
         fn skipWs(self: *Self) void {
             while (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) : (self.i += 1) {}
         }
 
         fn findRawTextClose(self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_start: usize, close_end: usize } {
-            var j = start;
-            while (j + 3 < self.input.len) : (j += 1) {
-                if (self.input[j] != '<' or self.input[j + 1] != '/') continue;
+            var j = std.mem.indexOfScalarPos(u8, self.input, start, '<') orelse return null;
+            while (j + 3 < self.input.len) {
+                if (self.input[j + 1] != '/') {
+                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    continue;
+                }
 
                 var k = j + 2;
                 const name_start = k;
                 while (k < self.input.len and tables.TagNameCharTable[self.input[k]]) : (k += 1) {}
-                if (k == name_start) continue;
+                if (k == name_start) {
+                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    continue;
+                }
 
-                if (!tables.eqlIgnoreCaseAscii(self.input[name_start..k], tag_name)) continue;
+                if (!tables.eqlIgnoreCaseAscii(self.input[name_start..k], tag_name)) {
+                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    continue;
+                }
 
                 while (k < self.input.len and tables.WhitespaceTable[self.input[k]]) : (k += 1) {}
-                if (k >= self.input.len or self.input[k] != '>') continue;
+                if (k >= self.input.len or self.input[k] != '>') {
+                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    continue;
+                }
 
                 return .{ .content_end = j, .close_start = j, .close_end = k + 1 };
             }
@@ -395,10 +401,8 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn normalizeTextNodeInPlace(input: []u8, text_span: anytype) void {
             const text_mut = text_span.sliceMut(input);
-            if (entities.containsEntity(text_mut)) {
-                const decoded_len = entities.decodeInPlace(text_mut);
-                text_span.end = text_span.start + @as(u32, @intCast(decoded_len));
-            }
+            const decoded_len = entities.decodeInPlaceIfEntity(text_mut);
+            text_span.end = text_span.start + @as(u32, @intCast(decoded_len));
 
             const norm_slice = text_span.sliceMut(input);
             const new_len = normalizeWhitespaceInPlace(norm_slice);

@@ -39,7 +39,7 @@ pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const 
 
         const name_end = i;
         const attr_name = source[name_start..name_end];
-        const is_target = tables.eqlIgnoreCaseAscii(attr_name, name);
+        const is_target = matchesLookupName(attr_name, name);
 
         if (i >= end) {
             if (is_target) return "";
@@ -76,6 +76,87 @@ pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const 
     }
 
     return null;
+}
+
+pub fn collectSelectedValues(doc_ptr: anytype, node: anytype, selected_names: []const []const u8, out_values: []?[]const u8) void {
+    const mut_doc = @constCast(doc_ptr);
+    const source: []u8 = mut_doc.source;
+    if (selected_names.len == 0) return;
+    if (selected_names.len != out_values.len) return;
+
+    var i: usize = node.attr_bytes_start;
+    const end: usize = node.attr_bytes_end;
+    var remaining: usize = 0;
+    for (out_values) |v| {
+        if (v == null) remaining += 1;
+    }
+    if (remaining == 0) return;
+
+    while (i < end) {
+        while (i < end and tables.WhitespaceTable[source[i]]) : (i += 1) {}
+        if (i >= end) break;
+
+        const c = source[i];
+        if (c == '>' or c == '/') break;
+
+        const name_start = i;
+        while (i < end and tables.IdentCharTable[source[i]]) : (i += 1) {}
+        if (i == name_start) {
+            i += 1;
+            continue;
+        }
+
+        const name_slice = source[name_start..i];
+        const selected_idx = firstUnresolvedMatch(selected_names, out_values, name_slice);
+
+        if (i >= end) {
+            if (selected_idx) |idx| {
+                out_values[idx] = "";
+                remaining -= 1;
+            }
+            break;
+        }
+
+        const delim = source[i];
+        if (delim == '=') {
+            const eq_index = i;
+            const raw = parseRawValue(source, end, eq_index);
+            if (selected_idx) |idx| {
+                out_values[idx] = materializeRawValue(source, end, eq_index, raw);
+                const parsed = parseParsedValue(source, end, eq_index);
+                i = parsed.next_start;
+                remaining -= 1;
+                if (remaining == 0) return;
+            } else {
+                i = raw.next_start;
+            }
+            continue;
+        }
+
+        if (delim == 0) {
+            const parsed = parseParsedValue(source, end, i);
+            i = parsed.next_start;
+            if (selected_idx) |idx| {
+                out_values[idx] = parsed.value;
+                remaining -= 1;
+                if (remaining == 0) return;
+            }
+            continue;
+        }
+
+        if (selected_idx) |idx| {
+            out_values[idx] = "";
+            remaining -= 1;
+            if (remaining == 0) return;
+        }
+
+        if (delim == '>' or delim == '/') break;
+        if (tables.WhitespaceTable[delim]) {
+            i += 1;
+            continue;
+        }
+        i += 1;
+    }
 }
 
 const ParsedValue = struct {
@@ -137,9 +218,7 @@ fn materializeRawValue(source: []u8, span_end: usize, eq_index: usize, raw: RawV
     }
 
     var decoded_len: usize = raw.end - raw.start;
-    if (decoded_len != 0 and entities.containsEntity(source[raw.start..raw.end])) {
-        decoded_len = entities.decodeInPlace(source[raw.start..raw.end]);
-    }
+    decoded_len = entities.decodeInPlaceIfEntity(source[raw.start..raw.end]);
 
     if (raw.kind == .quoted) {
         source[eq_index] = 0;
@@ -242,4 +321,33 @@ fn patchGap(source: []u8, span_end: usize, value_end: usize, raw_next_start: usi
 
 fn nativeEndian() std.builtin.Endian {
     return @import("builtin").cpu.arch.endian();
+}
+
+fn firstUnresolvedMatch(selected_names: []const []const u8, out_values: []const ?[]const u8, name: []const u8) ?usize {
+    var idx: usize = 0;
+    while (idx < selected_names.len) : (idx += 1) {
+        if (out_values[idx] != null) continue;
+        if (matchesLookupName(name, selected_names[idx])) return idx;
+    }
+    return null;
+}
+
+fn matchesLookupName(attr_name: []const u8, lookup: []const u8) bool {
+    if (isExactAsciiWord(lookup, "id")) return isExactAsciiWord(attr_name, "id");
+    if (isExactAsciiWord(lookup, "class")) return isExactAsciiWord(attr_name, "class");
+    if (isExactAsciiWord(lookup, "href")) return isExactAsciiWord(attr_name, "href");
+    return tables.eqlIgnoreCaseAscii(attr_name, lookup);
+}
+
+fn isExactAsciiWord(value: []const u8, comptime lower: []const u8) bool {
+    if (value.len != lower.len) return false;
+    var i: usize = 0;
+    while (i < lower.len) : (i += 1) {
+        if (toLowerAscii(value[i]) != lower[i]) return false;
+    }
+    return true;
+}
+
+fn toLowerAscii(c: u8) u8 {
+    return if (c >= 'A' and c <= 'Z') c + ('a' - 'A') else c;
 }

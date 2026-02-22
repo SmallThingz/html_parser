@@ -4,6 +4,7 @@ const tables = @import("../html/tables.zig");
 const attr_inline = @import("../html/attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
+const MaxProbeEntries: usize = 24;
 
 pub fn queryOne(comptime Doc: type, comptime NodeT: type, doc: *const Doc, selector: ast.Selector, scope_root: u32) ?*const NodeT {
     const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
@@ -70,6 +71,7 @@ fn matchGroupFromRight(comptime Doc: type, doc: *const Doc, selector: ast.Select
 fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, comp: ast.Compound, node_index: u32) bool {
     const node = &doc.nodes.items[node_index];
     if (node.kind != .element) return false;
+    var attr_probe: AttrProbe = .{};
 
     if (comp.has_tag != 0) {
         const tag = comp.tag.slice(selector.source);
@@ -78,20 +80,20 @@ fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, 
 
     if (comp.has_id != 0) {
         const id = comp.id.slice(selector.source);
-        const value = getAttrValue(doc, node, "id") orelse return false;
+        const value = attrValue(doc, node, &attr_probe, "id") orelse return false;
         if (!std.mem.eql(u8, value, id)) return false;
     }
 
     var class_i: u32 = 0;
     while (class_i < comp.class_len) : (class_i += 1) {
         const cls = selector.classes[comp.class_start + class_i].slice(selector.source);
-        if (!hasClass(doc, node, cls)) return false;
+        if (!hasClass(doc, node, &attr_probe, cls)) return false;
     }
 
     var attr_i: u32 = 0;
     while (attr_i < comp.attr_len) : (attr_i += 1) {
         const attr_sel = selector.attrs[comp.attr_start + attr_i];
-        if (!matchesAttrSelector(doc, node, selector.source, attr_sel)) return false;
+        if (!matchesAttrSelector(doc, node, &attr_probe, selector.source, attr_sel)) return false;
     }
 
     var pseudo_i: u32 = 0;
@@ -103,22 +105,22 @@ fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, 
     var not_i: u32 = 0;
     while (not_i < comp.not_len) : (not_i += 1) {
         const item = selector.not_items[comp.not_start + not_i];
-        if (matchesNotSimple(doc, node, selector.source, item)) return false;
+        if (matchesNotSimple(doc, node, &attr_probe, selector.source, item)) return false;
     }
 
     return true;
 }
 
-fn matchesNotSimple(doc: anytype, node: anytype, selector_source: []const u8, item: ast.NotSimple) bool {
+fn matchesNotSimple(doc: anytype, node: anytype, probe: *AttrProbe, selector_source: []const u8, item: ast.NotSimple) bool {
     return switch (item.kind) {
         .tag => tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), item.text.slice(selector_source)),
         .id => blk: {
             const id = item.text.slice(selector_source);
-            const v = getAttrValue(doc, node, "id") orelse break :blk false;
+            const v = attrValue(doc, node, probe, "id") orelse break :blk false;
             break :blk std.mem.eql(u8, v, id);
         },
-        .class => hasClass(doc, node, item.text.slice(selector_source)),
-        .attr => matchesAttrSelector(doc, node, selector_source, item.attr),
+        .class => hasClass(doc, node, probe, item.text.slice(selector_source)),
+        .attr => matchesAttrSelector(doc, node, probe, selector_source, item.attr),
     };
 }
 
@@ -141,9 +143,9 @@ fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
     };
 }
 
-fn matchesAttrSelector(doc: anytype, node: anytype, selector_source: []const u8, sel: ast.AttrSelector) bool {
+fn matchesAttrSelector(doc: anytype, node: anytype, probe: *AttrProbe, selector_source: []const u8, sel: ast.AttrSelector) bool {
     const name = sel.name.slice(selector_source);
-    const raw = getAttrValue(doc, node, name) orelse return false;
+    const raw = attrValue(doc, node, probe, name) orelse return false;
     const value = sel.value.slice(selector_source);
 
     return switch (sel.op) {
@@ -158,30 +160,67 @@ fn matchesAttrSelector(doc: anytype, node: anytype, selector_source: []const u8,
 }
 
 fn tokenIncludes(value: []const u8, token: []const u8) bool {
-    var it = std.mem.tokenizeScalar(u8, value, ' ');
-    while (it.next()) |part| {
-        if (std.mem.eql(u8, part, token)) return true;
+    if (token.len == 0) return false;
+
+    var i: usize = 0;
+    while (i < value.len) {
+        while (i < value.len and value[i] == ' ') : (i += 1) {}
+        if (i >= value.len) return false;
+
+        const start = i;
+        while (i < value.len and value[i] != ' ') : (i += 1) {}
+        if (std.mem.eql(u8, value[start..i], token)) return true;
     }
     return false;
 }
 
-fn hasClass(doc: anytype, node: anytype, class_name: []const u8) bool {
-    const class_attr = getAttrValue(doc, node, "class") orelse return false;
+fn hasClass(doc: anytype, node: anytype, probe: *AttrProbe, class_name: []const u8) bool {
+    const class_attr = attrValue(doc, node, probe, "class") orelse return false;
     return tokenIncludes(class_attr, class_name);
 }
 
-fn getAttrValue(doc: anytype, node: anytype, name: []const u8) ?[]const u8 {
-    if (doc.attr_storage_mode == .inplace) {
-        return attr_inline.getAttrValue(doc, node, name);
+fn attrValue(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8) ?[]const u8 {
+    if (findProbeEntry(probe, name)) |idx| {
+        var entry = &probe.entries[idx];
+        if (!entry.resolved) {
+            entry.value = attr_inline.getAttrValue(doc, node, name);
+            entry.resolved = true;
+        }
+        return entry.value;
     }
 
-    var i: u32 = node.attr_start;
-    const end = node.attr_start + node.attr_len;
-    while (i < end) : (i += 1) {
-        const attr = doc.attrs.items[i];
-        if (tables.eqlIgnoreCaseAscii(attr.name.slice(doc.source), name)) {
-            return attr.value.slice(doc.source);
-        }
+    if (!probe.overflow and probe.count < MaxProbeEntries) {
+        const value = attr_inline.getAttrValue(doc, node, name);
+        const idx = probe.count;
+        probe.entries[idx] = .{
+            .name = name,
+            .resolved = true,
+            .value = value,
+        };
+        probe.count += 1;
+        return value;
+    }
+
+    probe.overflow = true;
+    return attr_inline.getAttrValue(doc, node, name);
+}
+
+const AttrProbeEntry = struct {
+    name: []const u8 = "",
+    resolved: bool = false,
+    value: ?[]const u8 = null,
+};
+
+const AttrProbe = struct {
+    count: usize = 0,
+    overflow: bool = false,
+    entries: [MaxProbeEntries]AttrProbeEntry = [_]AttrProbeEntry{.{}} ** MaxProbeEntries,
+};
+
+fn findProbeEntry(probe: *const AttrProbe, needle: []const u8) ?usize {
+    var i: usize = 0;
+    while (i < probe.count) : (i += 1) {
+        if (tables.eqlIgnoreCaseAscii(probe.entries[i].name, needle)) return i;
     }
     return null;
 }

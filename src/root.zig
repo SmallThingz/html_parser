@@ -3,7 +3,6 @@ const std = @import("std");
 pub const Document = @import("html/document.zig").Document;
 pub const Node = @import("html/document.zig").Node;
 pub const ParseOptions = @import("html/document.zig").ParseOptions;
-pub const AttrStorageMode = @import("html/document.zig").AttrStorageMode;
 pub const TextOptions = @import("html/document.zig").TextOptions;
 pub const Selector = @import("selector/ast.zig").Selector;
 

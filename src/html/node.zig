@@ -58,31 +58,7 @@ pub fn children(comptime Node: type, self: *const Node) []const *const Node {
 }
 
 pub fn getAttributeValue(comptime Node: type, self: *const Node, name: []const u8) ?[]const u8 {
-    if (self.doc.attr_storage_mode == .inplace) {
-        return attr_inline.getAttrValue(self.doc, self, name);
-    }
-
-    const doc = @constCast(self.doc);
-
-    var i: u32 = self.attr_start;
-    const end = self.attr_start + self.attr_len;
-    while (i < end) : (i += 1) {
-        const attr = &doc.attrs.items[i];
-        if (!tables.eqlIgnoreCaseAscii(attr.name.slice(doc.source), name)) continue;
-
-        if (attr.eq_index != InvalidIndex and doc.source[attr.eq_index] != 0) {
-            doc.source[attr.eq_index] = 0;
-            const value_mut = attr.value.sliceMut(doc.source);
-            if (entities.containsEntity(value_mut)) {
-                const new_len = entities.decodeInPlace(value_mut);
-                attr.value.end = attr.value.start + @as(u32, @intCast(new_len));
-            }
-        }
-
-        return attr.value.slice(doc.source);
-    }
-
-    return null;
+    return attr_inline.getAttrValue(self.doc, self, name);
 }
 
 pub fn innerText(comptime Node: type, self: *const Node, arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
@@ -140,10 +116,8 @@ pub fn innerText(comptime Node: type, self: *const Node, arena_alloc: std.mem.Al
 
 fn decodeTextNode(node: anytype, doc: anytype) []const u8 {
     const text_mut = node.text.sliceMut(doc.source);
-    if (entities.containsEntity(text_mut)) {
-        const new_len = entities.decodeInPlace(text_mut);
-        node.text.end = node.text.start + @as(u32, @intCast(new_len));
-    }
+    const new_len = entities.decodeInPlaceIfEntity(text_mut);
+    node.text.end = node.text.start + @as(u32, @intCast(new_len));
     return node.text.slice(doc.source);
 }
 
