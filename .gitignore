@@ -9,3 +9,10 @@ bench/runners/*/target/
 
 __pycache__/
 *.pyc
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+*.bak
+.DS_Store
