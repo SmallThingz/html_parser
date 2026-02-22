@@ -1,0 +1,12 @@
+.zig-cache/
+zig-out/
+
+bench/build/
+bench/parsers/
+bench/results/latest.json
+bench/results/latest.md
+bench/fixtures/*.html
+bench/runners/html5ever_runner/target/
+
+__pycache__/
+*.pyc
