@@ -864,3 +864,69 @@ test "runtime query selector caches are invalidated on parse and clear" {
     try doc.parse(&html_c, .{});
     try std.testing.expect((try doc.queryOneRuntime("div.x")) != null);
 }
+
+test "raw-text close handles mixed-case end tag and embedded < bytes" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<script>if (a < b) { x = \"<tag>\"; }</ScRiPt   ><div id='after'></div>".*;
+    try doc.parse(&html, .{});
+
+    const script = doc.queryOne("script") orelse return error.TestUnexpectedResult;
+    const after = doc.queryOne("div#after") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(script.close_end <= after.open_start);
+}
+
+test "raw-text unterminated tail keeps element open to end of input" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<script>const a = 1; <div>still script".*;
+    try doc.parse(&html, .{});
+
+    const script = doc.queryOne("script") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, @intCast(html.len)), script.close_start);
+    try std.testing.expectEqual(@as(u32, @intCast(html.len)), script.close_end);
+}
+
+test "optional-close p/li/td-th/dt-dd/head-body preserve expected query semantics" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = (
+        "<html><head><title>x</title><body>" ++
+        "<p id='p1'>a<div id='d1'></div>" ++
+        "<ul><li id='li1'>x<li id='li2'>y</ul>" ++
+        "<dl><dt id='dt1'>a<dd id='dd1'>b<dt id='dt2'>c</dl>" ++
+        "<table><tr><td id='td1'>1<th id='th1'>2<td id='td2'>3</tr></table>" ++
+        "</body></html>").*;
+    try doc.parse(&html, .{});
+
+    try std.testing.expect(doc.queryOne("#p1 + #d1") != null);
+    try std.testing.expect(doc.queryOne("#li1 + #li2") != null);
+    try std.testing.expect(doc.queryOne("#dt1 + #dd1") != null);
+    try std.testing.expect(doc.queryOne("#dd1 + #dt2") != null);
+    try std.testing.expect(doc.queryOne("#td1 + #th1") != null);
+    try std.testing.expect(doc.queryOne("#th1 + #td2") != null);
+    try std.testing.expect(doc.queryOne("head + body") != null);
+}
+
+test "attr fast-path names are equivalent to generic lookup semantics" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<a id='x' class='btn primary' href='https://example.com' data-k='v'></a>".*;
+    try doc.parse(&html, .{});
+
+    const a = doc.queryOne("a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("x", a.getAttributeValue("id").?);
+    try std.testing.expectEqualStrings("btn primary", a.getAttributeValue("class").?);
+    try std.testing.expectEqualStrings("https://example.com", a.getAttributeValue("href").?);
+    try std.testing.expectEqualStrings("v", a.getAttributeValue("data-k").?);
+
+    try std.testing.expect(a.getAttributeValue("missing") == null);
+}
