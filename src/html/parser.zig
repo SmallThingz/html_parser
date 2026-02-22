@@ -106,7 +106,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         fn parseOpeningTag(self: *Self) !void {
             const open_start = self.i;
             self.i += 1; // <
-            if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
+            self.skipWs();
 
             const name_start = self.i;
             while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {}
@@ -134,7 +134,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var attr_bytes_end: usize = self.i;
 
             while (self.i < self.input.len) {
-                if (tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
+                self.skipWs();
                 if (self.i >= self.input.len) break;
 
                 const c = self.input[self.i];
@@ -244,7 +244,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         fn parseClosingTag(self: *Self) void {
             const close_start = self.i;
             self.i += 2; // </
-            if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
+            self.skipWs();
 
             const name_start = self.i;
             while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {}
@@ -264,7 +264,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 s -= 1;
                 const idx = self.doc.parse_stack.items[s];
                 const n = &self.doc.nodes.items[idx];
-                if (self.tagNamesEqual(n.name.slice(self.input), close_name)) {
+                if (tables.eqlIgnoreCaseAscii(n.name.slice(self.input), close_name)) {
                     found = s;
                     break;
                 }
@@ -337,16 +337,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn skipComment(self: *Self) void {
             self.i += 4;
-            while (self.i + 2 < self.input.len) {
-                self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '-') orelse {
-                    self.i = self.input.len;
-                    return;
-                };
+            while (self.i + 2 < self.input.len) : (self.i += 1) {
                 if (self.input[self.i] == '-' and self.input[self.i + 1] == '-' and self.input[self.i + 2] == '>') {
                     self.i += 3;
                     return;
                 }
-                self.i += 1;
             }
             self.i = self.input.len;
         }
@@ -359,16 +354,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn skipPi(self: *Self) void {
             self.i += 2;
-            while (self.i + 1 < self.input.len) {
-                self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '?') orelse {
-                    self.i = self.input.len;
-                    return;
-                };
+            while (self.i + 1 < self.input.len) : (self.i += 1) {
                 if (self.input[self.i] == '?' and self.input[self.i + 1] == '>') {
                     self.i += 2;
                     return;
                 }
-                self.i += 1;
             }
             self.i = self.input.len;
         }
@@ -378,50 +368,35 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         }
 
         fn findRawTextClose(self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_start: usize, close_end: usize } {
-            if (tag_name.len == 0) return null;
-
-            const first = tables.lower(tag_name[0]);
-            const tag_len = tag_name.len;
             var j = std.mem.indexOfScalarPos(u8, self.input, start, '<') orelse return null;
-            while (j + 2 < self.input.len) {
+            while (j + 3 < self.input.len) {
                 if (self.input[j + 1] != '/') {
                     j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 
-                if (tables.lower(self.input[j + 2]) != first) {
+                var k = j + 2;
+                const name_start = k;
+                while (k < self.input.len and tables.TagNameCharTable[self.input[k]]) : (k += 1) {}
+                if (k == name_start) {
                     j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 
-                const name_start = j + 2;
-                const k = name_start + tag_len;
-                if (k > self.input.len) return null;
-                if (k < self.input.len and tables.TagNameCharTable[self.input[k]]) {
+                if (!tables.eqlIgnoreCaseAscii(self.input[name_start..k], tag_name)) {
                     j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 
-                if (!self.tagNamesEqual(self.input[name_start..k], tag_name)) {
+                while (k < self.input.len and tables.WhitespaceTable[self.input[k]]) : (k += 1) {}
+                if (k >= self.input.len or self.input[k] != '>') {
                     j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
                     continue;
                 }
 
-                var t = k;
-                while (t < self.input.len and tables.WhitespaceTable[self.input[t]]) : (t += 1) {}
-                if (t >= self.input.len or self.input[t] != '>') {
-                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
-                    continue;
-                }
-
-                return .{ .content_end = j, .close_start = j, .close_end = t + 1 };
+                return .{ .content_end = j, .close_start = j, .close_end = k + 1 };
             }
             return null;
-        }
-
-        inline fn tagNamesEqual(self: *Self, a: []const u8, b: []const u8) bool {
-            if (self.opts.normalize_input) return std.mem.eql(u8, a, b);
-            return tables.eqlIgnoreCaseAscii(a, b);
         }
 
         fn normalizeTextNodeInPlace(input: []u8, text_span: anytype) void {

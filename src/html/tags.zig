@@ -1,60 +1,44 @@
 const tables = @import("tables.zig");
 
+const void_tags = [_][]const u8{
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+};
+
+const raw_text_tags = [_][]const u8{
+    "script", "style",
+};
+
 pub fn isVoidTag(name: []const u8) bool {
-    if (name.len == 0) return false;
-    const c0 = tables.lower(name[0]);
-    return switch (c0) {
-        'a' => tables.eqlIgnoreCaseAscii(name, "area"),
-        'b' => tables.eqlIgnoreCaseAscii(name, "base") or tables.eqlIgnoreCaseAscii(name, "br"),
-        'c' => tables.eqlIgnoreCaseAscii(name, "col"),
-        'e' => tables.eqlIgnoreCaseAscii(name, "embed"),
-        'h' => tables.eqlIgnoreCaseAscii(name, "hr"),
-        'i' => tables.eqlIgnoreCaseAscii(name, "img") or tables.eqlIgnoreCaseAscii(name, "input"),
-        'l' => tables.eqlIgnoreCaseAscii(name, "link"),
-        'm' => tables.eqlIgnoreCaseAscii(name, "meta"),
-        'p' => tables.eqlIgnoreCaseAscii(name, "param"),
-        's' => tables.eqlIgnoreCaseAscii(name, "source"),
-        't' => tables.eqlIgnoreCaseAscii(name, "track"),
-        'w' => tables.eqlIgnoreCaseAscii(name, "wbr"),
-        else => false,
-    };
+    for (void_tags) |tag| {
+        if (tables.eqlIgnoreCaseAscii(name, tag)) return true;
+    }
+    return false;
 }
 
 pub fn isRawTextTag(name: []const u8) bool {
-    if (name.len == 0) return false;
-    const c0 = tables.lower(name[0]);
-    if (c0 == 's') return tables.eqlIgnoreCaseAscii(name, "script") or tables.eqlIgnoreCaseAscii(name, "style");
+    for (raw_text_tags) |tag| {
+        if (tables.eqlIgnoreCaseAscii(name, tag)) return true;
+    }
     return false;
 }
 
 pub fn shouldImplicitlyClose(open_tag: []const u8, new_tag: []const u8) bool {
-    if (open_tag.len == 0) return false;
+    if (tables.eqlIgnoreCaseAscii(open_tag, "li") and tables.eqlIgnoreCaseAscii(new_tag, "li")) return true;
+    if (tables.eqlIgnoreCaseAscii(open_tag, "p") and closesP(new_tag)) return true;
 
-    return switch (tables.lower(open_tag[0])) {
-        'l' => tables.eqlIgnoreCaseAscii(open_tag, "li") and tables.eqlIgnoreCaseAscii(new_tag, "li"),
-        'p' => tables.eqlIgnoreCaseAscii(open_tag, "p") and closesP(new_tag),
-        'd' => blk: {
-            if (tables.eqlIgnoreCaseAscii(open_tag, "dt")) {
-                break :blk tables.eqlIgnoreCaseAscii(new_tag, "dt") or tables.eqlIgnoreCaseAscii(new_tag, "dd");
-            }
-            if (tables.eqlIgnoreCaseAscii(open_tag, "dd")) {
-                break :blk tables.eqlIgnoreCaseAscii(new_tag, "dt") or tables.eqlIgnoreCaseAscii(new_tag, "dd");
-            }
-            break :blk false;
-        },
-        'o' => tables.eqlIgnoreCaseAscii(open_tag, "option") and tables.eqlIgnoreCaseAscii(new_tag, "option"),
-        't' => blk: {
-            if (tables.eqlIgnoreCaseAscii(open_tag, "tr")) {
-                break :blk tables.eqlIgnoreCaseAscii(new_tag, "tr");
-            }
-            if (tables.eqlIgnoreCaseAscii(open_tag, "td") or tables.eqlIgnoreCaseAscii(open_tag, "th")) {
-                break :blk tables.eqlIgnoreCaseAscii(new_tag, "td") or tables.eqlIgnoreCaseAscii(new_tag, "th");
-            }
-            break :blk false;
-        },
-        'h' => tables.eqlIgnoreCaseAscii(open_tag, "head") and tables.eqlIgnoreCaseAscii(new_tag, "body"),
-        else => false,
-    };
+    if (tables.eqlIgnoreCaseAscii(open_tag, "dt") and (tables.eqlIgnoreCaseAscii(new_tag, "dt") or tables.eqlIgnoreCaseAscii(new_tag, "dd"))) return true;
+    if (tables.eqlIgnoreCaseAscii(open_tag, "dd") and (tables.eqlIgnoreCaseAscii(new_tag, "dt") or tables.eqlIgnoreCaseAscii(new_tag, "dd"))) return true;
+
+    if (tables.eqlIgnoreCaseAscii(open_tag, "option") and tables.eqlIgnoreCaseAscii(new_tag, "option")) return true;
+
+    if (tables.eqlIgnoreCaseAscii(open_tag, "tr") and tables.eqlIgnoreCaseAscii(new_tag, "tr")) return true;
+
+    if ((tables.eqlIgnoreCaseAscii(open_tag, "td") or tables.eqlIgnoreCaseAscii(open_tag, "th")) and
+        (tables.eqlIgnoreCaseAscii(new_tag, "td") or tables.eqlIgnoreCaseAscii(new_tag, "th"))) return true;
+
+    if (tables.eqlIgnoreCaseAscii(open_tag, "head") and tables.eqlIgnoreCaseAscii(new_tag, "body")) return true;
+
+    return false;
 }
 
 fn closesP(new_tag: []const u8) bool {
