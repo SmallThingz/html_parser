@@ -92,7 +92,6 @@ try doc.parse(&input, .{
     .eager_child_views = true,
     .eager_attr_empty_rewrite = true,
     .turbo_parse = false,
-    .permissive_recovery = true,
 });
 ```
 

@@ -12,14 +12,6 @@ pub inline fn findByte(hay: []const u8, start: usize, needle: u8) ?usize {
     return findByteDispatch(hay, start, needle);
 }
 
-pub inline fn findEither2(hay: []const u8, start: usize, a: u8, b: u8) ?usize {
-    return findEither2Dispatch(hay, start, a, b);
-}
-
-pub inline fn findAny3(hay: []const u8, start: usize, a: u8, b: u8, c: u8) ?usize {
-    return findAny3Dispatch(hay, start, a, b, c);
-}
-
 pub fn findTagEndRespectQuotes(hay: []const u8, start: usize) ?TagEnd {
     var i = start;
     var quote: u8 = 0;
@@ -73,42 +65,6 @@ inline fn findByteDispatch(hay: []const u8, start: usize, needle: u8) ?usize {
     return std.mem.indexOfScalarPos(u8, hay, start, needle);
 }
 
-inline fn findEither2Dispatch(hay: []const u8, start: usize, a: u8, b: u8) ?usize {
-    if (comptime builtin.cpu.arch == .x86_64 and std.Target.x86.featureSetHas(builtin.cpu.features, .avx2)) {
-        return findEither2Vec(32, hay, start, a, b);
-    }
-    if (comptime builtin.cpu.arch == .x86_64 and std.Target.x86.featureSetHas(builtin.cpu.features, .sse2)) {
-        return findEither2Vec(16, hay, start, a, b);
-    }
-    if (comptime builtin.cpu.arch == .aarch64) {
-        return findEither2Vec(16, hay, start, a, b);
-    }
-
-    const ia = std.mem.indexOfScalarPos(u8, hay, start, a);
-    const ib = std.mem.indexOfScalarPos(u8, hay, start, b);
-    if (ia == null) return ib;
-    if (ib == null) return ia;
-    return @min(ia.?, ib.?);
-}
-
-inline fn findAny3Dispatch(hay: []const u8, start: usize, a: u8, b: u8, c: u8) ?usize {
-    if (comptime builtin.cpu.arch == .x86_64 and std.Target.x86.featureSetHas(builtin.cpu.features, .avx2)) {
-        return findAny3Vec(32, hay, start, a, b, c);
-    }
-    if (comptime builtin.cpu.arch == .x86_64 and std.Target.x86.featureSetHas(builtin.cpu.features, .sse2)) {
-        return findAny3Vec(16, hay, start, a, b, c);
-    }
-    if (comptime builtin.cpu.arch == .aarch64) {
-        return findAny3Vec(16, hay, start, a, b, c);
-    }
-
-    const iab = findEither2Dispatch(hay, start, a, b);
-    const ic = std.mem.indexOfScalarPos(u8, hay, start, c);
-    if (iab == null) return ic;
-    if (ic == null) return iab;
-    return @min(iab.?, ic.?);
-}
-
 inline fn findByteVec(comptime lanes: comptime_int, hay: []const u8, start: usize, needle: u8) ?usize {
     const Vec = @Vector(lanes, u8);
     const needle_vec: Vec = @splat(needle);
@@ -129,64 +85,9 @@ inline fn findByteVec(comptime lanes: comptime_int, hay: []const u8, start: usiz
     return std.mem.indexOfScalarPos(u8, hay, i, needle);
 }
 
-inline fn findEither2Vec(comptime lanes: comptime_int, hay: []const u8, start: usize, a: u8, b: u8) ?usize {
-    const Vec = @Vector(lanes, u8);
-    const a_vec: Vec = @splat(a);
-    const b_vec: Vec = @splat(b);
-
-    var i = start;
-    while (i + lanes <= hay.len) : (i += lanes) {
-        const chunk: [lanes]u8 = hay[i..][0..lanes].*;
-        const vec: Vec = chunk;
-        const mask = (vec == a_vec) | (vec == b_vec);
-        if (@reduce(.Or, mask)) {
-            var j: usize = 0;
-            while (j < lanes) : (j += 1) {
-                const ch = chunk[j];
-                if (ch == a or ch == b) return i + j;
-            }
-        }
-    }
-
-    while (i < hay.len) : (i += 1) {
-        const ch = hay[i];
-        if (ch == a or ch == b) return i;
-    }
-    return null;
-}
-
-inline fn findAny3Vec(comptime lanes: comptime_int, hay: []const u8, start: usize, a: u8, b: u8, c: u8) ?usize {
-    const Vec = @Vector(lanes, u8);
-    const a_vec: Vec = @splat(a);
-    const b_vec: Vec = @splat(b);
-    const c_vec: Vec = @splat(c);
-
-    var i = start;
-    while (i + lanes <= hay.len) : (i += lanes) {
-        const chunk: [lanes]u8 = hay[i..][0..lanes].*;
-        const vec: Vec = chunk;
-        const mask = (vec == a_vec) | (vec == b_vec) | (vec == c_vec);
-        if (@reduce(.Or, mask)) {
-            var j: usize = 0;
-            while (j < lanes) : (j += 1) {
-                const ch = chunk[j];
-                if (ch == a or ch == b or ch == c) return i + j;
-            }
-        }
-    }
-
-    while (i < hay.len) : (i += 1) {
-        const ch = hay[i];
-        if (ch == a or ch == b or ch == c) return i;
-    }
-    return null;
-}
-
-test "find helpers match scalar behavior" {
+test "findByte helper matches scalar behavior" {
     const s = "abc<?d<!--x--><q";
     try std.testing.expectEqual(@as(?usize, 3), findByte(s, 0, '<'));
-    try std.testing.expectEqual(@as(?usize, 4), findEither2(s, 0, '?', 'd'));
-    try std.testing.expectEqual(@as(?usize, 3), findAny3(s, 0, '?', '!', '<'));
 }
 
 test "findTagEndRespectQuotes handles quoted > and self close" {

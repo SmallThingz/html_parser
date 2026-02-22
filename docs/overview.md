@@ -38,8 +38,6 @@ Allocations may happen in these cases:
   - rewrites explicit empty assignments (`a=`) during parse.
 - `turbo_parse`:
   - benchmark-oriented mode that skips expensive parse work where possible.
-- `permissive_recovery`:
-  - keeps best-effort parsing behavior on malformed input.
 
 ## Selector Compilation Modes
 

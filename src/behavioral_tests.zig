@@ -79,12 +79,12 @@ test "element navigation skips text nodes for sibling/child helpers" {
     try std.testing.expectEqualStrings("b1", prev.getAttributeValue("id").?);
 }
 
-test "permissive recovery keeps querying usable on malformed nesting" {
+test "parser remains permissive on malformed nesting" {
     var doc = html.Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='a'><span id='b'></div><p id='c'>tail".*;
-    try doc.parse(&input, .{ .permissive_recovery = true });
+    try doc.parse(&input, .{});
 
     try std.testing.expect(doc.queryOne("#a") != null);
     try std.testing.expect(doc.queryOne("#b") != null);

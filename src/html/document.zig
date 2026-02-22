@@ -22,7 +22,6 @@ pub const ParseOptions = struct {
     eager_attr_empty_rewrite: bool = true,
     // Parse-throughput mode that skips non-essential work.
     turbo_parse: bool = false,
-    permissive_recovery: bool = true,
 };
 
 pub const TextOptions = node_api.TextOptions;
