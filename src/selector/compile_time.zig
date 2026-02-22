@@ -107,3 +107,14 @@ test "compile-time parser tracks combinator chain and grouping" {
     try std.testing.expect(sel.compounds[4].combinator == .sibling);
     try std.testing.expect(sel.compounds[5].combinator == .none);
 }
+
+test "compile-time parser supports leading combinator and nth-child variants" {
+    const sel = comptime compileImpl("> #hsoob");
+    try std.testing.expectEqual(@as(usize, 1), sel.compounds.len);
+    try std.testing.expect(sel.compounds[0].combinator == .child);
+
+    const nth = comptime compileImpl("#pseudos :nth-child(+3n-2)");
+    try std.testing.expectEqual(@as(usize, 2), nth.compounds.len);
+    try std.testing.expect(nth.compounds[1].combinator == .descendant);
+    try std.testing.expectEqual(@as(u32, 1), nth.compounds[1].pseudo_len);
+}

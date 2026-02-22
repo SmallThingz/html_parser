@@ -1,6 +1,28 @@
 const std = @import("std");
 const html = @import("root.zig");
 
+const ParseMode = enum {
+    strict,
+    turbo,
+};
+
+fn parseMode(s: []const u8) ?ParseMode {
+    if (std.mem.eql(u8, s, "strict")) return .strict;
+    if (std.mem.eql(u8, s, "turbo")) return .turbo;
+    return null;
+}
+
+fn parseDoc(doc: *html.Document, input: []u8, mode: ParseMode) !void {
+    switch (mode) {
+        .strict => try doc.parse(input, .{}),
+        .turbo => try doc.parse(input, .{
+            .eager_child_views = false,
+            .eager_attr_empty_rewrite = false,
+            .turbo_parse = true,
+        }),
+    }
+}
+
 fn jsonEscape(writer: anytype, s: []const u8) !void {
     try writer.writeByte('"');
     for (s) |c| {
@@ -31,7 +53,7 @@ fn printJsonStringArray(writer: anytype, items: []const []const u8) !void {
     try writer.writeByte(']');
 }
 
-fn runSelectorIds(alloc: std.mem.Allocator, fixture_path: []const u8, selector: []const u8) !void {
+fn runSelectorIds(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, selector: []const u8) !void {
     const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
     defer alloc.free(input);
 
@@ -40,7 +62,7 @@ fn runSelectorIds(alloc: std.mem.Allocator, fixture_path: []const u8, selector: 
 
     var doc = html.Document.init(alloc);
     defer doc.deinit();
-    try doc.parse(working, .{});
+    try parseDoc(&doc, working, mode);
 
     var out_ids = std.ArrayList([]const u8).empty;
     defer out_ids.deinit(alloc);
@@ -59,7 +81,7 @@ fn runSelectorIds(alloc: std.mem.Allocator, fixture_path: []const u8, selector: 
     try std.fs.File.stdout().writeAll(out_buf.items);
 }
 
-fn runSelectorCount(alloc: std.mem.Allocator, fixture_path: []const u8, selector: []const u8) !void {
+fn runSelectorCount(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, selector: []const u8) !void {
     const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
     defer alloc.free(input);
 
@@ -68,7 +90,7 @@ fn runSelectorCount(alloc: std.mem.Allocator, fixture_path: []const u8, selector
 
     var doc = html.Document.init(alloc);
     defer doc.deinit();
-    try doc.parse(working, .{});
+    try parseDoc(&doc, working, mode);
 
     var count: usize = 0;
     var it = try doc.queryAllRuntime(selector);
@@ -82,7 +104,7 @@ fn runSelectorCount(alloc: std.mem.Allocator, fixture_path: []const u8, selector
     try std.fs.File.stdout().writeAll(out_buf.items);
 }
 
-fn runParseTagsFile(alloc: std.mem.Allocator, fixture_path: []const u8) !void {
+fn runSelectorCountScopeTag(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, scope_tag: []const u8, selector: []const u8) !void {
     const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
     defer alloc.free(input);
 
@@ -91,7 +113,32 @@ fn runParseTagsFile(alloc: std.mem.Allocator, fixture_path: []const u8) !void {
 
     var doc = html.Document.init(alloc);
     defer doc.deinit();
-    try doc.parse(working, .{});
+    try parseDoc(&doc, working, mode);
+
+    var count: usize = 0;
+    if (doc.findFirstTag(scope_tag)) |scope| {
+        var it = try scope.queryAllRuntime(selector);
+        while (it.next()) |_| {
+            count += 1;
+        }
+    }
+
+    var out_buf = std.ArrayList(u8).empty;
+    defer out_buf.deinit(alloc);
+    try out_buf.writer(alloc).print("{d}\n", .{count});
+    try std.fs.File.stdout().writeAll(out_buf.items);
+}
+
+fn runParseTagsFile(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8) !void {
+    const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
+    defer alloc.free(input);
+
+    const working = try alloc.dupe(u8, input);
+    defer alloc.free(working);
+
+    var doc = html.Document.init(alloc);
+    defer doc.deinit();
+    try parseDoc(&doc, working, mode);
 
     var tags = std.ArrayList([]const u8).empty;
     defer tags.deinit(alloc);
@@ -110,7 +157,7 @@ fn runParseTagsFile(alloc: std.mem.Allocator, fixture_path: []const u8) !void {
 
 fn usage() noreturn {
     std.debug.print(
-        "usage:\n  suite_runner selector-ids <fixture.html> <selector>\n  suite_runner selector-count <fixture.html> <selector>\n  suite_runner parse-tags-file <fixture.html>\n",
+        "usage:\n  suite_runner selector-ids <strict|turbo> <fixture.html> <selector>\n  suite_runner selector-count <strict|turbo> <fixture.html> <selector>\n  suite_runner selector-count-scope-tag <strict|turbo> <fixture.html> <scope-tag> <selector>\n  suite_runner parse-tags-file <strict|turbo> <fixture.html>\n",
         .{},
     );
     std.process.exit(2);
@@ -127,20 +174,30 @@ pub fn main() !void {
     if (args.len < 2) usage();
 
     if (std.mem.eql(u8, args[1], "selector-ids")) {
-        if (args.len != 4) usage();
-        try runSelectorIds(alloc, args[2], args[3]);
+        if (args.len != 5) usage();
+        const mode = parseMode(args[2]) orelse usage();
+        try runSelectorIds(alloc, mode, args[3], args[4]);
         return;
     }
 
     if (std.mem.eql(u8, args[1], "selector-count")) {
-        if (args.len != 4) usage();
-        try runSelectorCount(alloc, args[2], args[3]);
+        if (args.len != 5) usage();
+        const mode = parseMode(args[2]) orelse usage();
+        try runSelectorCount(alloc, mode, args[3], args[4]);
+        return;
+    }
+
+    if (std.mem.eql(u8, args[1], "selector-count-scope-tag")) {
+        if (args.len != 6) usage();
+        const mode = parseMode(args[2]) orelse usage();
+        try runSelectorCountScopeTag(alloc, mode, args[3], args[4], args[5]);
         return;
     }
 
     if (std.mem.eql(u8, args[1], "parse-tags-file")) {
-        if (args.len != 3) usage();
-        try runParseTagsFile(alloc, args[2]);
+        if (args.len != 4) usage();
+        const mode = parseMode(args[2]) orelse usage();
+        try runParseTagsFile(alloc, mode, args[3]);
         return;
     }
 

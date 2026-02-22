@@ -20,54 +20,90 @@ pub fn queryOne(comptime Doc: type, comptime NodeT: type, doc: *const Doc, selec
     while (i < end_excl and i < doc.nodes.items.len) : (i += 1) {
         const node: *const NodeT = &doc.nodes.items[i];
         if (node.kind != .element) continue;
-        if (matchesSelectorAt(Doc, doc, selector, i)) return node;
+        if (matchesSelectorAt(Doc, doc, selector, i, scope_root)) return node;
     }
 
     return null;
 }
 
-pub fn matchesSelectorAt(comptime Doc: type, doc: *const Doc, selector: ast.Selector, node_index: u32) bool {
+pub fn matchesSelectorAt(comptime Doc: type, doc: *const Doc, selector: ast.Selector, node_index: u32, scope_root: u32) bool {
     for (selector.groups) |group| {
         if (group.compound_len == 0) continue;
         const rightmost = group.compound_len - 1;
-        if (matchGroupFromRight(Doc, doc, selector, group, rightmost, node_index)) return true;
+        if (matchGroupFromRight(Doc, doc, selector, group, rightmost, node_index, scope_root)) return true;
     }
     return false;
 }
 
-fn matchGroupFromRight(comptime Doc: type, doc: *const Doc, selector: ast.Selector, group: ast.Group, rel_index: u32, node_index: u32) bool {
+fn matchGroupFromRight(comptime Doc: type, doc: *const Doc, selector: ast.Selector, group: ast.Group, rel_index: u32, node_index: u32, scope_root: u32) bool {
     const comp_abs: usize = @intCast(group.compound_start + rel_index);
     const comp = selector.compounds[comp_abs];
 
     if (!matchesCompound(Doc, doc, selector, comp, node_index)) return false;
-    if (rel_index == 0) return true;
+    if (rel_index == 0) {
+        if (comp.combinator == .none) return true;
+        return matchesScopeAnchor(doc, comp.combinator, node_index, scope_root);
+    }
 
     switch (comp.combinator) {
         .child => {
             const p = parentElement(doc, node_index) orelse return false;
-            return matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, p);
+            return matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, p, scope_root);
         },
         .descendant => {
             var p = parentElement(doc, node_index);
             while (p) |idx| {
-                if (matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, idx)) return true;
+                if (matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, idx, scope_root)) return true;
                 p = parentElement(doc, idx);
             }
             return false;
         },
         .adjacent => {
             const prev = prevElementSibling(doc, node_index) orelse return false;
-            return matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, prev);
+            return matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, prev, scope_root);
         },
         .sibling => {
             var prev = prevElementSibling(doc, node_index);
             while (prev) |idx| {
-                if (matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, idx)) return true;
+                if (matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, idx, scope_root)) return true;
                 prev = prevElementSibling(doc, idx);
             }
             return false;
         },
         .none => return false,
+    }
+}
+
+fn matchesScopeAnchor(doc: anytype, combinator: ast.Combinator, node_index: u32, scope_root: u32) bool {
+    if (combinator == .none) return true;
+
+    const anchor: u32 = if (scope_root == InvalidIndex) 0 else scope_root;
+    switch (combinator) {
+        .child => {
+            const p = doc.nodes.items[node_index].parent;
+            return p != InvalidIndex and p == anchor;
+        },
+        .descendant => {
+            var p = doc.nodes.items[node_index].parent;
+            while (p != InvalidIndex) {
+                if (p == anchor) return true;
+                if (p == 0) break;
+                p = doc.nodes.items[p].parent;
+            }
+            return false;
+        },
+        .adjacent => {
+            return prevElementSibling(doc, node_index) == anchor;
+        },
+        .sibling => {
+            var prev = prevElementSibling(doc, node_index);
+            while (prev) |idx| {
+                if (idx == anchor) return true;
+                prev = prevElementSibling(doc, idx);
+            }
+            return false;
+        },
+        .none => return true,
     }
 }
 

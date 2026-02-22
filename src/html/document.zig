@@ -168,7 +168,7 @@ pub const QueryIter = struct {
             const node = &self.doc.nodes.items[idx];
             if (node.kind != .element) continue;
 
-            if (matcher.matchesSelectorAt(Document, self.doc, self.selector, idx)) {
+            if (matcher.matchesSelectorAt(Document, self.doc, self.selector, idx, self.scope_root)) {
                 self.next_index += 1;
                 return node;
             }
@@ -986,6 +986,75 @@ test "multiple class predicates in one compound match correctly" {
     try expectDocQueryComptime(&doc, "div.alpha.beta.gamma", &.{"x"});
     try expectDocQueryRuntime(&doc, "div.alpha.beta.gamma", &.{"x"});
     try expectDocQueryRuntime(&doc, "div.alpha.beta.delta", &.{});
+}
+
+test "runtime selector supports nth-child shorthand variants" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='pseudos'><div></div><div></div><div></div><div></div><a></a><div></div><div></div></div>".*;
+    try doc.parse(&html, .{});
+
+    try std.testing.expectEqual(@as(?*const Node, doc.queryOne("#pseudos :nth-child(odd)")), (try doc.queryOneRuntime("#pseudos :nth-child(odd)")));
+
+    var c_odd: usize = 0;
+    var it_odd = try doc.queryAllRuntime("#pseudos :nth-child(odd)");
+    while (it_odd.next()) |_| c_odd += 1;
+    try std.testing.expectEqual(@as(usize, 4), c_odd);
+
+    var c_plus: usize = 0;
+    var it_plus = try doc.queryAllRuntime("#pseudos :nth-child(3n+1)");
+    while (it_plus.next()) |_| c_plus += 1;
+    try std.testing.expectEqual(@as(usize, 3), c_plus);
+
+    var c_signed: usize = 0;
+    var it_signed = try doc.queryAllRuntime("#pseudos :nth-child(+3n-2)");
+    while (it_signed.next()) |_| c_signed += 1;
+    try std.testing.expectEqual(@as(usize, 3), c_signed);
+
+    var c_neg_a: usize = 0;
+    var it_neg_a = try doc.queryAllRuntime("#pseudos :nth-child(-n+6)");
+    while (it_neg_a.next()) |_| c_neg_a += 1;
+    try std.testing.expectEqual(@as(usize, 6), c_neg_a);
+
+    var c_neg_b: usize = 0;
+    var it_neg_b = try doc.queryAllRuntime("#pseudos :nth-child(-n+5)");
+    while (it_neg_b.next()) |_| c_neg_b += 1;
+    try std.testing.expectEqual(@as(usize, 5), c_neg_b);
+}
+
+test "leading child combinator works in node-scoped queries" {
+    const alloc = std.testing.allocator;
+
+    var frag_doc = Document.init(alloc);
+    defer frag_doc.deinit();
+    var frag_html =
+        "<root><div class='d i v'><p id='oooo'><em></em><em id='emem'></em></p></div><p id='sep'><div class='a'><span></span></div></p></root>".*;
+    try frag_doc.parse(&frag_html, .{});
+    const frag_root = frag_doc.queryOne("root") orelse return error.TestUnexpectedResult;
+
+    var it_em = try frag_root.queryAllRuntime("> div p em");
+    var em_count: usize = 0;
+    while (it_em.next()) |_| em_count += 1;
+    try std.testing.expectEqual(@as(usize, 2), em_count);
+
+    var it_oooo = try frag_root.queryAllRuntime("> div #oooo");
+    var oooo_count: usize = 0;
+    while (it_oooo.next()) |_| oooo_count += 1;
+    try std.testing.expectEqual(@as(usize, 1), oooo_count);
+
+    var doc_ctx = Document.init(alloc);
+    defer doc_ctx.deinit();
+    var doc_html =
+        "<root><div id='hsoob'><div class='a b'><div class='d e sib' id='booshTest'><p><span id='spanny'></span></p></div><em class='sib'></em><span class='h i a sib'></span></div><p class='odd'></p></div><div id='lonelyHsoob'></div></root>".*;
+    try doc_ctx.parse(&doc_html, .{});
+    const ctx_root = doc_ctx.queryOne("root") orelse return error.TestUnexpectedResult;
+
+    var it_hsoob = try ctx_root.queryAllRuntime("> #hsoob");
+    var hsoob_count: usize = 0;
+    while (it_hsoob.next()) |_| hsoob_count += 1;
+    try std.testing.expectEqual(@as(usize, 1), hsoob_count);
 }
 
 test "turbo parse mode preserves selector/query behavior for representative input" {

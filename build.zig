@@ -110,6 +110,7 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     const bench_step = b.step("bench", "Run parser/query benchmarks");
     const bench_compare_step = b.step("bench-compare", "Benchmark against SOTA parser implementations");
+    const conformance_step = b.step("conformance", "Run external parser/selector conformance suites (strict+turbo)");
 
     // This creates a RunArtifact step in the build graph. A RunArtifact step
     // invokes an executable compiled by Zig. Steps will only be executed by the
@@ -143,6 +144,15 @@ pub fn build(b: *std.Build) void {
     compare_cmd.setCwd(b.path("."));
     compare_cmd.step.dependOn(&setup_fixtures_cmd.step);
     bench_compare_step.dependOn(&compare_cmd.step);
+
+    const conformance_cmd = b.addSystemCommand(&.{
+        "python3",
+        "scripts/run_external_suites.py",
+        "--mode",
+        "both",
+    });
+    conformance_cmd.setCwd(b.path("."));
+    conformance_step.dependOn(&conformance_cmd.step);
 
     // By making the run step depend on the default step, it will be run from the
     // installation directory rather than directly from within the cache directory.

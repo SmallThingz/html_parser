@@ -57,7 +57,28 @@ const Parser = struct {
 
         while (true) {
             const group_start: u32 = @intCast(self.compounds.items.len);
-            try self.parseCompound(.none);
+            var first_combinator: ast.Combinator = .none;
+            if (self.i < self.source.len) {
+                first_combinator = switch (self.peek()) {
+                    '>' => blk: {
+                        self.i += 1;
+                        self.skipWs();
+                        break :blk ast.Combinator.child;
+                    },
+                    '+' => blk: {
+                        self.i += 1;
+                        self.skipWs();
+                        break :blk ast.Combinator.adjacent;
+                    },
+                    '~' => blk: {
+                        self.i += 1;
+                        self.skipWs();
+                        break :blk ast.Combinator.sibling;
+                    },
+                    else => .none,
+                };
+            }
+            try self.parseCompound(first_combinator);
 
             while (true) {
                 const saw_ws = self.skipWsRet();
@@ -145,7 +166,7 @@ const Parser = struct {
             if (c == '*') {
                 self.i += 1;
                 consumed = true;
-            } else if (tables.IdentStartTable[c]) {
+            } else if (isTagIdentStart(c)) {
                 out.has_tag = 1;
                 out.tag = self.parseIdent() orelse return error.InvalidSelector;
                 self.lowerRange(out.tag);
@@ -389,32 +410,62 @@ fn isSelectorIdentChar(c: u8) bool {
         c == '-';
 }
 
+fn isTagIdentStart(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_';
+}
+
 fn parseNthExpr(expr: []const u8) ?ast.NthExpr {
     if (expr.len == 0) return null;
     if (tables.eqlIgnoreCaseAscii(expr, "odd")) return .{ .a = 2, .b = 1 };
     if (tables.eqlIgnoreCaseAscii(expr, "even")) return .{ .a = 2, .b = 0 };
 
-    if (std.mem.indexOfScalar(u8, expr, 'n')) |n_pos| {
-        const a_part = tables.trimAsciiWhitespace(expr[0..n_pos]);
-        const b_part = tables.trimAsciiWhitespace(expr[n_pos + 1 ..]);
+    const n_pos: ?usize = blk: {
+        var i: usize = 0;
+        while (i < expr.len) : (i += 1) {
+            const c = expr[i];
+            if (c == 'n' or c == 'N') break :blk i;
+        }
+        break :blk null;
+    };
+
+    if (n_pos) |n_idx| {
+        const a_part = tables.trimAsciiWhitespace(expr[0..n_idx]);
+        const b_part = tables.trimAsciiWhitespace(expr[n_idx + 1 ..]);
 
         const a: i32 = if (a_part.len == 0 or std.mem.eql(u8, a_part, "+"))
             1
         else if (std.mem.eql(u8, a_part, "-"))
             -1
         else
-            std.fmt.parseInt(i32, a_part, 10) catch return null;
+            parseSignedInt(a_part) orelse return null;
 
         const b: i32 = if (b_part.len == 0)
             0
         else
-            std.fmt.parseInt(i32, b_part, 10) catch return null;
+            parseSignedInt(b_part) orelse return null;
 
         return .{ .a = a, .b = b };
     }
 
-    const only = std.fmt.parseInt(i32, expr, 10) catch return null;
+    const only = parseSignedInt(expr) orelse return null;
     return .{ .a = 0, .b = only };
+}
+
+fn parseSignedInt(bytes: []const u8) ?i32 {
+    if (bytes.len == 0) return null;
+    var start: usize = 0;
+    var sign: i64 = 1;
+    if (bytes[0] == '+') {
+        start = 1;
+    } else if (bytes[0] == '-') {
+        start = 1;
+        sign = -1;
+    }
+    if (start >= bytes.len) return null;
+    const mag = std.fmt.parseInt(i64, bytes[start..], 10) catch return null;
+    const value = sign * mag;
+    if (value < std.math.minInt(i32) or value > std.math.maxInt(i32)) return null;
+    return @intCast(value);
 }
 
 fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
@@ -458,6 +509,41 @@ test "runtime selector parser tracks combinator chain and grouping" {
     try std.testing.expect(sel.compounds[3].combinator == .adjacent);
     try std.testing.expect(sel.compounds[4].combinator == .sibling);
     try std.testing.expect(sel.compounds[5].combinator == .none);
+}
+
+test "runtime selector parser supports leading combinator and pseudo-only compounds" {
+    const alloc = std.testing.allocator;
+
+    var sel = try compileRuntimeImpl(alloc, "> #hsoob");
+    defer sel.deinitRuntime(alloc);
+    try std.testing.expectEqual(@as(usize, 1), sel.groups.len);
+    try std.testing.expectEqual(@as(usize, 1), sel.compounds.len);
+    try std.testing.expect(sel.compounds[0].combinator == .child);
+    try std.testing.expect(sel.compounds[0].has_id == 1);
+
+    var sel2 = try compileRuntimeImpl(alloc, "#pseudos :nth-child(odd)");
+    defer sel2.deinitRuntime(alloc);
+    try std.testing.expectEqual(@as(usize, 2), sel2.compounds.len);
+    try std.testing.expect(sel2.compounds[1].combinator == .descendant);
+    try std.testing.expectEqual(@as(u32, 1), sel2.compounds[1].pseudo_len);
+    try std.testing.expect(sel2.pseudos[sel2.compounds[1].pseudo_start].kind == .nth_child);
+}
+
+test "runtime selector parser accepts nth-child shorthand variants" {
+    const alloc = std.testing.allocator;
+    const valid = [_][]const u8{
+        ":nth-child(odd)",
+        ":nth-child(even)",
+        ":nth-child(3n+1)",
+        ":nth-child(+3n-2)",
+        ":nth-child(-n+6)",
+        ":nth-child(-n+5)",
+        ":nth-child(2)",
+    };
+    for (valid) |v| {
+        var sel = try compileRuntimeImpl(alloc, v);
+        sel.deinitRuntime(alloc);
+    }
 }
 
 test "runtime selector parser rejects invalid selectors" {

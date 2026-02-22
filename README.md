@@ -71,3 +71,12 @@ zig build bench-compare
 ```
 
 This runs parse/query benchmark suites and writes reports under `bench/results/`.
+
+
+## Conformance
+
+```bash
+zig build conformance
+```
+
+Runs external selector and parser conformance suites in both `strict` and `turbo` parse modes and writes JSON results to `bench/results/external_suite_report.json`.
