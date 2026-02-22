@@ -11,6 +11,7 @@ pub fn decodeInPlace(slice: []u8) usize {
 }
 
 pub fn decodeInPlaceIfEntity(slice: []u8) usize {
+    // Fast reject to keep the no-entity path single-pass and branch-light.
     const first = std.mem.indexOfScalar(u8, slice, '&') orelse return slice.len;
     return decodeInPlaceFrom(slice, first);
 }
@@ -39,6 +40,7 @@ fn decodeInPlaceFrom(slice: []u8, start_index: usize) usize {
 
         const maybe = decodeEntity(slice[r..]);
         if (maybe) |decoded| {
+            // Copy decoded scalar bytes directly into the write cursor.
             std.mem.copyForwards(u8, slice[w .. w + decoded.len], decoded.bytes[0..decoded.len]);
             r += decoded.consumed;
             w += decoded.len;

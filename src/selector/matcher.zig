@@ -74,6 +74,9 @@ fn matchGroupFromRight(comptime Doc: type, doc: *const Doc, selector: ast.Select
 fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, comp: ast.Compound, node_index: u32) bool {
     const node = &doc.nodes.items[node_index];
     if (node.kind != .element) return false;
+    // Per-node memo for attribute probes inside one compound match.
+    // This preserves selector-order short-circuiting while avoiding repeated
+    // full attribute traversals for the same name.
     var attr_probe: AttrProbe = .{};
 
     if (comp.has_tag != 0) {
@@ -256,6 +259,8 @@ fn attrValueByHash(doc: anytype, node: anytype, probe: *AttrProbe, name: []const
     }
 
     probe.overflow = true;
+    // Fallback for very large compounds still stays allocation-free; we simply
+    // bypass memoization once the fixed probe budget is exhausted.
     return attr_inline.getAttrValue(doc, node, name);
 }
 

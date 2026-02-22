@@ -33,6 +33,8 @@ pub fn findTagEndRespectQuotes(hay: []const u8, start: usize) ?TagEnd {
         switch (ch) {
             '"', '\'' => quote = ch,
             '>' => {
+                // Trim trailing ASCII whitespace before deciding whether this is
+                // `.../>` or `...>`.
                 var j = i;
                 while (j > start and tables.WhitespaceTable[hay[j - 1]]) : (j -= 1) {}
 
@@ -57,6 +59,8 @@ pub fn findTagEndRespectQuotes(hay: []const u8, start: usize) ?TagEnd {
 }
 
 inline fn findByteDispatch(hay: []const u8, start: usize, needle: u8) ?usize {
+    // Compile-time architecture dispatch keeps a single callsite shape while
+    // selecting the fastest available vector width.
     if (comptime builtin.cpu.arch == .x86_64 and std.Target.x86.featureSetHas(builtin.cpu.features, .avx2)) {
         return findByteVec(32, hay, start, needle);
     }

@@ -52,6 +52,7 @@ pub fn parentNode(comptime Node: type, self: *const Node) ?*const Node {
 }
 
 pub fn children(comptime Node: type, self: *const Node) []const *const Node {
+    // Child views are built once and then borrowed on every call.
     @constCast(self.doc).ensureChildViewsBuilt();
     const start: usize = @intCast(self.child_view_start);
     const end: usize = @intCast(self.child_view_start + self.child_view_len);
@@ -86,6 +87,7 @@ pub fn innerText(comptime Node: type, self: *const Node, arena_alloc: std.mem.Al
 
     if (count == 0) return "";
     if (count == 1) {
+        // Single text-node result can stay fully borrowed/non-alloc.
         const only = &doc.nodes.items[first_idx];
         if (!opts.normalize_whitespace) return only.text.slice(doc.source);
         return normalizeTextNodeInPlace(only, doc);

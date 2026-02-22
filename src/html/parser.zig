@@ -110,6 +110,8 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const start = self.i;
             self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
+            // Turbo mode targets parsing throughput and intentionally skips
+            // creating text nodes.
             if (self.opts.turbo_parse) return;
 
             const parent_idx = self.currentParent();
@@ -161,6 +163,8 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var attr_bytes_end: usize = self.i;
 
             if (self.opts.turbo_parse) {
+                // Fast path: scan to tag end while honoring quotes so `>` inside
+                // attribute values does not terminate the tag early.
                 if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
                     explicit_self_close = tag_end.self_close;
                     attr_bytes_end = tag_end.attr_end;
@@ -211,6 +215,8 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const self_close = explicit_self_close or tags.isVoidTagHash(tag_name, tag_name_hash);
 
             if (!self_close and tags.isRawTextTagHash(tag_name, tag_name_hash)) {
+                // Raw-text elements are consumed as plain text until an explicit
+                // matching close tag candidate is found.
                 const content_start = self.i;
                 if (self.findRawTextClose(tag_name, self.i)) |close| {
                     if (!self.opts.turbo_parse and close.content_end > content_start) {

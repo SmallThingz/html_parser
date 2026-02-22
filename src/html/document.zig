@@ -10,11 +10,17 @@ const tags = @import("tags.zig");
 pub const InvalidIndex: u32 = std.math.maxInt(u32);
 
 pub const ParseOptions = struct {
+    // Enables `parentNode()` navigation; disabling it trims parse work and memory.
     store_parent_pointers: bool = true,
+    // Lowercases tag/attribute names in-place to accelerate case-insensitive matching.
     normalize_input: bool = true,
+    // Optional parse-time text-node whitespace normalization.
     normalize_text_on_parse: bool = false,
+    // Precompute `children()` slices during parse.
     eager_child_views: bool = true,
+    // Canonicalize explicit empty assignments (`a=`) during parse.
     eager_attr_empty_rewrite: bool = true,
+    // Parse-throughput mode that skips non-essential work.
     turbo_parse: bool = false,
     permissive_recovery: bool = true,
 };
@@ -186,6 +192,7 @@ pub const Document = struct {
     query_one_arena: std.heap.ArenaAllocator,
     query_all_arena: std.heap.ArenaAllocator,
     query_all_generation: u64 = 1,
+    // One-entry selector caches avoid recompiling hot repeated runtime selectors.
     query_one_cached_selector: []const u8 = "",
     query_one_cached_compiled: ?ast.Selector = null,
     query_one_cache_valid: bool = false,
@@ -267,6 +274,8 @@ pub const Document = struct {
 
     fn queryAllRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!QueryIter {
         const mut_self: *Document = @constCast(self);
+        // Runtime query-all iterators are invalidated when a newer runtime
+        // query-all is created, to avoid holding stale compiled selector state.
         mut_self.query_all_generation +%= 1;
         if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
 
@@ -350,6 +359,8 @@ pub const Document = struct {
 
     pub fn ensureChildViewsBuilt(self: *Document) void {
         if (self.child_views_ready) return;
+        // Allocation failure here indicates an unrecoverable internal state for
+        // callers expecting non-fallible navigation APIs.
         self.buildChildViews() catch @panic("out of memory building child views");
     }
 

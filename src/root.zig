@@ -31,3 +31,8 @@ test "smoke parse/query" {
     try std.testing.expectEqualStrings("div", parent.tagName());
     try std.testing.expect(doc.queryOne("div > span.k") != null);
 }
+
+test {
+    _ = @import("examples_tests.zig");
+    _ = @import("behavioral_tests.zig");
+}

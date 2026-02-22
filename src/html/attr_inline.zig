@@ -22,6 +22,11 @@ const LookupKind = enum(u8) {
     href,
 };
 
+// Attribute traversal and value materialization are intentionally in-place.
+// Wire states after name parsing:
+// - `name=...` raw value, lazily materialized on first read
+// - `name\0...` parsed value (with marker layout handled by parseParsedValue)
+// - `name` + delimiter/end -> boolean/name-only attribute
 pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const u8 {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
@@ -175,6 +180,9 @@ const ParsedValue = struct {
 };
 
 fn parseParsedValue(source: []u8, span_end: usize, name_end: usize) ParsedValue {
+    // Parsed layout can be:
+    // - name\0\0value\0...
+    // - name\0value\0...
     if (name_end + 1 >= span_end) return .{ .value = "", .next_start = span_end };
 
     const marker = source[name_end + 1];
@@ -231,6 +239,8 @@ fn materializeRawValue(source: []u8, span_end: usize, eq_index: usize, raw: RawV
     decoded_len = entities.decodeInPlaceIfEntity(source[raw.start..raw.end]);
 
     if (raw.kind == .quoted) {
+        // Quoted values use a double-NUL marker so traversal can distinguish
+        // this family and preserve skip metadata correctness after shifts.
         source[eq_index] = 0;
         if (eq_index + 1 < span_end) source[eq_index + 1] = 0;
 
@@ -298,6 +308,11 @@ fn nextAfterValue(source: []const u8, value_end: usize, span_end: usize) usize {
 }
 
 fn patchGap(source: []u8, span_end: usize, value_end: usize, raw_next_start: usize) void {
+    // Any removed bytes are encoded as:
+    // - single-space for tiny gaps
+    // - short skip metadata: 0x00, len
+    // - extended skip metadata: 0x00, 0xFF, u32 len
+    // This keeps traversal O(n) without reparsing shifted tails.
     if (value_end + 1 >= span_end) return;
 
     const next_start = @min(raw_next_start, span_end);
