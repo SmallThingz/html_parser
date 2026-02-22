@@ -96,6 +96,16 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(bench_exe);
 
+    const tools_exe = b.addExecutable(.{
+        .name = "htmlparser-tools",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/scripts.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(tools_exe);
+
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
@@ -109,6 +119,7 @@ pub fn build(b: *std.Build) void {
     // steps (e.g. a Run step, as we will see in a moment).
     const run_step = b.step("run", "Run the app");
     const bench_step = b.step("bench", "Run parser/query benchmarks");
+    const tools_step = b.step("tools", "Run htmlparser-tools utility");
     const bench_compare_step = b.step("bench-compare", "Benchmark against SOTA parser implementations");
     const conformance_step = b.step("conformance", "Run external parser/selector conformance suites (strict+turbo)");
 
@@ -123,47 +134,45 @@ pub fn build(b: *std.Build) void {
 
     const bench_cmd = b.addRunArtifact(bench_exe);
     bench_step.dependOn(&bench_cmd.step);
+    const tools_cmd = b.addRunArtifact(tools_exe);
+    tools_step.dependOn(&tools_cmd.step);
 
-    const setup_parsers_cmd = b.addSystemCommand(&.{
-        "bash",
-        "bench/setup_parsers.sh",
-    });
-    setup_parsers_cmd.setCwd(b.path("."));
+    const setup_parsers_cmd = b.addRunArtifact(tools_exe);
+    setup_parsers_cmd.addArg("setup-parsers");
 
-    const setup_fixtures_cmd = b.addSystemCommand(&.{
-        "bash",
-        "bench/setup_fixtures.sh",
-    });
-    setup_fixtures_cmd.setCwd(b.path("."));
+    const setup_fixtures_cmd = b.addRunArtifact(tools_exe);
+    setup_fixtures_cmd.addArg("setup-fixtures");
     setup_fixtures_cmd.step.dependOn(&setup_parsers_cmd.step);
 
-    const compare_cmd = b.addSystemCommand(&.{
-        "python3",
-        "bench/run_benchmarks.py",
-    });
-    compare_cmd.setCwd(b.path("."));
+    const compare_cmd = b.addRunArtifact(tools_exe);
+    compare_cmd.addArg("run-benchmarks");
     compare_cmd.step.dependOn(&setup_fixtures_cmd.step);
     bench_compare_step.dependOn(&compare_cmd.step);
 
-    const conformance_cmd = b.addSystemCommand(&.{
-        "python3",
-        "scripts/run_external_suites.py",
-        "--mode",
-        "both",
-    });
-    conformance_cmd.setCwd(b.path("."));
+    const conformance_cmd = b.addRunArtifact(tools_exe);
+    conformance_cmd.addArg("run-external-suites");
+    conformance_cmd.addArg("--mode");
+    conformance_cmd.addArg("both");
     conformance_step.dependOn(&conformance_cmd.step);
 
     // By making the run step depend on the default step, it will be run from the
     // installation directory rather than directly from within the cache directory.
     run_cmd.step.dependOn(b.getInstallStep());
     bench_cmd.step.dependOn(b.getInstallStep());
+    tools_cmd.step.dependOn(b.getInstallStep());
+    setup_parsers_cmd.step.dependOn(b.getInstallStep());
+    setup_fixtures_cmd.step.dependOn(b.getInstallStep());
+    compare_cmd.step.dependOn(b.getInstallStep());
+    conformance_cmd.step.dependOn(b.getInstallStep());
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {
         run_cmd.addArgs(args);
         bench_cmd.addArgs(args);
+        tools_cmd.addArgs(args);
+        compare_cmd.addArgs(args);
+        conformance_cmd.addArgs(args);
     }
 
     // Creates an executable that will run `test` blocks from the provided module.

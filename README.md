@@ -72,6 +72,12 @@ zig build bench-compare
 
 This runs parse/query benchmark suites and writes reports under `bench/results/`.
 
+Direct tooling command:
+
+```bash
+zig build tools -- run-benchmarks --profile quick
+```
+
 
 ## Conformance
 
@@ -80,3 +86,9 @@ zig build conformance
 ```
 
 Runs external selector and parser conformance suites in both `strict` and `turbo` parse modes and writes JSON results to `bench/results/external_suite_report.json`.
+
+Direct tooling command:
+
+```bash
+zig build tools -- run-external-suites --mode both
+```

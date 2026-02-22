@@ -13,6 +13,8 @@
 
 ```bash
 zig build bench-compare
+# or directly:
+zig build tools -- run-benchmarks --profile quick
 ```
 
 ### Manual benchmark executable

@@ -1,0 +1,272 @@
+[
+  {
+    "selector": ".a span",
+    "context": "frag",
+    "expected": 1
+  },
+  {
+    "selector": "> div p em",
+    "context": "frag",
+    "expected": 2
+  },
+  {
+    "selector": "#emem",
+    "context": "frag",
+    "expected": 1
+  },
+  {
+    "selector": ".d.i #emem",
+    "context": "frag",
+    "expected": 1
+  },
+  {
+    "selector": ".d #oooo #emem",
+    "context": "frag",
+    "expected": 1
+  },
+  {
+    "selector": "> div #oooo",
+    "context": "frag",
+    "expected": 1
+  },
+  {
+    "selector": "#hsoob .a",
+    "context": "doc",
+    "expected": 2
+  },
+  {
+    "selector": "#hsoob div",
+    "context": "doc",
+    "expected": 2
+  },
+  {
+    "selector": "p.odd",
+    "context": "doc",
+    "expected": 1
+  },
+  {
+    "selector": ".d ~ .sib",
+    "context": "doc",
+    "expected": 2
+  },
+  {
+    "selector": ".a .d + .sib",
+    "context": "doc",
+    "expected": 1
+  },
+  {
+    "selector": "#hsoob > div > .h",
+    "context": "doc",
+    "expected": 1
+  },
+  {
+    "selector": "#hsoob #spanny",
+    "context": "doc",
+    "expected": 1
+  },
+  {
+    "selector": ".a #spanny",
+    "context": "doc",
+    "expected": 1
+  },
+  {
+    "selector": ".a #booshTest #spanny",
+    "context": "doc",
+    "expected": 1
+  },
+  {
+    "selector": "> #hsoob",
+    "context": "doc",
+    "expected": 1
+  },
+  {
+    "selector": ".a",
+    "context": "document",
+    "expected": 3
+  },
+  {
+    "selector": "#boosh,#boosh",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#boosh,.apples,#boosh",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#boosh #booshTest",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": ".a.b #booshTest",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#boosh>.a>#booshTest",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": ".a>#booshTest",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#boosh .a",
+    "context": "document",
+    "expected": 2
+  },
+  {
+    "selector": "#boosh div",
+    "context": "document",
+    "expected": 2
+  },
+  {
+    "selector": "a.odd",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#boosh div,#boosh span",
+    "context": "document",
+    "expected": 3
+  },
+  {
+    "selector": ".class-with-dashes",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#boosh *",
+    "context": "document",
+    "expected": 4
+  },
+  {
+    "selector": "div#fixtures > div a",
+    "context": "document",
+    "expected": 5
+  },
+  {
+    "selector": "div#fixtures div ~ a div",
+    "context": "document",
+    "expected": 0
+  },
+  {
+    "selector": ".parent .oldest ~ .sibling",
+    "context": "document",
+    "expected": 4
+  },
+  {
+    "selector": ".parent .middle ~ .sibling",
+    "context": "document",
+    "expected": 2
+  },
+  {
+    "selector": ".parent .middle ~ h4",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": ".parent .middle ~ h4.younger",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": ".parent .middle ~ h3",
+    "context": "document",
+    "expected": 0
+  },
+  {
+    "selector": ".parent .middle ~ h2",
+    "context": "document",
+    "expected": 0
+  },
+  {
+    "selector": ".parent .youngest ~ .sibling",
+    "context": "document",
+    "expected": 0
+  },
+  {
+    "selector": ".parent .oldest + .sibling",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": ".parent .middle + .sibling",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": ".parent .middle + h4",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": ".parent .middle + h3",
+    "context": "document",
+    "expected": 0
+  },
+  {
+    "selector": ".parent .middle + h2",
+    "context": "document",
+    "expected": 0
+  },
+  {
+    "selector": ".parent .youngest + .sibling",
+    "context": "document",
+    "expected": 0
+  },
+  {
+    "selector": ".odd:not(div)",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#pseudos div:first-child",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#pseudos div:last-child",
+    "context": "document",
+    "expected": 1
+  },
+  {
+    "selector": "#pseudos :nth-child(odd)",
+    "context": "document",
+    "expected": 4
+  },
+  {
+    "selector": "#pseudos div:nth-child(odd)",
+    "context": "document",
+    "expected": 3
+  },
+  {
+    "selector": "#pseudos div:nth-child(even)",
+    "context": "document",
+    "expected": 3
+  },
+  {
+    "selector": "#pseudos :nth-child(3n+1)",
+    "context": "document",
+    "expected": 3
+  },
+  {
+    "selector": "#pseudos :nth-child(+3n-2)",
+    "context": "document",
+    "expected": 3
+  },
+  {
+    "selector": "#pseudos :nth-child(-n+6)",
+    "context": "document",
+    "expected": 6
+  },
+  {
+    "selector": "#pseudos :nth-child(-n+5)",
+    "context": "document",
+    "expected": 5
+  }
+]

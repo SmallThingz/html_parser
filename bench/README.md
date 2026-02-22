@@ -26,31 +26,29 @@ Default fixture set includes:
 ## Setup
 
 ```bash
-./bench/setup_parsers.sh
-./bench/setup_fixtures.sh
+zig build tools -- setup-parsers
+zig build tools -- setup-fixtures
 ```
 
-`setup_fixtures.sh` now caches downloads: existing non-empty fixture files are reused.
+Fixture setup caches downloads: existing non-empty files are reused.
 To force refresh all fixture downloads:
 
 ```bash
-./bench/setup_fixtures.sh --refresh
-# or
-FORCE_REFRESH=1 ./bench/setup_fixtures.sh
+zig build tools -- setup-fixtures --refresh
 ```
 
 ## Run
 
 ```bash
-./bench/run_benchmarks.py
+zig build tools -- run-benchmarks
 # default profile is quick
-./bench/run_benchmarks.py --profile quick
+zig build tools -- run-benchmarks --profile quick
 # low-noise acceptance profile
-./bench/run_benchmarks.py --profile stable
+zig build tools -- run-benchmarks --profile stable
 # write baseline for current profile (used by gate checks)
-./bench/run_benchmarks.py --profile stable --write-baseline
+zig build tools -- run-benchmarks --profile stable --write-baseline
 # compare against explicit baseline file
-./bench/run_benchmarks.py --profile stable --baseline bench/results/baseline_stable.json
+zig build tools -- run-benchmarks --profile stable --baseline bench/results/baseline_stable.json
 ```
 
 Or run the full setup + comparison from Zig build:

@@ -1,0 +1,82 @@
+[
+  {
+    "selector": "nonexistent",
+    "expected": 0
+  },
+  {
+    "selector": "nonexistent",
+    "expected": 0
+  },
+  {
+    "selector": ".second",
+    "expected": 0
+  },
+  {
+    "selector": "p#strong",
+    "expected": 0
+  },
+  {
+    "selector": "#link_2.internal.nonexistent",
+    "expected": 0
+  },
+  {
+    "selector": "li#item_1.nonexistent",
+    "expected": 0
+  },
+  {
+    "selector": "li#item_1.first.nonexistent",
+    "expected": 0
+  },
+  {
+    "selector": "#level1>div:first-child",
+    "expected": 0
+  },
+  {
+    "selector": "#level1:first-child",
+    "expected": 0
+  },
+  {
+    "selector": "#level1>span:last-child",
+    "expected": 0
+  },
+  {
+    "selector": "div.brothers:not(.brothers)",
+    "expected": 0
+  },
+  {
+    "selector": "#level2_2 + span",
+    "expected": 0
+  },
+  {
+    "selector": "#level3_2 + *",
+    "expected": 0
+  },
+  {
+    "selector": "#level3_1 + em",
+    "expected": 0
+  },
+  {
+    "selector": "div > #nonexistent",
+    "expected": 0
+  },
+  {
+    "selector": "#level2_2 ~ span",
+    "expected": 0
+  },
+  {
+    "selector": "#level3_2 ~ *",
+    "expected": 0
+  },
+  {
+    "selector": "#level3_1 ~ em",
+    "expected": 0
+  },
+  {
+    "selector": "div ~ #level3_2",
+    "expected": 0
+  },
+  {
+    "selector": "div ~ #level2_3",
+    "expected": 0
+  }
+]
