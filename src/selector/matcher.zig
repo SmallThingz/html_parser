@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const tables = @import("../html/tables.zig");
+const attr_inline = @import("../html/attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
@@ -170,6 +171,10 @@ fn hasClass(doc: anytype, node: anytype, class_name: []const u8) bool {
 }
 
 fn getAttrValue(doc: anytype, node: anytype, name: []const u8) ?[]const u8 {
+    if (doc.attr_storage_mode == .inplace) {
+        return attr_inline.getAttrValue(doc, node, name);
+    }
+
     var i: u32 = node.attr_start;
     const end = node.attr_start + node.attr_len;
     while (i < end) : (i += 1) {

@@ -8,11 +8,17 @@ const node_api = @import("node.zig");
 
 pub const InvalidIndex: u32 = std.math.maxInt(u32);
 
+pub const AttrStorageMode = enum(u1) {
+    inplace,
+    legacy,
+};
+
 pub const ParseOptions = struct {
     store_parent_pointers: bool = true,
     normalize_input: bool = true,
     normalize_text_on_parse: bool = false,
     permissive_recovery: bool = true,
+    attr_storage_mode: AttrStorageMode = .inplace,
 };
 
 pub const TextOptions = node_api.TextOptions;
@@ -60,8 +66,12 @@ pub const Node = struct {
     close_start: u32 = 0,
     close_end: u32 = 0,
 
+    // Legacy attribute-object storage range.
     attr_start: u32 = 0,
     attr_len: u32 = 0,
+    // In-place attribute byte range inside the opening tag.
+    attr_bytes_start: u32 = 0,
+    attr_bytes_end: u32 = 0,
 
     first_child: u32 = InvalidIndex,
     last_child: u32 = InvalidIndex,
@@ -169,6 +179,7 @@ pub const Document = struct {
     allocator: std.mem.Allocator,
     source: []u8 = &[_]u8{},
     store_parent_pointers: bool = true,
+    attr_storage_mode: AttrStorageMode = .inplace,
 
     nodes: std.ArrayListUnmanaged(Node) = .{},
     attrs: std.ArrayListUnmanaged(Attribute) = .{},
@@ -211,6 +222,7 @@ pub const Document = struct {
         self.clear();
         self.source = input;
         self.store_parent_pointers = opts.store_parent_pointers;
+        self.attr_storage_mode = opts.attr_storage_mode;
         try parser.parseInto(Document, self, input, opts);
         try self.buildChildViews();
     }
@@ -656,4 +668,109 @@ test "parse-time text normalization option normalizes text nodes during parse" {
 
     const raw = try node.innerTextWithOptions(arena.allocator(), .{ .normalize_whitespace = false });
     try std.testing.expectEqualStrings("alpha & beta", raw);
+}
+
+test "inplace attribute parser rewrites explicit empty assignment to name-only" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x' b a=   ></div>".*;
+    try doc.parse(&html, .{ .attr_storage_mode = .inplace });
+
+    const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
+    const a = node.getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    const b = node.getAttributeValue("b") orelse return error.TestUnexpectedResult;
+    const c = node.getAttributeValue("c");
+    try std.testing.expectEqual(@as(usize, 0), a.len);
+    try std.testing.expectEqual(@as(usize, 0), b.len);
+    try std.testing.expect(c == null);
+
+    try std.testing.expect(doc.queryOne("div[a]") != null);
+    try std.testing.expect(doc.queryOne("div[b]") != null);
+    try std.testing.expect(doc.queryOne("div[c]") == null);
+}
+
+test "inplace attr lazy parse updates state markers and supports selector-triggered parsing" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x' q='&amp;z' n=a&amp;b></div>".*;
+    try doc.parse(&html, .{ .attr_storage_mode = .inplace });
+
+    const by_selector = try doc.queryOneRuntime("div[q='&z'][n='a&b']");
+    try std.testing.expect(by_selector != null);
+
+    const node = by_selector orelse return error.TestUnexpectedResult;
+    const q = node.getAttributeValue("q") orelse return error.TestUnexpectedResult;
+    const n = node.getAttributeValue("n") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("&z", q);
+    try std.testing.expectEqualStrings("a&b", n);
+
+    const span = doc.source[node.attr_bytes_start..node.attr_bytes_end];
+    const q_marker = [_]u8{ 'q', 0, 0 };
+    const q_pos = std.mem.indexOf(u8, span, &q_marker) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(q_pos < span.len);
+
+    const n_marker = [_]u8{ 'n', 0 };
+    const n_pos = std.mem.indexOf(u8, span, &n_marker) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(n_pos + 2 <= span.len);
+    try std.testing.expect(span[n_pos + 1] == 0);
+    try std.testing.expect(span[n_pos + 2] != 0);
+}
+
+test "inplace extended skip metadata preserves traversal for following attributes" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var builder = std.ArrayList(u8).empty;
+    defer builder.deinit(alloc);
+    try builder.appendSlice(alloc, "<div id='x' a='");
+    var i: usize = 0;
+    while (i < 320) : (i += 1) {
+        try builder.appendSlice(alloc, "&amp;");
+    }
+    try builder.appendSlice(alloc, "' b='ok'></div>");
+
+    const html = try builder.toOwnedSlice(alloc);
+    defer alloc.free(html);
+
+    try doc.parse(html, .{ .attr_storage_mode = .inplace });
+
+    const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
+    const a = node.getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 320), a.len);
+    for (a) |c| try std.testing.expect(c == '&');
+
+    const b = node.getAttributeValue("b") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("ok", b);
+}
+
+test "selector results parity between inplace and legacy attr storage" {
+    const alloc = std.testing.allocator;
+    var doc_inplace = Document.init(alloc);
+    defer doc_inplace.deinit();
+    var doc_legacy = Document.init(alloc);
+    defer doc_legacy.deinit();
+
+    var html_inplace = selector_fixture_html.*;
+    var html_legacy = selector_fixture_html.*;
+    try doc_inplace.parse(&html_inplace, .{ .attr_storage_mode = .inplace });
+    try doc_legacy.parse(&html_legacy, .{ .attr_storage_mode = .legacy });
+
+    const cases = [_]struct { selector: []const u8, expected: []const []const u8 }{
+        .{ .selector = "li", .expected = &.{ "li1", "li2", "li3" } },
+        .{ .selector = "[data-k=v]", .expected = &.{"li1"} },
+        .{ .selector = "[data-prefix^=pre]", .expected = &.{ "li1", "li2" } },
+        .{ .selector = "li:not([data-k=x])", .expected = &.{ "li1", "li2" } },
+        .{ .selector = "ul li > span.name", .expected = &.{ "name1", "name2", "name3" } },
+        .{ .selector = "a.hot ~ a.link", .expected = &.{"a3"} },
+    };
+
+    inline for (cases) |case| {
+        try expectDocQueryRuntime(&doc_inplace, case.selector, case.expected);
+        try expectDocQueryRuntime(&doc_legacy, case.selector, case.expected);
+    }
 }

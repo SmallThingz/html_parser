@@ -107,9 +107,12 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             node.name = .{ .start = @intCast(name_start), .end = @intCast(self.i) };
             node.open_start = @intCast(open_start);
 
+            node.attr_bytes_start = @intCast(self.i);
+            node.attr_bytes_end = @intCast(self.i);
             node.attr_start = @intCast(self.doc.attrs.items.len);
 
             var explicit_self_close = false;
+            var attr_bytes_end: usize = self.i;
 
             while (self.i < self.input.len) {
                 self.skipWs();
@@ -117,12 +120,14 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
                 const c = self.input[self.i];
                 if (c == '>') {
+                    attr_bytes_end = self.i;
                     self.i += 1;
                     break;
                 }
 
                 if (c == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>') {
                     explicit_self_close = true;
+                    attr_bytes_end = self.i;
                     self.i += 2;
                     break;
                 }
@@ -130,7 +135,12 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 try self.parseAttribute(node_idx);
             }
 
+            if (self.i == self.input.len and attr_bytes_end < self.i) {
+                attr_bytes_end = self.i;
+            }
+
             node.open_end = @intCast(self.i);
+            node.attr_bytes_end = @intCast(attr_bytes_end);
             node.attr_len = @as(u32, @intCast(self.doc.attrs.items.len)) - node.attr_start;
 
             const self_close = explicit_self_close or tags.isVoidTag(tag_name);
@@ -180,8 +190,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         }
 
         fn parseAttribute(self: *Self, node_index: u32) !void {
-            const alloc = self.doc.allocator;
-
             const name_start = self.i;
             while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {}
             if (self.i == name_start) {
@@ -202,7 +210,10 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 self.i += 1;
                 self.skipWs();
 
-                if (self.i < self.input.len and (self.input[self.i] == '\'' or self.input[self.i] == '"')) {
+                if (self.i >= self.input.len or self.input[self.i] == '>' or (self.input[self.i] == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>')) {
+                    // Canonical rewrite for explicit empty assignment: `a=` -> `a `.
+                    self.input[@as(usize, eq_index)] = ' ';
+                } else if (self.i < self.input.len and (self.input[self.i] == '\'' or self.input[self.i] == '"')) {
                     const q = self.input[self.i];
                     self.i += 1;
                     value_start = self.i;
@@ -220,12 +231,15 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 }
             }
 
-            try self.doc.attrs.append(alloc, .{
-                .node_index = node_index,
-                .name = .{ .start = @intCast(name_start), .end = @intCast(name_end) },
-                .value = .{ .start = @intCast(value_start), .end = @intCast(value_end) },
-                .eq_index = eq_index,
-            });
+            if (self.opts.attr_storage_mode == .legacy) {
+                const alloc = self.doc.allocator;
+                try self.doc.attrs.append(alloc, .{
+                    .node_index = node_index,
+                    .name = .{ .start = @intCast(name_start), .end = @intCast(name_end) },
+                    .value = .{ .start = @intCast(value_start), .end = @intCast(value_end) },
+                    .eq_index = eq_index,
+                });
+            }
         }
 
         fn parseClosingTag(self: *Self) void {

@@ -1,6 +1,7 @@
 const std = @import("std");
 const tables = @import("tables.zig");
 const entities = @import("entities.zig");
+const attr_inline = @import("attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
@@ -57,6 +58,10 @@ pub fn children(comptime Node: type, self: *const Node) []const *const Node {
 }
 
 pub fn getAttributeValue(comptime Node: type, self: *const Node, name: []const u8) ?[]const u8 {
+    if (self.doc.attr_storage_mode == .inplace) {
+        return attr_inline.getAttrValue(self.doc, self, name);
+    }
+
     const doc = @constCast(self.doc);
 
     var i: u32 = self.attr_start;
