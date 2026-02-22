@@ -147,6 +147,7 @@ const Parser = struct {
             } else if (tables.IdentStartTable[c]) {
                 out.has_tag = 1;
                 out.tag = self.parseIdent() orelse return error.InvalidSelector;
+                self.lowerRange(out.tag);
                 consumed = true;
             }
         }
@@ -194,6 +195,7 @@ const Parser = struct {
     fn parseAttrSelector(self: *Parser) Error!ast.AttrSelector {
         self.skipWs();
         const name = self.parseIdent() orelse return error.InvalidSelector;
+        self.lowerRange(name);
         self.skipWs();
 
         if (!self.consumeIf('=')) {
@@ -299,6 +301,7 @@ const Parser = struct {
 
         if (tables.IdentStartTable[self.peek()]) {
             const tag = self.parseIdent() orelse return error.InvalidSelector;
+            self.lowerRange(tag);
             return .{ .kind = .tag, .text = tag };
         }
 
@@ -345,6 +348,12 @@ const Parser = struct {
         self.i += 1;
         while (self.i < self.source.len and isSelectorIdentChar(self.source[self.i])) : (self.i += 1) {}
         return ast.Range.from(start, self.i);
+    }
+
+    fn lowerRange(self: *Parser, range: ast.Range) void {
+        const start: usize = @intCast(range.start);
+        const end = start + @as(usize, @intCast(range.len));
+        tables.toLowerInPlace(@constCast(self.source[start..end]));
     }
 
     fn skipWs(self: *Parser) void {

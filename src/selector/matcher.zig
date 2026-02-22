@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const tables = @import("../html/tables.zig");
+const tags = @import("../html/tags.zig");
 const attr_inline = @import("../html/attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
@@ -75,6 +76,8 @@ fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, 
 
     if (comp.has_tag != 0) {
         const tag = comp.tag.slice(selector.source);
+        const tag_hash = tags.hashBytes(tag);
+        if (node.tag_hash != tag_hash) return false;
         if (!tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag)) return false;
     }
 
@@ -84,10 +87,9 @@ fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, 
         if (!std.mem.eql(u8, value, id)) return false;
     }
 
-    var class_i: u32 = 0;
-    while (class_i < comp.class_len) : (class_i += 1) {
-        const cls = selector.classes[comp.class_start + class_i].slice(selector.source);
-        if (!hasClass(doc, node, &attr_probe, cls)) return false;
+    if (comp.class_len != 0) {
+        const class_attr = attrValue(doc, node, &attr_probe, "class") orelse return false;
+        if (!hasAllClassesOnePass(selector, comp, class_attr)) return false;
     }
 
     var attr_i: u32 = 0;
@@ -177,6 +179,44 @@ fn tokenIncludes(value: []const u8, token: []const u8) bool {
 fn hasClass(doc: anytype, node: anytype, probe: *AttrProbe, class_name: []const u8) bool {
     const class_attr = attrValue(doc, node, probe, "class") orelse return false;
     return tokenIncludes(class_attr, class_name);
+}
+
+fn hasAllClassesOnePass(selector: ast.Selector, comp: ast.Compound, class_attr: []const u8) bool {
+    const class_count = comp.class_len;
+    if (class_count == 0) return true;
+    if (class_count > 63) {
+        var i: u32 = 0;
+        while (i < class_count) : (i += 1) {
+            const cls = selector.classes[comp.class_start + i].slice(selector.source);
+            if (!tokenIncludes(class_attr, cls)) return false;
+        }
+        return true;
+    }
+
+    const target_mask: u64 = (@as(u64, 1) << @as(u6, @intCast(class_count))) - 1;
+    var found_mask: u64 = 0;
+    var i: usize = 0;
+    while (i < class_attr.len) {
+        while (i < class_attr.len and class_attr[i] == ' ') : (i += 1) {}
+        if (i >= class_attr.len) break;
+        const tok_start = i;
+        while (i < class_attr.len and class_attr[i] != ' ') : (i += 1) {}
+        const tok = class_attr[tok_start..i];
+
+        var j: u32 = 0;
+        while (j < class_count) : (j += 1) {
+            const bit_shift: u6 = @intCast(j);
+            const bit: u64 = @as(u64, 1) << bit_shift;
+            if ((found_mask & bit) != 0) continue;
+            const cls = selector.classes[comp.class_start + j].slice(selector.source);
+            if (std.mem.eql(u8, tok, cls)) {
+                found_mask |= bit;
+                if (found_mask == target_mask) return true;
+                break;
+            }
+        }
+    }
+    return found_mask == target_mask;
 }
 
 fn attrValue(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8) ?[]const u8 {

@@ -5,6 +5,7 @@ const ast = @import("../selector/ast.zig");
 const matcher = @import("../selector/matcher.zig");
 const parser = @import("parser.zig");
 const node_api = @import("node.zig");
+const tags = @import("tags.zig");
 
 pub const InvalidIndex: u32 = std.math.maxInt(u32);
 
@@ -46,6 +47,7 @@ pub const Node = struct {
     kind: NodeType,
 
     name: Span = .{},
+    tag_hash: tags.TagHashValue = 0,
     text: Span = .{},
 
     open_start: u32 = 0,
@@ -896,8 +898,7 @@ test "optional-close p/li/td-th/dt-dd/head-body preserve expected query semantic
     var doc = Document.init(alloc);
     defer doc.deinit();
 
-    var html = (
-        "<html><head><title>x</title><body>" ++
+    var html = ("<html><head><title>x</title><body>" ++
         "<p id='p1'>a<div id='d1'></div>" ++
         "<ul><li id='li1'>x<li id='li2'>y</ul>" ++
         "<dl><dt id='dt1'>a<dd id='dd1'>b<dt id='dt2'>c</dl>" ++
@@ -929,4 +930,32 @@ test "attr fast-path names are equivalent to generic lookup semantics" {
     try std.testing.expectEqualStrings("v", a.getAttributeValue("data-k").?);
 
     try std.testing.expect(a.getAttributeValue("missing") == null);
+}
+
+test "normalize_input keeps mixed-case tags and attrs queryable via lowercase selectors" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<DiV ID='x' ClAsS='A b' DaTa-K='v'><SpAn id='y'></SpAn></DiV>".*;
+    try doc.parse(&html, .{ .normalize_input = true });
+
+    try std.testing.expect(doc.queryOne("div#x[data-k=v]") != null);
+    try std.testing.expect((try doc.queryOneRuntime("div > span#y")) != null);
+
+    const div = doc.queryOne("div#x") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("A b", div.getAttributeValue("class").?);
+}
+
+test "multiple class predicates in one compound match correctly" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x' class='alpha beta gamma'></div><div id='y' class='alpha beta'></div>".*;
+    try doc.parse(&html, .{});
+
+    try expectDocQueryComptime(&doc, "div.alpha.beta.gamma", &.{"x"});
+    try expectDocQueryRuntime(&doc, "div.alpha.beta.gamma", &.{"x"});
+    try expectDocQueryRuntime(&doc, "div.alpha.beta.delta", &.{});
 }

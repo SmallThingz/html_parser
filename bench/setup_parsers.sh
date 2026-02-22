@@ -20,5 +20,6 @@ clone_if_missing() {
 clone_if_missing "https://github.com/lexbor/lexbor.git" "lexbor"
 clone_if_missing "https://codeberg.org/gumbo-parser/gumbo-parser.git" "gumbo-modern"
 clone_if_missing "https://github.com/servo/html5ever.git" "html5ever"
+clone_if_missing "https://github.com/cloudflare/lol-html.git" "lol-html"
 
 echo "done"

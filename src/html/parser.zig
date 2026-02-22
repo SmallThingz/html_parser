@@ -109,22 +109,28 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.skipWs();
 
             const name_start = self.i;
-            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {}
+            var saw_upper = false;
+            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                const c = self.input[self.i];
+                if (c >= 'A' and c <= 'Z') saw_upper = true;
+            }
             if (self.i == name_start) {
                 // malformed tag, consume one byte and move on
                 self.i = @min(self.i + 1, self.input.len);
                 return;
             }
 
-            if (self.opts.normalize_input) tables.toLowerInPlace(self.input[name_start..self.i]);
+            if (self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
             const tag_name = self.input[name_start..self.i];
+            const tag_name_hash = tags.hashBytes(tag_name);
 
-            self.applyImplicitClosures(tag_name, @intCast(open_start));
+            self.applyImplicitClosures(tag_name, tag_name_hash, @intCast(open_start));
 
             const parent_idx = self.currentParent();
             const node_idx = try self.appendNode(.element, parent_idx);
             var node = &self.doc.nodes.items[node_idx];
             node.name = .{ .start = @intCast(name_start), .end = @intCast(self.i) };
+            node.tag_hash = tag_name_hash;
             node.open_start = @intCast(open_start);
 
             node.attr_bytes_start = @intCast(self.i);
@@ -133,25 +139,34 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
 
-            while (self.i < self.input.len) {
-                self.skipWs();
-                if (self.i >= self.input.len) break;
+            if (self.i < self.input.len and self.input[self.i] == '>') {
+                self.i += 1;
+                attr_bytes_end = self.i - 1;
+            } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
+                explicit_self_close = true;
+                attr_bytes_end = self.i;
+                self.i += 2;
+            } else {
+                while (self.i < self.input.len) {
+                    self.skipWs();
+                    if (self.i >= self.input.len) break;
 
-                const c = self.input[self.i];
-                if (c == '>') {
-                    attr_bytes_end = self.i;
-                    self.i += 1;
-                    break;
+                    const c = self.input[self.i];
+                    if (c == '>') {
+                        attr_bytes_end = self.i;
+                        self.i += 1;
+                        break;
+                    }
+
+                    if (c == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>') {
+                        explicit_self_close = true;
+                        attr_bytes_end = self.i;
+                        self.i += 2;
+                        break;
+                    }
+
+                    try self.parseAttribute();
                 }
-
-                if (c == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>') {
-                    explicit_self_close = true;
-                    attr_bytes_end = self.i;
-                    self.i += 2;
-                    break;
-                }
-
-                try self.parseAttribute();
             }
 
             if (self.i == self.input.len and attr_bytes_end < self.i) {
@@ -161,9 +176,9 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             node.open_end = @intCast(self.i);
             node.attr_bytes_end = @intCast(attr_bytes_end);
 
-            const self_close = explicit_self_close or tags.isVoidTag(tag_name);
+            const self_close = explicit_self_close or tags.isVoidTagHash(tag_name, tag_name_hash);
 
-            if (!self_close and tags.isRawTextTag(tag_name)) {
+            if (!self_close and tags.isRawTextTagHash(tag_name, tag_name_hash)) {
                 const content_start = self.i;
                 if (self.findRawTextClose(tag_name, self.i)) |close| {
                     if (close.content_end > content_start) {
@@ -209,13 +224,17 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn parseAttribute(self: *Self) !void {
             const name_start = self.i;
-            while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {}
+            var saw_upper = false;
+            while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {
+                const c = self.input[self.i];
+                if (c >= 'A' and c <= 'Z') saw_upper = true;
+            }
             if (self.i == name_start) {
                 self.i += 1;
                 return;
             }
 
-            if (self.opts.normalize_input) tables.toLowerInPlace(self.input[name_start..self.i]);
+            if (self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
 
             if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
             if (self.i < self.input.len and self.input[self.i] == '=') {
@@ -247,10 +266,15 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.skipWs();
 
             const name_start = self.i;
-            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {}
+            var saw_upper = false;
+            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                const c = self.input[self.i];
+                if (c >= 'A' and c <= 'Z') saw_upper = true;
+            }
             const name_end = self.i;
-            if (name_end > name_start and self.opts.normalize_input) tables.toLowerInPlace(self.input[name_start..name_end]);
+            if (name_end > name_start and self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..name_end]);
             const close_name = self.input[name_start..name_end];
+            const close_hash = tags.hashBytes(close_name);
 
             self.i = std.mem.indexOfScalarPos(u8, self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
@@ -258,12 +282,27 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             if (close_name.len == 0) return;
 
+            if (self.doc.parse_stack.items.len > 1) {
+                const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
+                const top = &self.doc.nodes.items[top_idx];
+                const hash_mismatch = top.tag_hash != close_hash;
+                if (!hash_mismatch and tables.eqlIgnoreCaseAscii(top.name.slice(self.input), close_name)) {
+                    _ = self.doc.parse_stack.pop();
+                    var node = &self.doc.nodes.items[top_idx];
+                    node.close_start = @intCast(close_start);
+                    node.close_end = close_end;
+                    node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
+                    return;
+                }
+            }
+
             var found: ?usize = null;
             var s = self.doc.parse_stack.items.len;
             while (s > 1) {
                 s -= 1;
                 const idx = self.doc.parse_stack.items[s];
                 const n = &self.doc.nodes.items[idx];
+                if (n.tag_hash != close_hash) continue;
                 if (tables.eqlIgnoreCaseAscii(n.name.slice(self.input), close_name)) {
                     found = s;
                     break;
@@ -281,11 +320,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             }
         }
 
-        fn applyImplicitClosures(self: *Self, new_tag: []const u8, close_pos: u32) void {
+        fn applyImplicitClosures(self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue, close_pos: u32) void {
             while (self.doc.parse_stack.items.len > 1) {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
-                if (!tags.shouldImplicitlyClose(top.name.slice(self.input), new_tag)) break;
+                if (!tags.shouldImplicitlyCloseHash(top.name.slice(self.input), top.tag_hash, new_tag, new_tag_hash)) break;
 
                 _ = self.doc.parse_stack.pop();
                 var n = &self.doc.nodes.items[top_idx];
@@ -337,11 +376,17 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn skipComment(self: *Self) void {
             self.i += 4;
-            while (self.i + 2 < self.input.len) : (self.i += 1) {
-                if (self.input[self.i] == '-' and self.input[self.i + 1] == '-' and self.input[self.i + 2] == '>') {
-                    self.i += 3;
+            var j = self.i;
+            while (j + 2 < self.input.len) {
+                const dash = std.mem.indexOfScalarPos(u8, self.input, j, '-') orelse {
+                    self.i = self.input.len;
+                    return;
+                };
+                if (dash + 2 < self.input.len and self.input[dash + 1] == '-' and self.input[dash + 2] == '>') {
+                    self.i = dash + 3;
                     return;
                 }
+                j = dash + 1;
             }
             self.i = self.input.len;
         }
@@ -354,11 +399,17 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn skipPi(self: *Self) void {
             self.i += 2;
-            while (self.i + 1 < self.input.len) : (self.i += 1) {
-                if (self.input[self.i] == '?' and self.input[self.i + 1] == '>') {
-                    self.i += 2;
+            var j = self.i;
+            while (j + 1 < self.input.len) {
+                const q = std.mem.indexOfScalarPos(u8, self.input, j, '?') orelse {
+                    self.i = self.input.len;
+                    return;
+                };
+                if (q + 1 < self.input.len and self.input[q + 1] == '>') {
+                    self.i = q + 2;
                     return;
                 }
+                j = q + 1;
             }
             self.i = self.input.len;
         }
@@ -369,8 +420,15 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn findRawTextClose(self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_start: usize, close_end: usize } {
             var j = std.mem.indexOfScalarPos(u8, self.input, start, '<') orelse return null;
+            const tag_len = tag_name.len;
+            if (tag_len == 0) return null;
+            const first = tables.lower(tag_name[0]);
             while (j + 3 < self.input.len) {
                 if (self.input[j + 1] != '/') {
+                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    continue;
+                }
+                if (j + 2 >= self.input.len or tables.lower(self.input[j + 2]) != first) {
                     j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
                     continue;
                 }
@@ -383,6 +441,10 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                     continue;
                 }
 
+                if (k - name_start != tag_len) {
+                    j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
+                    continue;
+                }
                 if (!tables.eqlIgnoreCaseAscii(self.input[name_start..k], tag_name)) {
                     j = std.mem.indexOfScalarPos(u8, self.input, j + 1, '<') orelse return null;
                     continue;

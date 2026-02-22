@@ -20,7 +20,17 @@ PARSERS = [
     "lexbor",
     "gumbo-modern",
     "html5ever",
+    "lol-html",
 ]
+
+PARSER_CAPABILITIES = {
+    "ours": "dom",
+    "strlen": "scan",
+    "lexbor": "dom",
+    "gumbo-modern": "dom",
+    "html5ever": "dom",
+    "lol-html": "streaming",
+}
 
 PROFILES = {
     "quick": {
@@ -88,6 +98,9 @@ def ensure_dirs():
 
 
 def ensure_external_parsers_built():
+    if not (BENCH_DIR / "parsers" / "lol-html" / "Cargo.toml").exists():
+        run(["bash", str(BENCH_DIR / "setup_parsers.sh")])
+
     if not (BUILD_DIR / "lexbor" / "liblexbor_static.a").exists():
         run([
             "cmake",
@@ -154,6 +167,14 @@ def build_runners():
         str(BENCH_DIR / "runners" / "html5ever_runner" / "Cargo.toml"),
     ])
 
+    run([
+        "cargo",
+        "build",
+        "--release",
+        "--manifest-path",
+        str(BENCH_DIR / "runners" / "lol_html_runner" / "Cargo.toml"),
+    ])
+
 
 def runner_cmd(parser_name: str, fixture: Path, iterations: int):
     if parser_name == "ours":
@@ -167,6 +188,12 @@ def runner_cmd(parser_name: str, fixture: Path, iterations: int):
     if parser_name == "html5ever":
         return [
             str(BENCH_DIR / "runners" / "html5ever_runner" / "target" / "release" / "html5ever_runner"),
+            str(fixture),
+            str(iterations),
+        ]
+    if parser_name == "lol-html":
+        return [
+            str(BENCH_DIR / "runners" / "lol_html_runner" / "target" / "release" / "lol_html_runner"),
             str(fixture),
             str(iterations),
         ]
@@ -272,12 +299,19 @@ def render_markdown(profile_name, parse_results, query_parse_results, query_matc
 
     for fixture, rows in grouped.items():
         rows = sorted(rows, key=lambda r: r["throughput_mb_s"], reverse=True)
+        strlen_row = next((r for r in rows if r["parser"] == "strlen"), None)
+        strlen_mbps = strlen_row["throughput_mb_s"] if strlen_row else None
         lines.append(f"## Fixture: `{fixture}`")
         lines.append("")
-        lines.append("| Parser | Throughput (MB/s) | Median Time (ms) | Iterations |")
-        lines.append("|---|---:|---:|---:|")
+        lines.append("| Parser | Capability | Throughput (MB/s) | % of strlen | Median Time (ms) | Iterations |")
+        lines.append("|---|---|---:|---:|---:|---:|")
         for r in rows:
-            lines.append(f"| {r['parser']} | {r['throughput_mb_s']:.2f} | {r['median_ns'] / 1_000_000:.3f} | {r['iterations']} |")
+            pct_strlen = "-"
+            if strlen_mbps and strlen_mbps > 0:
+                pct_strlen = f"{(r['throughput_mb_s'] / strlen_mbps) * 100.0:.2f}%"
+            lines.append(
+                f"| {r['parser']} | {PARSER_CAPABILITIES.get(r['parser'], '?')} | {r['throughput_mb_s']:.2f} | {pct_strlen} | {r['median_ns'] / 1_000_000:.3f} | {r['iterations']} |"
+            )
         lines.append("")
 
     def render_query_section(title, rows):
@@ -323,16 +357,58 @@ def render_console(profile_name, parse_results, query_parse_results, query_match
     lines.append("")
     for fixture, rows in grouped.items():
         rows = sorted(rows, key=lambda r: r["throughput_mb_s"], reverse=True)
+        strlen_row = next((r for r in rows if r["parser"] == "strlen"), None)
+        strlen_mbps = strlen_row["throughput_mb_s"] if strlen_row else None
         lines.append(f"Fixture: {fixture}")
-        headers = ("Parser", "Throughput (MB/s)", "Median Time (ms)", "Iterations")
-        table_rows = [(r["parser"], f"{r['throughput_mb_s']:.2f}", f"{r['median_ns'] / 1_000_000:.3f}", str(r["iterations"])) for r in rows]
-        widths = [max(len(headers[i]), *(len(row[i]) for row in table_rows)) for i in range(4)]
+        headers = ("Parser", "Capability", "Throughput (MB/s)", "% of strlen", "Median Time (ms)", "Iterations")
+        table_rows = []
+        for r in rows:
+            pct_strlen = "-"
+            if strlen_mbps and strlen_mbps > 0:
+                pct_strlen = f"{(r['throughput_mb_s'] / strlen_mbps) * 100.0:.2f}%"
+            table_rows.append((
+                r["parser"],
+                PARSER_CAPABILITIES.get(r["parser"], "?"),
+                f"{r['throughput_mb_s']:.2f}",
+                pct_strlen,
+                f"{r['median_ns'] / 1_000_000:.3f}",
+                str(r["iterations"]),
+            ))
+        widths = [max(len(headers[i]), *(len(row[i]) for row in table_rows)) for i in range(6)]
         sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
         lines.append(sep)
-        lines.append("| " + headers[0].ljust(widths[0]) + " | " + headers[1].rjust(widths[1]) + " | " + headers[2].rjust(widths[2]) + " | " + headers[3].rjust(widths[3]) + " |")
+        lines.append(
+            "| "
+            + headers[0].ljust(widths[0])
+            + " | "
+            + headers[1].ljust(widths[1])
+            + " | "
+            + headers[2].rjust(widths[2])
+            + " | "
+            + headers[3].rjust(widths[3])
+            + " | "
+            + headers[4].rjust(widths[4])
+            + " | "
+            + headers[5].rjust(widths[5])
+            + " |"
+        )
         lines.append(sep)
         for row in table_rows:
-            lines.append("| " + row[0].ljust(widths[0]) + " | " + row[1].rjust(widths[1]) + " | " + row[2].rjust(widths[2]) + " | " + row[3].rjust(widths[3]) + " |")
+            lines.append(
+                "| "
+                + row[0].ljust(widths[0])
+                + " | "
+                + row[1].ljust(widths[1])
+                + " | "
+                + row[2].rjust(widths[2])
+                + " | "
+                + row[3].rjust(widths[3])
+                + " | "
+                + row[4].rjust(widths[4])
+                + " | "
+                + row[5].rjust(widths[5])
+                + " |"
+            )
         lines.append(sep)
         lines.append("")
 
@@ -374,7 +450,74 @@ def render_console(profile_name, parse_results, query_parse_results, query_match
 def parse_args():
     parser = argparse.ArgumentParser(description="Run HTML parser benchmark suite")
     parser.add_argument("--profile", choices=sorted(PROFILES.keys()), default="quick", help="benchmark profile to run")
+    parser.add_argument("--baseline", default=None, help="path to baseline json for gate checks")
+    parser.add_argument("--write-baseline", action="store_true", help="write current results as baseline for this profile")
     return parser.parse_args()
+
+
+def _map_ours_parse_throughput(results_json):
+    if "parse_results" in results_json:
+        out = {}
+        for row in results_json["parse_results"]:
+            if row.get("parser") == "ours":
+                out[row["fixture"]] = float(row["throughput_mb_s"])
+        return out
+    if "parse" in results_json:
+        return {k: float(v["throughput_mb_s"]) for k, v in results_json["parse"].items()}
+    return {}
+
+
+def _map_case_ops(results_json, section_name):
+    if section_name in results_json:
+        section = results_json[section_name]
+        if isinstance(section, list):
+            return {r["case"]: float(r["ops_s"]) for r in section}
+        if isinstance(section, dict):
+            return {k: float(v["ops_s"]) for k, v in section.items()}
+    return {}
+
+
+def evaluate_gates(profile_name, baseline_json, current_json):
+    failures = []
+    warnings = []
+    if not baseline_json:
+        return failures, warnings
+
+    base_parse = _map_ours_parse_throughput(baseline_json)
+    cur_parse = _map_ours_parse_throughput(current_json)
+    base_qp = _map_case_ops(baseline_json, "query_parse_results") or _map_case_ops(baseline_json, "query_parse")
+    cur_qp = _map_case_ops(current_json, "query_parse_results") or _map_case_ops(current_json, "query_parse")
+    base_qm = _map_case_ops(baseline_json, "query_match_results") or _map_case_ops(baseline_json, "query_match")
+    cur_qm = _map_case_ops(current_json, "query_match_results") or _map_case_ops(current_json, "query_match")
+    base_qc = _map_case_ops(baseline_json, "query_compiled_results") or _map_case_ops(baseline_json, "query_compiled")
+    cur_qc = _map_case_ops(current_json, "query_compiled_results") or _map_case_ops(current_json, "query_compiled")
+
+    if profile_name == "stable":
+        for fixture in ("rust-lang.html", "wiki-html.html", "w3-html52.html", "hn.html"):
+            if fixture in base_parse and fixture in cur_parse and cur_parse[fixture] <= base_parse[fixture]:
+                failures.append(f"stable parse regression: {fixture} {cur_parse[fixture]:.2f} <= baseline {base_parse[fixture]:.2f}")
+        if "mdn-html.html" in base_parse and "mdn-html.html" in cur_parse:
+            if cur_parse["mdn-html.html"] < (base_parse["mdn-html.html"] * 0.99):
+                failures.append(
+                    f"stable parse mdn regression >1%: {cur_parse['mdn-html.html']:.2f} < {base_parse['mdn-html.html']*0.99:.2f}"
+                )
+        for section_name, base_map, cur_map in (
+            ("query-parse", base_qp, cur_qp),
+            ("query-match", base_qm, cur_qm),
+            ("query-compiled", base_qc, cur_qc),
+        ):
+            for case, base_ops in base_map.items():
+                cur_ops = cur_map.get(case)
+                if cur_ops is None:
+                    continue
+                if cur_ops < (base_ops * 0.98):
+                    failures.append(f"stable {section_name} regression >2%: {case} {cur_ops:.2f} < {base_ops*0.98:.2f}")
+    elif profile_name == "quick":
+        # quick is advisory: signal obvious opposite-direction drift
+        for fixture in ("rust-lang.html", "wiki-html.html", "w3-html52.html", "hn.html"):
+            if fixture in base_parse and fixture in cur_parse and cur_parse[fixture] < (base_parse[fixture] * 0.97):
+                warnings.append(f"quick parse drift: {fixture} {cur_parse[fixture]:.2f} vs baseline {base_parse[fixture]:.2f}")
+    return failures, warnings
 
 
 def main():
@@ -410,6 +553,7 @@ def main():
         "generated_unix": int(time.time()),
         "profile": args.profile,
         "repeats": REPEATS,
+        "parser_capabilities": PARSER_CAPABILITIES,
         "parse_results": parse_results,
         "query_parse_results": query_parse_results,
         "query_match_results": query_match_results,
@@ -418,14 +562,33 @@ def main():
 
     json_path = RESULTS_DIR / "latest.json"
     md_path = RESULTS_DIR / "latest.md"
+    baseline_path = Path(args.baseline) if args.baseline else (RESULTS_DIR / f"baseline_{args.profile}.json")
 
     json_path.write_text(json.dumps(results_json, indent=2), encoding="utf-8")
     md_path.write_text(render_markdown(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results) + "\n", encoding="utf-8")
+
+    if args.write_baseline:
+        baseline_path.write_text(json.dumps(results_json, indent=2), encoding="utf-8")
+        print(f"wrote baseline {baseline_path}")
 
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
     print("")
     print(render_console(args.profile, parse_results, query_parse_results, query_match_results, query_compiled_results))
+
+    baseline_json = None
+    if baseline_path.exists():
+        baseline_json = json.loads(baseline_path.read_text(encoding="utf-8"))
+        failures, warnings = evaluate_gates(args.profile, baseline_json, results_json)
+        if warnings:
+            print("\nGate warnings:")
+            for w in warnings:
+                print(f"- {w}")
+        if failures:
+            print("\nGate failures:")
+            for f in failures:
+                print(f"- {f}")
+            sys.exit(3)
 
 
 if __name__ == "__main__":
