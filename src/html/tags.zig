@@ -109,28 +109,114 @@ pub fn shouldImplicitlyClose(open_tag: []const u8, new_tag: []const u8) bool {
 }
 
 pub fn isVoidTagHash(name: []const u8, name_hash: TagHashValue) bool {
-    return hashEq(name, name_hash, HASH_AREA, "area") or
-        hashEq(name, name_hash, HASH_BASE, "base") or
-        hashEq(name, name_hash, HASH_BR, "br") or
-        hashEq(name, name_hash, HASH_COL, "col") or
-        hashEq(name, name_hash, HASH_EMBED, "embed") or
-        hashEq(name, name_hash, HASH_HR, "hr") or
-        hashEq(name, name_hash, HASH_IMG, "img") or
-        hashEq(name, name_hash, HASH_INPUT, "input") or
-        hashEq(name, name_hash, HASH_LINK, "link") or
-        hashEq(name, name_hash, HASH_META, "meta") or
-        hashEq(name, name_hash, HASH_PARAM, "param") or
-        hashEq(name, name_hash, HASH_SOURCE, "source") or
-        hashEq(name, name_hash, HASH_TRACK, "track") or
-        hashEq(name, name_hash, HASH_WBR, "wbr");
+    switch (name_hash) {
+        HASH_AREA,
+        HASH_BASE,
+        HASH_BR,
+        HASH_COL,
+        HASH_EMBED,
+        HASH_HR,
+        HASH_IMG,
+        HASH_INPUT,
+        HASH_LINK,
+        HASH_META,
+        HASH_PARAM,
+        HASH_SOURCE,
+        HASH_TRACK,
+        HASH_WBR,
+        => return true,
+        InvalidTagHash => {
+            return tables.eqlIgnoreCaseAscii(name, "area") or
+                tables.eqlIgnoreCaseAscii(name, "base") or
+                tables.eqlIgnoreCaseAscii(name, "br") or
+                tables.eqlIgnoreCaseAscii(name, "col") or
+                tables.eqlIgnoreCaseAscii(name, "embed") or
+                tables.eqlIgnoreCaseAscii(name, "hr") or
+                tables.eqlIgnoreCaseAscii(name, "img") or
+                tables.eqlIgnoreCaseAscii(name, "input") or
+                tables.eqlIgnoreCaseAscii(name, "link") or
+                tables.eqlIgnoreCaseAscii(name, "meta") or
+                tables.eqlIgnoreCaseAscii(name, "param") or
+                tables.eqlIgnoreCaseAscii(name, "source") or
+                tables.eqlIgnoreCaseAscii(name, "track") or
+                tables.eqlIgnoreCaseAscii(name, "wbr");
+        },
+        else => return false,
+    }
 }
 
 pub fn isRawTextTagHash(name: []const u8, name_hash: TagHashValue) bool {
-    return hashEq(name, name_hash, HASH_SCRIPT, "script") or
-        hashEq(name, name_hash, HASH_STYLE, "style");
+    switch (name_hash) {
+        HASH_SCRIPT, HASH_STYLE => return true,
+        InvalidTagHash => return tables.eqlIgnoreCaseAscii(name, "script") or
+            tables.eqlIgnoreCaseAscii(name, "style"),
+        else => return false,
+    }
+}
+
+pub fn mayTriggerImplicitCloseHash(new_tag: []const u8, new_hash: TagHashValue) bool {
+    switch (new_hash) {
+        HASH_LI,
+        HASH_P,
+        HASH_DT,
+        HASH_DD,
+        HASH_OPTION,
+        HASH_TR,
+        HASH_TD,
+        HASH_TH,
+        HASH_BODY,
+        HASH_ADDRESS,
+        HASH_ARTICLE,
+        HASH_ASIDE,
+        HASH_BLOCKQUOTE,
+        HASH_DIV,
+        HASH_DL,
+        HASH_FIELDSET,
+        HASH_FOOTER,
+        HASH_FORM,
+        HASH_H1,
+        HASH_H2,
+        HASH_H3,
+        HASH_H4,
+        HASH_H5,
+        HASH_H6,
+        HASH_HEADER,
+        HASH_HR,
+        HASH_MAIN,
+        HASH_NAV,
+        HASH_OL,
+        HASH_PRE,
+        HASH_SECTION,
+        HASH_TABLE,
+        HASH_UL,
+        => return true,
+        InvalidTagHash => return closesPHash(new_tag, new_hash) or
+            hashEq(new_tag, new_hash, HASH_LI, "li") or
+            hashEq(new_tag, new_hash, HASH_DT, "dt") or
+            hashEq(new_tag, new_hash, HASH_DD, "dd") or
+            hashEq(new_tag, new_hash, HASH_OPTION, "option") or
+            hashEq(new_tag, new_hash, HASH_TR, "tr") or
+            hashEq(new_tag, new_hash, HASH_TD, "td") or
+            hashEq(new_tag, new_hash, HASH_TH, "th") or
+            hashEq(new_tag, new_hash, HASH_BODY, "body"),
+        else => return false,
+    }
 }
 
 pub fn shouldImplicitlyCloseHash(open_tag: []const u8, open_hash: TagHashValue, new_tag: []const u8, new_hash: TagHashValue) bool {
+    if (open_hash != InvalidTagHash and new_hash != InvalidTagHash) {
+        switch (open_hash) {
+            HASH_LI => return new_hash == HASH_LI,
+            HASH_P => return closesPHash(new_tag, new_hash),
+            HASH_DT, HASH_DD => return new_hash == HASH_DT or new_hash == HASH_DD,
+            HASH_OPTION => return new_hash == HASH_OPTION,
+            HASH_TR => return new_hash == HASH_TR,
+            HASH_TD, HASH_TH => return new_hash == HASH_TD or new_hash == HASH_TH,
+            HASH_HEAD => return new_hash == HASH_BODY,
+            else => return false,
+        }
+    }
+
     if (hashEq(open_tag, open_hash, HASH_LI, "li") and hashEq(new_tag, new_hash, HASH_LI, "li")) return true;
     if (hashEq(open_tag, open_hash, HASH_P, "p") and closesPHash(new_tag, new_hash)) return true;
 

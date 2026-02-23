@@ -24,30 +24,32 @@ pub fn findTagEndRespectQuotes(hay: []const u8, start: usize) ?TagEnd {
 
         switch (ch) {
             '"', '\'' => quote = ch,
-            '>' => {
-                // Trim trailing ASCII whitespace before deciding whether this is
-                // `.../>` or `...>`.
-                var j = i;
-                while (j > start and tables.WhitespaceTable[hay[j - 1]]) : (j -= 1) {}
-
-                if (j > start and hay[j - 1] == '/') {
-                    return .{
-                        .gt_index = i,
-                        .attr_end = j - 1,
-                        .self_close = true,
-                    };
-                }
-
-                return .{
-                    .gt_index = i,
-                    .attr_end = i,
-                    .self_close = false,
-                };
-            },
+            '>' => return finalizeTagEnd(hay, start, i),
             else => {},
         }
     }
     return null;
+}
+
+inline fn finalizeTagEnd(hay: []const u8, start: usize, gt_index: usize) TagEnd {
+    // Trim trailing ASCII whitespace before deciding whether this is
+    // `.../>` or `...>`.
+    var j = gt_index;
+    while (j > start and tables.WhitespaceTable[hay[j - 1]]) : (j -= 1) {}
+
+    if (j > start and hay[j - 1] == '/') {
+        return .{
+            .gt_index = gt_index,
+            .attr_end = j - 1,
+            .self_close = true,
+        };
+    }
+
+    return .{
+        .gt_index = gt_index,
+        .attr_end = gt_index,
+        .self_close = false,
+    };
 }
 
 inline fn findByteDispatch(hay: []const u8, start: usize, needle: u8) ?usize {

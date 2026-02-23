@@ -38,16 +38,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             });
             try self.doc.parse_stack.append(alloc, 0);
 
-            // Ultra-fast turbo mode for parse-throughput benchmarking.
-            // This mode intentionally skips DOM construction when parent pointers
-            // are disabled and input normalization is off.
-            if (self.opts.turbo_parse and !self.doc.store_parent_pointers and !self.opts.normalize_input) {
-                self.scanOnlyTurboNoTree();
-                self.doc.nodes.items[0].subtree_end = 0;
-                self.doc.parse_stack.clearRetainingCapacity();
-                return;
-            }
-
             while (self.i < self.input.len) {
                 if (self.input[self.i] != '<') {
                     try self.parseText();
@@ -85,25 +75,14 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.doc.parse_stack.clearRetainingCapacity();
         }
 
-        fn scanOnlyTurboNoTree(self: *Self) void {
-            var j: usize = 0;
-            while (true) {
-                const next = scanner.findByte(self.input, j, '<') orelse break;
-                j = next + 1;
-            }
-            self.i = self.input.len;
-        }
-
         fn reserveCapacities(self: *Self) !void {
             const alloc = self.doc.allocator;
             const input_len = self.input.len;
             const estimated_nodes = @max(@as(usize, 16), (input_len / 12) + 8);
             const estimated_stack = @max(@as(usize, 8), (input_len / 256) + 8);
-            const estimated_child_ptrs = estimated_nodes - 1;
 
             try self.doc.nodes.ensureTotalCapacity(alloc, estimated_nodes);
             try self.doc.parse_stack.ensureTotalCapacity(alloc, estimated_stack);
-            try self.doc.child_ptrs.ensureTotalCapacity(alloc, estimated_child_ptrs);
         }
 
         fn parseText(self: *Self) !void {
@@ -147,7 +126,9 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const tag_name = self.input[name_start..self.i];
             const tag_name_hash = tags.hashBytes(tag_name);
 
-            self.applyImplicitClosures(tag_name, tag_name_hash, @intCast(open_start));
+            if (tags.mayTriggerImplicitCloseHash(tag_name, tag_name_hash)) {
+                self.applyImplicitClosures(tag_name, tag_name_hash, @intCast(open_start));
+            }
 
             const parent_idx = self.currentParent();
             const node_idx = try self.appendNode(.element, parent_idx);
@@ -324,13 +305,18 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
                 const hash_mismatch = top.tag_hash != close_hash;
-                if (!hash_mismatch and tables.eqlIgnoreCaseAscii(top.name.slice(self.input), close_name)) {
-                    _ = self.doc.parse_stack.pop();
-                    var node = &self.doc.nodes.items[top_idx];
-                    node.close_start = @intCast(close_start);
-                    node.close_end = close_end;
-                    node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
-                    return;
+                if (!hash_mismatch) {
+                    const top_name = top.name.slice(self.input);
+                    if (!std.mem.eql(u8, top_name, close_name) and !tables.eqlIgnoreCaseAscii(top_name, close_name)) {
+                        // fall through to stack walk
+                    } else {
+                        _ = self.doc.parse_stack.pop();
+                        var node = &self.doc.nodes.items[top_idx];
+                        node.close_start = @intCast(close_start);
+                        node.close_end = close_end;
+                        node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
+                        return;
+                    }
                 }
             }
 
@@ -341,10 +327,12 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 const idx = self.doc.parse_stack.items[s];
                 const n = &self.doc.nodes.items[idx];
                 if (n.tag_hash != close_hash) continue;
-                if (tables.eqlIgnoreCaseAscii(n.name.slice(self.input), close_name)) {
-                    found = s;
-                    break;
+                const open_name = n.name.slice(self.input);
+                if (!std.mem.eql(u8, open_name, close_name) and !tables.eqlIgnoreCaseAscii(open_name, close_name)) {
+                    continue;
                 }
+                found = s;
+                break;
             }
 
             if (found) |pos| {

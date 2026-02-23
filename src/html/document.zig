@@ -1117,6 +1117,26 @@ test "turbo scanner handles quoted > and self-closing tails" {
     try std.testing.expect(doc.queryOne("br#b") != null);
 }
 
+test "turbo mode always builds element nodes (no scan-only shortcut)" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x'><span id='y'></span></div>".*;
+    try doc.parse(&html, .{
+        .store_parent_pointers = false,
+        .normalize_input = false,
+        .eager_child_views = false,
+        .eager_attr_empty_rewrite = false,
+        .turbo_parse = true,
+    });
+
+    // Document node plus parsed element nodes must exist.
+    try std.testing.expect(doc.nodes.items.len > 1);
+    try std.testing.expect(doc.queryOne("#x") != null);
+    try std.testing.expect(doc.queryOne("#y") != null);
+}
+
 test "children() lazily builds child views when eager child views are disabled" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
