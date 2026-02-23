@@ -1,8 +1,8 @@
 # htmlparser
 
-`htmlparser` is a high-throughput, destructive, non-alloc-first HTML parser and selector engine written in Zig.
+`htmlparser` is a high-throughput, destructive HTML parser and selector engine written in Zig.
 
-It is designed for systems where input can be mutable (`[]u8`), parsing can be permissive, and query/navigation hot paths should avoid allocations.
+It is designed for systems where input can be mutable (`[]u8`) and parsing can be permissive.
 
 Target Zig version: `0.15.2`.
 
@@ -13,7 +13,7 @@ Target Zig version: `0.15.2`.
   - compile-time selectors (`queryOne`, `queryAll`),
   - runtime selectors (`queryOneRuntime`, `queryAllRuntime`),
   - precompiled runtime selectors (`queryOneCompiled`, `queryAllCompiled`).
-- Element navigation without query-time allocations:
+- Element navigation APIs:
   - `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children`.
 - In-place attribute state machine with lazy parse/decode.
 - Optional throughput mode (`turbo_parse = true`) for benchmark-oriented parse workloads.

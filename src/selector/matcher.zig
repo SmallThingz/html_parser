@@ -156,7 +156,7 @@ fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, 
     return true;
 }
 
-fn matchesNotSimple(doc: anytype, node: anytype, probe: *AttrProbe, selector_source: []const u8, item: ast.NotSimple) bool {
+fn matchesNotSimple(doc: anytype, node: anytype, noalias probe: *AttrProbe, selector_source: []const u8, item: ast.NotSimple) bool {
     return switch (item.kind) {
         .tag => blk: {
             const tag = item.text.slice(selector_source);
@@ -192,7 +192,7 @@ fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
     };
 }
 
-fn matchesAttrSelector(doc: anytype, node: anytype, probe: *AttrProbe, selector_source: []const u8, sel: ast.AttrSelector) bool {
+fn matchesAttrSelector(doc: anytype, node: anytype, noalias probe: *AttrProbe, selector_source: []const u8, sel: ast.AttrSelector) bool {
     const name = sel.name.slice(selector_source);
     const name_hash = if (sel.name_hash != 0) sel.name_hash else hashIgnoreCaseAscii(name);
     const raw = attrValueByHash(doc, node, probe, name, name_hash) orelse return false;
@@ -224,7 +224,7 @@ fn tokenIncludes(value: []const u8, token: []const u8) bool {
     return false;
 }
 
-fn hasClass(doc: anytype, node: anytype, probe: *AttrProbe, class_name: []const u8) bool {
+fn hasClass(doc: anytype, node: anytype, noalias probe: *AttrProbe, class_name: []const u8) bool {
     const class_attr = attrValueByHash(doc, node, probe, "class", HashClass) orelse return false;
     return tokenIncludes(class_attr, class_name);
 }
@@ -267,11 +267,11 @@ fn hasAllClassesOnePass(selector: ast.Selector, comp: ast.Compound, class_attr: 
     return found_mask == target_mask;
 }
 
-fn attrValue(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8) ?[]const u8 {
+fn attrValue(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []const u8) ?[]const u8 {
     return attrValueByHash(doc, node, probe, name, hashIgnoreCaseAscii(name));
 }
 
-fn attrValueByHash(doc: anytype, node: anytype, probe: *AttrProbe, name: []const u8, name_hash: u32) ?[]const u8 {
+fn attrValueByHash(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []const u8, name_hash: u32) ?[]const u8 {
     if (findProbeEntry(probe, name, name_hash, doc.input_was_normalized)) |idx| {
         var entry = &probe.entries[idx];
         if (!entry.resolved) {
@@ -313,7 +313,7 @@ const AttrProbe = struct {
     entries: [MaxProbeEntries]AttrProbeEntry = [_]AttrProbeEntry{.{}} ** MaxProbeEntries,
 };
 
-fn findProbeEntry(probe: *const AttrProbe, needle: []const u8, needle_hash: u32, input_was_normalized: bool) ?usize {
+fn findProbeEntry(noalias probe: *const AttrProbe, needle: []const u8, needle_hash: u32, input_was_normalized: bool) ?usize {
     var i: usize = 0;
     while (i < probe.count) : (i += 1) {
         const entry = probe.entries[i];

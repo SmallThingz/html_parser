@@ -20,7 +20,7 @@
 
 - Comptime selectors compile at compile time.
 - Runtime selectors compile once and are cached per query API path.
-- Matching is short-circuit oriented and allocation-free on hot paths.
+- Matching is short-circuit oriented on hot paths.
 
 ## Parse Behavior Model
 

@@ -162,7 +162,7 @@ const WhitespaceNormState = struct {
     wrote_any: bool = false,
 };
 
-fn appendNormalizedSegment(out: *std.ArrayList(u8), alloc: std.mem.Allocator, seg: []const u8, state: *WhitespaceNormState) !void {
+fn appendNormalizedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Allocator, seg: []const u8, noalias state: *WhitespaceNormState) !void {
     for (seg) |c| {
         if (tables.WhitespaceTable[c]) {
             state.pending_space = true;
