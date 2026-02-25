@@ -27,7 +27,7 @@ test "example parity: runtime selectors" {
     try std.testing.expect(it.next() == null);
 }
 
-test "example parity: compiled selector" {
+test "example parity: cached selector" {
     var doc = html.Document.init(std.testing.allocator);
     defer doc.deinit();
 
@@ -44,7 +44,7 @@ test "example parity: compiled selector" {
     defer arena.deinit();
 
     const sel = try html.Selector.compileRuntime(arena.allocator(), "a[href^=https][class~=button]");
-    const first = doc.queryOneCompiled(&sel) orelse return error.TestUnexpectedResult;
+    const first = doc.queryOneCached(&sel) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("a1", first.getAttributeValue("id").?);
 }
 

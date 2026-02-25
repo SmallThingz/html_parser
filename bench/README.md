@@ -67,4 +67,4 @@ The benchmark output also includes a hard gate table:
 - `PASS/FAIL: ours-turbo > lol-html` per fixture
 - strict-mode regression checks against baseline:
   - parse throughput not worse than -3% per fixture
-  - query parse/match/compiled not worse than -2%
+  - query parse/match/cached not worse than -2%

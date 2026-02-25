@@ -63,14 +63,14 @@ var all = try doc.queryAllRuntime("ul#menu li.item");
 _ = .{ one, all };
 ```
 
-Compiled runtime selectors:
+Cached runtime selectors:
 
 ```zig
 var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
 defer arena.deinit();
 
 const sel = try html.Selector.compileRuntime(arena.allocator(), "a[href^=https]");
-const n = doc.queryOneCompiled(&sel);
+const n = doc.queryOneCached(&sel);
 _ = n;
 ```
 

@@ -15,8 +15,8 @@ Query entrypoints:
 - `doc.queryAll(comptime selector)`
 - `try doc.queryOneRuntime(selector)`
 - `try doc.queryAllRuntime(selector)`
-- `doc.queryOneCompiled(&selector)`
-- `doc.queryAllCompiled(&selector)`
+- `doc.queryOneCached(&selector)`
+- `doc.queryAllCached(&selector)`
 
 Helpers:
 
@@ -48,8 +48,8 @@ Scoped query entrypoints:
 - `queryAll(comptime selector)`
 - `try queryOneRuntime(selector)`
 - `try queryAllRuntime(selector)`
-- `queryOneCompiled(&selector)`
-- `queryAllCompiled(&selector)`
+- `queryOneCached(&selector)`
+- `queryAllCached(&selector)`
 
 ## `Selector`
 
