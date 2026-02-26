@@ -1,8 +1,0 @@
-[package]
-name = "html5ever_runner"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-html5ever = { path = "../../parsers/html5ever/html5ever" }
-markup5ever_rcdom = { path = "../../parsers/html5ever/rcdom" }

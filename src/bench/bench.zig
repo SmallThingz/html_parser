@@ -10,9 +10,7 @@ const BenchMode = enum {
 
 fn parseMode(arg: []const u8) !BenchMode {
     if (std.mem.eql(u8, arg, "strictest")) return .strictest;
-    if (std.mem.eql(u8, arg, "strict")) return .strictest;
     if (std.mem.eql(u8, arg, "fastest")) return .fastest;
-    if (std.mem.eql(u8, arg, "turbo")) return .fastest;
     return error.InvalidBenchMode;
 }
 

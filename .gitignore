@@ -16,3 +16,7 @@ __pycache__/
 *.tmp
 *.bak
 .DS_Store
+
+# Local profiling/scratch artifacts
+.tmp_*
+perf.data*

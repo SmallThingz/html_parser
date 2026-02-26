@@ -12,7 +12,7 @@ Query sections remain `htmlparser`-only; external parser comparisons are parse t
 `htmlparser` parse results are reported in two internal benchmark modes:
 
 - `ours-strictest`: most-work parse option bundle
-- `ours-fastest`: least-work parse option bundle (deferred attribute parsing, no parent pointers, lazy child views)
+- `ours-fastest`: least-work parse option bundle (lazy child views + whitespace text-node dropping)
 
 Default fixture set includes:
 - `rust-lang.html`

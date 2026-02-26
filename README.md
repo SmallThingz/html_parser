@@ -26,7 +26,7 @@ Typical HTML parsers optimize for browser-like behavior, strict correctness, or 
   - precompiled runtime selectors: `queryOneCompiled`, `queryAllCompiled`
 - **Navigation:** `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children` (element-only).
 - **In-place attributes:** attribute values are materialized/decoded lazily and cached in-place.
-- **Configurable parse work:** parent pointers, input normalization, deferred attribute parsing, eager/lazy child views.
+- **Configurable parse work:** eager/lazy child views and optional whitespace-text dropping.
 
 Target Zig version: `0.15.2`.
 
@@ -102,23 +102,13 @@ Two bundles are used by the benchmark harness and conformance runner:
 
 ### Strictest (does the most work)
 
-- parent pointers on
-- input normalization on (lowercases tag/attr names)
-- parse-time text normalization on
 - eager child views on
-- eager empty-attribute rewrite on (`a=` canonicalization)
-- deferred attribute parsing off
+- keep whitespace-only text nodes
 
 ### Fastest (does the least work)
 
-- parent pointers off initially
-- input normalization off
-- parse-time text normalization off
 - eager child views off (child views are built lazily if `children()` is called)
-- eager empty-attribute rewrite off (rewrite happens lazily if/when a value is materialized)
-- deferred attribute parsing on
-
-**Important:** query semantics are mode-invariant. If a selector requires ancestry (for example `A B`, `A > B`, `:nth-child(...)`), parent pointers are materialized lazily on first such query, even if they were disabled during parse.
+- drop whitespace-only text nodes during parse
 
 ## Selector Support (v1)
 

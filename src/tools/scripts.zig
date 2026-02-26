@@ -1841,7 +1841,7 @@ fn usage() void {
         \\  htmlparser-tools setup-parsers
         \\  htmlparser-tools setup-fixtures [--refresh]
         \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--baseline path] [--write-baseline]
-        \\  htmlparser-tools run-external-suites [--mode strictest|fastest|strict|turbo|both] [--max-html5lib-cases N] [--json-out path]
+        \\  htmlparser-tools run-external-suites [--mode strictest|fastest|both] [--max-html5lib-cases N] [--json-out path]
         \\  htmlparser-tools docs-check
         \\  htmlparser-tools examples-check
         \\

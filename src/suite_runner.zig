@@ -9,8 +9,8 @@ const ParseMode = enum {
 };
 
 fn parseMode(s: []const u8) ?ParseMode {
-    if (std.mem.eql(u8, s, "strictest") or std.mem.eql(u8, s, "strict")) return .strictest;
-    if (std.mem.eql(u8, s, "fastest") or std.mem.eql(u8, s, "turbo")) return .fastest;
+    if (std.mem.eql(u8, s, "strictest")) return .strictest;
+    if (std.mem.eql(u8, s, "fastest")) return .fastest;
     return null;
 }
 
