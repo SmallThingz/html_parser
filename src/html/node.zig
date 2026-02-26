@@ -10,63 +10,63 @@ pub const TextOptions = struct {
 };
 
 pub fn firstChild(comptime Node: type, self: *const Node) ?*const Node {
-    var idx = self.raw.first_child;
+    var idx = self.first_child;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (c.kind == .element) return c;
     }
     return null;
 }
 
 pub fn lastChild(comptime Node: type, self: *const Node) ?*const Node {
-    var idx = self.raw.last_child;
+    var idx = self.last_child;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].prev_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (c.kind == .element) return c;
     }
     return null;
 }
 
 pub fn nextSibling(comptime Node: type, self: *const Node) ?*const Node {
-    var idx = self.raw.next_sibling;
+    var idx = self.next_sibling;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (c.kind == .element) return c;
     }
     return null;
 }
 
 pub fn prevSibling(comptime Node: type, self: *const Node) ?*const Node {
-    var idx = self.raw.prev_sibling;
+    var idx = self.prev_sibling;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].prev_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (c.kind == .element) return c;
     }
     return null;
 }
 
 pub fn parentNode(comptime Node: type, self: *const Node) ?*const Node {
     if (!self.doc.store_parent_pointers) return null;
-    if (self.raw.parent == InvalidIndex or self.raw.parent == 0) return null;
-    return self.doc.nodeAt(self.raw.parent);
+    if (self.parent == InvalidIndex or self.parent == 0) return null;
+    return &self.doc.nodes.items[self.parent];
 }
 
 pub fn children(comptime Node: type, self: *const Node) []const *const Node {
     // Child views are built once and then borrowed on every call.
     @constCast(self.doc).ensureChildViewsBuilt();
-    const start: usize = @intCast(self.raw.child_view_start);
-    const end: usize = @intCast(self.raw.child_view_start + self.raw.child_view_len);
+    const start: usize = @intCast(self.child_view_start);
+    const end: usize = @intCast(self.child_view_start + self.child_view_len);
     return self.doc.child_ptrs.items[start..end];
 }
 
 pub fn getAttributeValue(comptime Node: type, self: *const Node, name: []const u8) ?[]const u8 {
-    return attr_inline.getAttrValue(self.doc, self.raw, name);
+    return attr_inline.getAttrValue(self.doc, self, name);
 }
 
 pub fn innerText(comptime Node: type, self: *const Node, arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
     const doc = @constCast(self.doc);
 
-    if (self.raw.kind == .text) {
+    if (self.kind == .text) {
         const mut_node = &doc.nodes.items[self.index];
         _ = decodeTextNode(mut_node, doc);
         if (!opts.normalize_whitespace) return mut_node.text.slice(doc.source);
@@ -77,7 +77,7 @@ pub fn innerText(comptime Node: type, self: *const Node, arena_alloc: std.mem.Al
     var count: usize = 0;
 
     var idx = self.index + 1;
-    while (idx <= self.raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
+    while (idx <= self.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
         const node = &doc.nodes.items[idx];
         if (node.kind != .text) continue;
         count += 1;
@@ -98,7 +98,7 @@ pub fn innerText(comptime Node: type, self: *const Node, arena_alloc: std.mem.Al
 
     if (!opts.normalize_whitespace) {
         idx = self.index + 1;
-        while (idx <= self.raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
+        while (idx <= self.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
             const node = &doc.nodes.items[idx];
             if (node.kind != .text) continue;
             try out.appendSlice(arena_alloc, node.text.slice(doc.source));
@@ -106,7 +106,7 @@ pub fn innerText(comptime Node: type, self: *const Node, arena_alloc: std.mem.Al
     } else {
         var state: WhitespaceNormState = .{};
         idx = self.index + 1;
-        while (idx <= self.raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
+        while (idx <= self.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
             const node = &doc.nodes.items[idx];
             if (node.kind != .text) continue;
             try appendNormalizedSegment(&out, arena_alloc, node.text.slice(doc.source), &state);

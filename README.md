@@ -12,7 +12,7 @@ Target Zig version: `0.15.2`.
 - Fast selector queries:
   - compile-time selectors (`queryOne`, `queryAll`),
   - runtime selectors (`queryOneRuntime`, `queryAllRuntime`),
-  - cached runtime selectors (`queryOneCached`, `queryAllCached`).
+  - precompiled runtime selectors (`queryOneCompiled`, `queryAllCompiled`).
 - Element navigation APIs:
   - `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children`.
 - In-place attribute state machine with lazy parse/decode.
@@ -58,7 +58,7 @@ test "basic parse + query" {
 |---|---|
 | `Document` | Parse owner, node storage, query entrypoint. |
 | `Node` | Borrowed handle for navigation, attributes, text extraction, scoped queries. |
-| `Selector` | Selector representation (`compile` / `compileRuntime`). |
+| `Selector` | Compiled selector representation (`compile` / `compileRuntime`). |
 | `ParseOptions` | Parse behavior knobs (normalization, parent pointers, turbo mode). |
 | `TextOptions` | Text extraction options (`normalize_whitespace`). |
 

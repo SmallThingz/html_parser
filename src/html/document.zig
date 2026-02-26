@@ -49,7 +49,8 @@ pub const Span = struct {
     }
 };
 
-pub const RawNode = struct {
+pub const Node = struct {
+    doc: *Document,
     index: u32,
     kind: NodeType,
 
@@ -76,33 +77,9 @@ pub const RawNode = struct {
     child_view_len: u32 = 0,
 
     subtree_end: u32 = 0,
-};
-
-pub const NodeWrapper = struct {
-    doc: *const Document,
-    index: u32,
-    kind: NodeType,
-    name: Span,
-    tag_hash: tags.TagHashValue,
-    text: Span,
-    open_start: u32,
-    open_end: u32,
-    close_start: u32,
-    close_end: u32,
-    attr_bytes_start: u32,
-    attr_bytes_end: u32,
-    first_child: u32,
-    last_child: u32,
-    prev_sibling: u32,
-    next_sibling: u32,
-    parent: u32,
-    child_view_start: u32,
-    child_view_len: u32,
-    subtree_end: u32,
-    raw: *const RawNode,
 
     pub fn tagName(self: *const @This()) []const u8 {
-        return self.raw.name.slice(self.doc.source);
+        return self.name.slice(self.doc.source);
     }
 
     pub fn innerText(self: *const @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
@@ -143,12 +120,11 @@ pub const NodeWrapper = struct {
 
     pub fn queryOne(self: *const @This(), comptime selector: []const u8) ?*const @This() {
         const sel = comptime ast.Selector.compile(selector);
-        return self.queryOneCached(&sel);
+        return self.queryOneCompiled(&sel);
     }
 
-    pub fn queryOneCached(self: *const @This(), sel: *const ast.Selector) ?*const @This() {
-        const idx = matcher.queryOneIndex(self.doc, sel.*, self.index) orelse return null;
-        return self.doc.nodeAt(idx);
+    pub fn queryOneCompiled(self: *const @This(), sel: *const ast.Selector) ?*const @This() {
+        return matcher.queryOne(Document, @This(), self.doc, sel.*, self.index);
     }
 
     pub fn queryOneRuntime(self: *const @This(), selector: []const u8) runtime_selector.Error!?*const @This() {
@@ -157,10 +133,10 @@ pub const NodeWrapper = struct {
 
     pub fn queryAll(self: *const @This(), comptime selector: []const u8) QueryIter {
         const sel = comptime ast.Selector.compile(selector);
-        return self.queryAllCached(&sel);
+        return self.queryAllCompiled(&sel);
     }
 
-    pub fn queryAllCached(self: *const @This(), sel: *const ast.Selector) QueryIter {
+    pub fn queryAllCompiled(self: *const @This(), sel: *const ast.Selector) QueryIter {
         return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
     }
 
@@ -168,8 +144,6 @@ pub const NodeWrapper = struct {
         return self.doc.queryAllRuntimeFrom(selector, self.index);
     }
 };
-
-pub const Node = NodeWrapper;
 
 pub const QueryIter = struct {
     doc: *const Document,
@@ -195,9 +169,8 @@ pub const QueryIter = struct {
             if (node.kind != .element) continue;
 
             if (matcher.matchesSelectorAt(Document, self.doc, self.selector, idx, self.scope_root)) {
-                @constCast(self.doc).ensureNodeWrappersFresh();
                 self.next_index += 1;
-                return &self.doc.node_wrappers.items[idx];
+                return node;
             }
         }
         return null;
@@ -211,11 +184,8 @@ pub const Document = struct {
     child_views_ready: bool = false,
     input_was_normalized: bool = true,
 
-    nodes: std.ArrayListUnmanaged(RawNode) = .{},
-    node_wrappers: std.ArrayListUnmanaged(NodeWrapper) = .{},
-    node_wrappers_owner_ptr: usize = 0,
-    child_ptrs: std.ArrayListUnmanaged(*const NodeWrapper) = .{},
-    child_views_owner_ptr: usize = 0,
+    nodes: std.ArrayListUnmanaged(Node) = .{},
+    child_ptrs: std.ArrayListUnmanaged(*const Node) = .{},
     parse_stack: std.ArrayListUnmanaged(u32) = .{},
 
     query_one_arena: std.heap.ArenaAllocator,
@@ -239,7 +209,6 @@ pub const Document = struct {
 
     pub fn deinit(self: *Document) void {
         self.nodes.deinit(self.allocator);
-        self.node_wrappers.deinit(self.allocator);
         self.child_ptrs.deinit(self.allocator);
         self.parse_stack.deinit(self.allocator);
         self.query_one_arena.deinit();
@@ -248,12 +217,9 @@ pub const Document = struct {
 
     pub fn clear(self: *Document) void {
         self.nodes.clearRetainingCapacity();
-        self.node_wrappers.clearRetainingCapacity();
         self.child_ptrs.clearRetainingCapacity();
         self.parse_stack.clearRetainingCapacity();
         self.child_views_ready = false;
-        self.node_wrappers_owner_ptr = 0;
-        self.child_views_owner_ptr = 0;
         _ = self.query_one_arena.reset(.retain_capacity);
         _ = self.query_all_arena.reset(.retain_capacity);
         self.invalidateRuntimeSelectorCaches();
@@ -267,7 +233,6 @@ pub const Document = struct {
         self.store_parent_pointers = opts.store_parent_pointers;
         self.input_was_normalized = opts.normalize_input;
         try parser.parseInto(Document, self, input, opts);
-        try self.rebuildNodeWrappers();
         if (opts.eager_child_views) {
             try self.buildChildViews();
         }
@@ -275,12 +240,11 @@ pub const Document = struct {
 
     pub fn queryOne(self: *const Document, comptime selector: []const u8) ?*const Node {
         const sel = comptime ast.Selector.compile(selector);
-        return self.queryOneCached(&sel);
+        return self.queryOneCompiled(&sel);
     }
 
-    pub fn queryOneCached(self: *const Document, sel: *const ast.Selector) ?*const Node {
-        const idx = matcher.queryOneIndex(self, sel.*, InvalidIndex) orelse return null;
-        return self.nodeAt(idx);
+    pub fn queryOneCompiled(self: *const Document, sel: *const ast.Selector) ?*const Node {
+        return matcher.queryOne(Document, Node, self, sel.*, InvalidIndex);
     }
 
     pub fn queryOneRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!?*const Node {
@@ -290,17 +254,16 @@ pub const Document = struct {
     fn queryOneRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!?*const Node {
         const mut_self: *Document = @constCast(self);
         const sel = try mut_self.getOrCompileQueryOneSelector(selector);
-        if (scope_root == InvalidIndex) return self.queryOneCached(&sel);
-        const idx = matcher.queryOneIndex(self, sel, scope_root) orelse return null;
-        return self.nodeAt(idx);
+        if (scope_root == InvalidIndex) return self.queryOneCompiled(&sel);
+        return matcher.queryOne(Document, Node, self, sel, scope_root);
     }
 
     pub fn queryAll(self: *const Document, comptime selector: []const u8) QueryIter {
         const sel = comptime ast.Selector.compile(selector);
-        return self.queryAllCached(&sel);
+        return self.queryAllCompiled(&sel);
     }
 
-    pub fn queryAllCached(self: *const Document, sel: *const ast.Selector) QueryIter {
+    pub fn queryAllCompiled(self: *const Document, sel: *const ast.Selector) QueryIter {
         return .{ .doc = self, .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
     }
 
@@ -311,13 +274,13 @@ pub const Document = struct {
     fn queryAllRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!QueryIter {
         const mut_self: *Document = @constCast(self);
         // Runtime query-all iterators are invalidated when a newer runtime
-        // query-all is created, to avoid holding stale cached selector state.
+        // query-all is created, to avoid holding stale compiled selector state.
         mut_self.query_all_generation +%= 1;
         if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
 
         const sel = try mut_self.getOrCompileQueryAllSelector(selector);
         var out = if (scope_root == InvalidIndex)
-            self.queryAllCached(&sel)
+            self.queryAllCompiled(&sel)
         else
             QueryIter{
                 .doc = self,
@@ -347,57 +310,15 @@ pub const Document = struct {
             const n = &self.nodes.items[i];
             if (n.kind != .element) continue;
             if (self.input_was_normalized) {
-                if (std.mem.eql(u8, n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
-            } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
+                if (std.mem.eql(u8, n.name.slice(self.source), name)) return n;
+            } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return n;
         }
         return null;
     }
 
     pub fn nodeAt(self: *const Document, idx: u32) ?*const Node {
         if (idx == InvalidIndex or idx >= self.nodes.items.len) return null;
-        const mut_self: *Document = @constCast(self);
-        mut_self.ensureNodeWrappersFresh();
-        return &mut_self.node_wrappers.items[idx];
-    }
-
-    fn ensureNodeWrappersFresh(self: *Document) void {
-        const owner_ptr = @intFromPtr(self);
-        if (self.node_wrappers_owner_ptr == owner_ptr and self.node_wrappers.items.len == self.nodes.items.len) return;
-        self.rebuildNodeWrappers() catch @panic("out of memory rebuilding node wrappers");
-    }
-
-    fn rebuildNodeWrappers(self: *Document) !void {
-        const alloc = self.allocator;
-        self.node_wrappers.clearRetainingCapacity();
-        try self.node_wrappers.ensureTotalCapacity(alloc, self.nodes.items.len);
-        for (self.nodes.items, 0..) |*raw, idx| {
-            self.node_wrappers.appendAssumeCapacity(.{
-                .doc = self,
-                .index = @intCast(idx),
-                .kind = raw.kind,
-                .name = raw.name,
-                .tag_hash = raw.tag_hash,
-                .text = raw.text,
-                .open_start = raw.open_start,
-                .open_end = raw.open_end,
-                .close_start = raw.close_start,
-                .close_end = raw.close_end,
-                .attr_bytes_start = raw.attr_bytes_start,
-                .attr_bytes_end = raw.attr_bytes_end,
-                .first_child = raw.first_child,
-                .last_child = raw.last_child,
-                .prev_sibling = raw.prev_sibling,
-                .next_sibling = raw.next_sibling,
-                .parent = raw.parent,
-                .child_view_start = raw.child_view_start,
-                .child_view_len = raw.child_view_len,
-                .subtree_end = raw.subtree_end,
-                .raw = raw,
-            });
-        }
-        self.node_wrappers_owner_ptr = @intFromPtr(self);
-        self.child_views_ready = false;
-        self.child_views_owner_ptr = 0;
+        return &self.nodes.items[idx];
     }
 
     fn invalidateRuntimeSelectorCaches(self: *Document) void {
@@ -436,9 +357,7 @@ pub const Document = struct {
     }
 
     pub fn ensureChildViewsBuilt(self: *Document) void {
-        self.ensureNodeWrappersFresh();
-        const owner_ptr = @intFromPtr(self);
-        if (self.child_views_ready and self.child_views_owner_ptr == owner_ptr) return;
+        if (self.child_views_ready) return;
         // Allocation failure here indicates an unrecoverable internal state for
         // callers expecting non-fallible navigation APIs.
         self.buildChildViews() catch @panic("out of memory building child views");
@@ -446,7 +365,6 @@ pub const Document = struct {
 
     fn buildChildViews(self: *Document) !void {
         const alloc = self.allocator;
-        self.ensureNodeWrappersFresh();
         self.child_ptrs.clearRetainingCapacity();
         const child_ptr_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
         try self.child_ptrs.ensureTotalCapacity(alloc, child_ptr_count);
@@ -459,21 +377,17 @@ pub const Document = struct {
 
             var child = n.first_child;
             while (child != InvalidIndex) {
-                self.child_ptrs.appendAssumeCapacity(&self.node_wrappers.items[child]);
+                self.child_ptrs.appendAssumeCapacity(&self.nodes.items[child]);
                 n.child_view_len += 1;
                 child = self.nodes.items[child].next_sibling;
             }
-            self.node_wrappers.items[i].child_view_start = n.child_view_start;
-            self.node_wrappers.items[i].child_view_len = n.child_view_len;
         }
 
         self.child_views_ready = true;
-        self.child_views_owner_ptr = @intFromPtr(self);
     }
 };
 
 fn assertNodeTypeLayouts() void {
-    _ = @sizeOf(RawNode);
     _ = @sizeOf(Node);
 }
 
@@ -729,9 +643,9 @@ test "node-scoped queries return complete descendants only" {
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const sel = try ast.Selector.compileRuntime(arena.allocator(), "a.link");
-    var it = sibs.queryAllCached(&sel);
+    var it = sibs.queryAllCompiled(&sel);
     try expectIterIds(&it, &.{ "a1", "a2", "a3" });
-    const first = sibs.queryOneCached(&sel) orelse return error.TestUnexpectedResult;
+    const first = sibs.queryOneCompiled(&sel) orelse return error.TestUnexpectedResult;
     const id = first.getAttributeValue("id") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("a1", id);
 }
@@ -883,7 +797,7 @@ test "attribute matching short-circuits and does not parse later attrs on early 
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const sel = try ast.Selector.compileRuntime(arena.allocator(), "div[href^=https][class*=button]");
-    try std.testing.expect(doc.queryOneCached(&sel) == null);
+    try std.testing.expect(doc.queryOneCompiled(&sel) == null);
     try std.testing.expect((try doc.queryOneRuntime("div[href^=https][class*=button]")) == null);
 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
@@ -922,7 +836,7 @@ test "inplace extended skip metadata preserves traversal for following attribute
     try std.testing.expectEqualStrings("ok", b);
 }
 
-test "cached selector APIs are equivalent to runtime string wrappers" {
+test "compiled selector APIs are equivalent to runtime string wrappers" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -947,9 +861,9 @@ test "cached selector APIs are equivalent to runtime string wrappers" {
         const sel = try ast.Selector.compileRuntime(arena.allocator(), case.selector);
         try expectDocQueryRuntime(&doc, case.selector, case.expected);
 
-        var it = doc.queryAllCached(&sel);
+        var it = doc.queryAllCompiled(&sel);
         try expectIterIds(&it, case.expected);
-        const first = doc.queryOneCached(&sel);
+        const first = doc.queryOneCompiled(&sel);
         if (case.expected.len == 0) {
             try std.testing.expect(first == null);
         } else {

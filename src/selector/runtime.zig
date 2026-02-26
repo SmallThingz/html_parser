@@ -11,8 +11,11 @@ pub const Error = error{
 pub fn compileRuntimeImpl(alloc: std.mem.Allocator, source: []const u8) Error!ast.Selector {
     const owned_source = try alloc.dupe(u8, source);
     errdefer alloc.free(owned_source);
+
     var parser = Parser.init(owned_source, alloc);
-    return try parser.parse();
+    var sel = try parser.parse();
+    sel.owns_source = true;
+    return sel;
 }
 
 const Parser = struct {
@@ -476,7 +479,7 @@ fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
 test "runtime selector parser covers all attribute operators" {
     const alloc = std.testing.allocator;
     var sel = try compileRuntimeImpl(alloc, "div[a][b=v][c^=x][d$=y][e*=z][f~=m][g|=en]");
-    defer sel.deinit(alloc);
+    defer sel.deinitRuntime(alloc);
 
     try std.testing.expectEqual(@as(usize, 1), sel.groups.len);
     try std.testing.expectEqual(@as(usize, 1), sel.compounds.len);
@@ -495,7 +498,7 @@ test "runtime selector parser covers all attribute operators" {
 test "runtime selector parser tracks combinator chain and grouping" {
     const alloc = std.testing.allocator;
     var sel = try compileRuntimeImpl(alloc, "a b > c + d ~ e, #x");
-    defer sel.deinit(alloc);
+    defer sel.deinitRuntime(alloc);
 
     try std.testing.expectEqual(@as(usize, 2), sel.groups.len);
     try std.testing.expectEqual(@as(usize, 6), sel.compounds.len);
@@ -512,14 +515,14 @@ test "runtime selector parser supports leading combinator and pseudo-only compou
     const alloc = std.testing.allocator;
 
     var sel = try compileRuntimeImpl(alloc, "> #hsoob");
-    defer sel.deinit(alloc);
+    defer sel.deinitRuntime(alloc);
     try std.testing.expectEqual(@as(usize, 1), sel.groups.len);
     try std.testing.expectEqual(@as(usize, 1), sel.compounds.len);
     try std.testing.expect(sel.compounds[0].combinator == .child);
     try std.testing.expect(sel.compounds[0].has_id == 1);
 
     var sel2 = try compileRuntimeImpl(alloc, "#pseudos :nth-child(odd)");
-    defer sel2.deinit(alloc);
+    defer sel2.deinitRuntime(alloc);
     try std.testing.expectEqual(@as(usize, 2), sel2.compounds.len);
     try std.testing.expect(sel2.compounds[1].combinator == .descendant);
     try std.testing.expectEqual(@as(u32, 1), sel2.compounds[1].pseudo_len);
@@ -539,7 +542,7 @@ test "runtime selector parser accepts nth-child shorthand variants" {
     };
     for (valid) |v| {
         var sel = try compileRuntimeImpl(alloc, v);
-        sel.deinit(alloc);
+        sel.deinitRuntime(alloc);
     }
 }
 
@@ -564,7 +567,7 @@ test "runtime selector parser rejects invalid selectors" {
     for (invalid) |source| {
         if (compileRuntimeImpl(alloc, source)) |sel| {
             var owned = sel;
-            owned.deinit(alloc);
+            owned.deinitRuntime(alloc);
             return error.TestUnexpectedResult;
         } else |err| {
             try std.testing.expect(err == error.InvalidSelector);
@@ -575,12 +578,12 @@ test "runtime selector parser rejects invalid selectors" {
 test "runtime selector parse" {
     const alloc = std.testing.allocator;
     var sel = try compileRuntimeImpl(alloc, "div#id.cls[attr^=x]:first-child, span + a");
-    defer sel.deinit(alloc);
+    defer sel.deinitRuntime(alloc);
 
     try std.testing.expect(sel.groups.len == 2);
 
     var sel2 = try compileRuntimeImpl(alloc, "div > span.k");
-    defer sel2.deinit(alloc);
+    defer sel2.deinitRuntime(alloc);
     try std.testing.expectEqual(@as(usize, 1), sel2.groups.len);
     try std.testing.expectEqual(@as(usize, 2), sel2.compounds.len);
     try std.testing.expect(sel2.compounds[1].combinator == .child);
@@ -591,7 +594,7 @@ test "runtime selector owns source bytes" {
     var buf = "span.x".*;
 
     var sel = try compileRuntimeImpl(alloc, &buf);
-    defer sel.deinit(alloc);
+    defer sel.deinitRuntime(alloc);
 
     buf[0] = 'd';
     buf[1] = 'i';

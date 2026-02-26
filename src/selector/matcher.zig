@@ -9,7 +9,7 @@ const MaxProbeEntries: usize = 24;
 const HashId: u32 = hashIgnoreCaseAscii("id");
 const HashClass: u32 = hashIgnoreCaseAscii("class");
 
-pub fn queryOneIndex(doc: anytype, selector: ast.Selector, scope_root: u32) ?u32 {
+pub fn queryOne(comptime Doc: type, comptime NodeT: type, doc: *const Doc, selector: ast.Selector, scope_root: u32) ?*const NodeT {
     const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
     const end_excl: u32 = if (scope_root == InvalidIndex)
         @as(u32, @intCast(doc.nodes.items.len))
@@ -18,9 +18,9 @@ pub fn queryOneIndex(doc: anytype, selector: ast.Selector, scope_root: u32) ?u32
 
     var i = start;
     while (i < end_excl and i < doc.nodes.items.len) : (i += 1) {
-        const node = &doc.nodes.items[i];
+        const node: *const NodeT = &doc.nodes.items[i];
         if (node.kind != .element) continue;
-        if (matchesSelectorAt(@TypeOf(doc.*), doc, selector, i, scope_root)) return i;
+        if (matchesSelectorAt(Doc, doc, selector, i, scope_root)) return node;
     }
 
     return null;
@@ -36,10 +36,7 @@ pub fn matchesSelectorAt(comptime Doc: type, doc: *const Doc, selector: ast.Sele
 }
 
 fn matchGroupFromRight(comptime Doc: type, doc: *const Doc, selector: ast.Selector, group: ast.Group, rel_index: u32, node_index: u32, scope_root: u32) bool {
-    const base: usize = @intCast(group.compound_start);
-    const rel: usize = @intCast(rel_index);
-    const comp_abs = std.math.add(usize, base, rel) catch return false;
-    if (comp_abs >= selector.compounds.len) return false;
+    const comp_abs: usize = @intCast(group.compound_start + rel_index);
     const comp = selector.compounds[comp_abs];
 
     if (!matchesCompound(Doc, doc, selector, comp, node_index)) return false;

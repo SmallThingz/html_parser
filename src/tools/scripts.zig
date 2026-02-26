@@ -462,7 +462,7 @@ fn benchQueryExecOne(alloc: std.mem.Allocator, parser_name: []const u8, mode: []
     defer alloc.free(fixture);
     const iter_s = try std.fmt.allocPrint(alloc, "{d}", .{iterations});
     defer alloc.free(iter_s);
-    const sub = if (compiled) "query-cached" else "query-match";
+    const sub = if (compiled) "query-compiled" else "query-match";
 
     {
         const warm = [_][]const u8{ "zig-out/bin/htmlparser-bench", sub, mode, fixture, selector, "1" };
@@ -572,7 +572,7 @@ fn writeMarkdown(
 
     try writeQuerySection(alloc, &out, "## Query Parse Throughput", query_parse_results);
     try writeQuerySection(alloc, &out, "## Query Match Throughput", query_match_results);
-    try writeQuerySection(alloc, &out, "## Query Cached Throughput", query_compiled_results);
+    try writeQuerySection(alloc, &out, "## Query Compiled Throughput", query_compiled_results);
 
     if (gate_rows.len > 0) {
         try w.writeAll("## Turbo vs lol-html Gate\n\n");
@@ -782,7 +782,7 @@ fn renderConsole(
 
     try renderQueryConsoleSection(alloc, &out, "Query Parse Throughput", query_parse_results);
     try renderQueryConsoleSection(alloc, &out, "Query Match Throughput", query_match_results);
-    try renderQueryConsoleSection(alloc, &out, "Query Cached Throughput", query_compiled_results);
+    try renderQueryConsoleSection(alloc, &out, "Query Compiled Throughput", query_compiled_results);
 
     if (gate_rows.len > 0) {
         try w.writeAll("Turbo vs lol-html Gate\n\n");
@@ -970,7 +970,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     defer query_compiled_results.deinit(alloc);
     for (query_modes) |qm| {
         for (profile.query_compiled_cases) |qc| {
-            std.debug.print("benchmarking query-cached {s} on {s} ({d} iters)\n", .{ qm.parser, qc.name, qc.iterations });
+            std.debug.print("benchmarking query-compiled {s} on {s} ({d} iters)\n", .{ qm.parser, qc.name, qc.iterations });
             const row = try benchQueryExecOne(alloc, qm.parser, qm.mode, qc.name, qc.fixture, qc.selector, qc.iterations, true);
             try query_compiled_results.append(alloc, row);
         }
@@ -1058,7 +1058,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
             }
             try checkQuerySection(alloc, &failures, query_parse_results.items, "query-parse", base_qp, 0.98);
             try checkQuerySection(alloc, &failures, query_match_results.items, "query-match", base_qm, 0.98);
-            try checkQuerySection(alloc, &failures, query_compiled_results.items, "query-cached", base_qc, 0.98);
+            try checkQuerySection(alloc, &failures, query_compiled_results.items, "query-compiled", base_qc, 0.98);
         } else {
             for (profile.fixtures) |fx| {
                 const current = findParseThroughput(parse_results.items, "ours-strict", fx.name) orelse continue;

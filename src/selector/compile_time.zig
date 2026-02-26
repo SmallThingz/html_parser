@@ -38,11 +38,6 @@ pub const ComptimeAllocator = struct {
     }
 };
 
-fn materializeSlice(comptime T: type, comptime src: []const T) []const T {
-    const arr = src[0..src.len].*;
-    return arr[0..];
-}
-
 pub fn compileImpl(comptime source: []const u8) ast.Selector {
     const parsed = runtime.compileRuntimeImpl(ComptimeAllocator.interface, source) catch |err| {
         @compileError("invalid selector: " ++ source ++ " (" ++ @errorName(err) ++ ")");
@@ -66,6 +61,11 @@ pub fn compileImpl(comptime source: []const u8) ast.Selector {
     };
 }
 
+fn materializeSlice(comptime T: type, comptime src: []const T) []const T {
+    const arr = src[0..src.len].*;
+    return arr[0..];
+}
+
 test "compile-time parser" {
     const sel = comptime compileImpl("div#id.cls[attr^=x]:first-child, span + a");
     try std.testing.expectEqual(@as(usize, 2), sel.groups.len);
@@ -73,9 +73,9 @@ test "compile-time parser" {
     try std.testing.expect(sel.compounds[2].combinator == .adjacent);
 }
 
-test "deinit is no-op for comptime selector" {
+test "deinitRuntime is no-op for comptime selectors" {
     var sel = comptime compileImpl("div.x");
-    sel.deinit(ComptimeAllocator.interface);
+    sel.deinitRuntime(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), sel.groups.len);
 }
 

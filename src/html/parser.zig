@@ -31,6 +31,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             try self.reserveCapacities();
 
             try self.doc.nodes.append(alloc, .{
+                .doc = self.doc,
                 .index = 0,
                 .kind = .document,
                 .subtree_end = 0,
@@ -365,6 +366,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const build_links = parent_idx != InvalidIndex and (!self.opts.turbo_parse or self.doc.store_parent_pointers);
 
             var node: @TypeOf(self.doc.nodes.items[0]) = .{
+                .doc = self.doc,
                 .index = idx,
                 .kind = kind,
                 .open_start = @intCast(self.i),

@@ -120,6 +120,7 @@ pub const Group = extern struct {
 
 pub const Selector = struct {
     source: []const u8,
+    owns_source: bool = false,
     groups: []const Group,
     compounds: []const Compound,
     classes: []const Range,
@@ -135,8 +136,8 @@ pub const Selector = struct {
         return @import("runtime.zig").compileRuntimeImpl(allocator, source);
     }
 
-    /// You must deinit with the same allocator you initialized, this works in runtime; and also in comptime since ComptimeAllocator.free is a no-op
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinitRuntime(self: *@This(), allocator: std.mem.Allocator) void {
+        if (!self.owns_source) return;
         allocator.free(@constCast(self.source));
         allocator.free(self.groups);
         allocator.free(self.compounds);
@@ -144,5 +145,6 @@ pub const Selector = struct {
         allocator.free(self.attrs);
         allocator.free(self.pseudos);
         allocator.free(self.not_items);
+        self.* = undefined;
     }
 };

@@ -25,7 +25,7 @@ test "basic parse + query" {
 
 Source of truth: `examples/basic_parse_query.zig`.
 
-## Runtime vs Cached Selectors
+## Runtime vs Compiled Selectors
 
 Use runtime convenience calls when selector strings are dynamic:
 
@@ -34,18 +34,18 @@ const one = try doc.queryOneRuntime("a.primary");
 var it = try doc.queryAllRuntime("a[href]");
 ```
 
-Use cached selectors for repeated execution:
+Use compiled selectors for repeated execution:
 
 ```zig
 var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
 defer arena.deinit();
 
 const sel = try html.Selector.compileRuntime(arena.allocator(), "a[href^=https][class~=button]");
-const node = doc.queryOneCached(&sel);
+const node = doc.queryOneCompiled(&sel);
 _ = node;
 ```
 
-Source of truth: `examples/runtime_selector.zig` and `examples/cached_selector.zig`.
+Source of truth: `examples/runtime_selector.zig` and `examples/compiled_selector.zig`.
 
 ## Parse Options
 
