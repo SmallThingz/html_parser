@@ -139,8 +139,11 @@ const Parser = struct {
         const not_items = try self.not_items.toOwnedSlice(self.alloc);
         errdefer self.alloc.free(not_items);
 
+        const requires_parent = selectorRequiresParent(compounds, pseudos);
+
         return .{
             .source = self.source,
+            .requires_parent = requires_parent,
             .groups = groups,
             .compounds = compounds,
             .classes = classes,
@@ -472,6 +475,22 @@ fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
         h = (h ^ @as(u32, tables.lower(c))) *% 16777619;
     }
     return h;
+}
+
+fn selectorRequiresParent(compounds: []const ast.Compound, pseudos: []const ast.Pseudo) bool {
+    for (compounds) |comp| {
+        switch (comp.combinator) {
+            .child, .descendant => return true,
+            else => {},
+        }
+
+        var i: u32 = 0;
+        while (i < comp.pseudo_len) : (i += 1) {
+            const p = pseudos[comp.pseudo_start + i];
+            if (p.kind == .nth_child) return true;
+        }
+    }
+    return false;
 }
 
 test "runtime selector parser covers all attribute operators" {

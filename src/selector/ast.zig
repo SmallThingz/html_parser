@@ -120,6 +120,7 @@ pub const Group = extern struct {
 
 pub const Selector = struct {
     source: []const u8,
+    requires_parent: bool = false,
     groups: []const Group,
     compounds: []const Compound,
     classes: []const Range,

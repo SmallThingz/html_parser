@@ -34,6 +34,30 @@ test "parent pointers can be disabled without breaking other navigation" {
     try std.testing.expect(root.children().len == 1);
 }
 
+test "queries that need ancestry lazily materialize parent pointers" {
+    var doc = html.Document.init(std.testing.allocator);
+    defer doc.deinit();
+
+    var input = "<div id='a'><span id='b'><em id='c'></em></span></div>".*;
+    try doc.parse(&input, .{ .store_parent_pointers = false });
+    try std.testing.expect(!doc.store_parent_pointers);
+
+    try std.testing.expect(doc.queryOne("#a #c") != null);
+    try std.testing.expect(doc.store_parent_pointers);
+}
+
+test "attr-only queries do not force parent pointer materialization" {
+    var doc = html.Document.init(std.testing.allocator);
+    defer doc.deinit();
+
+    var input = "<div id='a' class='x'></div>".*;
+    try doc.parse(&input, .{ .store_parent_pointers = false });
+    try std.testing.expect(!doc.store_parent_pointers);
+
+    try std.testing.expect(doc.queryOne("div#a[class=x]") != null);
+    try std.testing.expect(!doc.store_parent_pointers);
+}
+
 test "queryAll yields matches in document preorder" {
     var doc = html.Document.init(std.testing.allocator);
     defer doc.deinit();

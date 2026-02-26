@@ -141,6 +141,7 @@ pub const Node = struct {
     }
 
     pub fn queryOneCompiled(self: @This(), sel: *const ast.Selector) ?@This() {
+        self.doc.ensureQueryPrereqs(sel.*);
         const idx = matcher.queryOneIndex(Document, self.doc, sel.*, self.index) orelse return null;
         return self.doc.nodeAt(idx);
     }
@@ -155,6 +156,7 @@ pub const Node = struct {
     }
 
     pub fn queryAllCompiled(self: @This(), sel: *const ast.Selector) QueryIter {
+        self.doc.ensureQueryPrereqs(sel.*);
         return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
     }
 
@@ -275,6 +277,8 @@ pub const Document = struct {
     }
 
     pub fn queryOneCompiled(self: *const Document, sel: *const ast.Selector) ?Node {
+        const mut_self: *Document = @constCast(self);
+        mut_self.ensureQueryPrereqs(sel.*);
         const idx = matcher.queryOneIndex(Document, self, sel.*, InvalidIndex) orelse return null;
         return self.nodeAt(idx);
     }
@@ -286,6 +290,7 @@ pub const Document = struct {
     fn queryOneRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!?Node {
         const mut_self: *Document = @constCast(self);
         const sel = try mut_self.getOrCompileQueryOneSelector(selector);
+        mut_self.ensureQueryPrereqs(sel);
         if (scope_root == InvalidIndex) return self.queryOneCompiled(&sel);
         const idx = matcher.queryOneIndex(Document, self, sel, scope_root) orelse return null;
         return self.nodeAt(idx);
@@ -297,6 +302,8 @@ pub const Document = struct {
     }
 
     pub fn queryAllCompiled(self: *const Document, sel: *const ast.Selector) QueryIter {
+        const mut_self: *Document = @constCast(self);
+        mut_self.ensureQueryPrereqs(sel.*);
         return .{ .doc = @constCast(self), .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
     }
 
@@ -312,6 +319,7 @@ pub const Document = struct {
         if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
 
         const sel = try mut_self.getOrCompileQueryAllSelector(selector);
+        mut_self.ensureQueryPrereqs(sel);
         var out = if (scope_root == InvalidIndex)
             self.queryAllCompiled(&sel)
         else
@@ -323,6 +331,26 @@ pub const Document = struct {
             };
         out.runtime_generation = mut_self.query_all_generation;
         return out;
+    }
+
+    fn ensureQueryPrereqs(noalias self: *Document, selector: ast.Selector) void {
+        if (selector.requires_parent and !self.store_parent_pointers) {
+            self.materializeParentPointers();
+        }
+    }
+
+    fn materializeParentPointers(noalias self: *Document) void {
+        if (self.store_parent_pointers) return;
+
+        var parent_idx: u32 = 0;
+        while (parent_idx < self.nodes.items.len) : (parent_idx += 1) {
+            var child = self.nodes.items[parent_idx].first_child;
+            while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
+                self.nodes.items[child].parent = parent_idx;
+            }
+        }
+
+        self.store_parent_pointers = true;
     }
 
     pub fn html(self: *const Document) ?Node {

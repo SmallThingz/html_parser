@@ -54,6 +54,7 @@ pub fn compileImpl(comptime source: []const u8) ast.Selector {
 
     return .{
         .source = source,
+        .requires_parent = parsed.requires_parent,
         .groups = groups,
         .compounds = compounds,
         .classes = classes,
