@@ -113,9 +113,7 @@ pub const ParseOptions = struct {
             }
 
             pub fn queryOneCompiled(self: @This(), sel: *const ast.Selector) ?@This() {
-                self.doc.ensureQueryPrereqs(sel.*);
-                const idx = matcher.queryOneIndex(DocType, self.doc, sel.*, self.index) orelse return null;
-                return self.doc.nodeAt(idx);
+                return self.doc.queryOneCompiledFrom(sel.*, self.index);
             }
 
             pub fn queryOneRuntime(self: @This(), selector: []const u8) runtime_selector.Error!?@This() {
@@ -204,6 +202,12 @@ pub const ParseOptions = struct {
             query_all_cached_selector: []const u8 = "",
             query_all_cached_compiled: ?ast.Selector = null,
             query_all_cache_valid: bool = false,
+            // One-entry queryOne result cache (source + scope -> first-match idx).
+            query_one_result_cache_valid: bool = false,
+            query_one_result_selector_len: usize = 0,
+            query_one_result_selector_hash: u64 = 0,
+            query_one_result_scope_root: u32 = InvalidIndex,
+            query_one_result_idx: u32 = InvalidIndex,
 
             query_accel_budget_bytes: usize = 0,
             query_accel_used_bytes: usize = 0,
@@ -268,10 +272,7 @@ pub const ParseOptions = struct {
             }
 
             pub fn queryOneCompiled(self: *const DocSelf, sel: *const ast.Selector) ?NodeTypeWrapper {
-                const mut_self: *DocSelf = @constCast(self);
-                mut_self.ensureQueryPrereqs(sel.*);
-                const idx = matcher.queryOneIndex(DocSelf, self, sel.*, InvalidIndex) orelse return null;
-                return self.nodeAt(idx);
+                return self.queryOneCompiledFrom(sel.*, InvalidIndex);
             }
 
             pub fn queryOneRuntime(self: *const DocSelf, selector: []const u8) runtime_selector.Error!?NodeTypeWrapper {
@@ -281,9 +282,33 @@ pub const ParseOptions = struct {
             fn queryOneRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
                 const sel = try mut_self.getOrCompileQueryOneSelector(selector);
+                return self.queryOneCompiledFrom(sel, scope_root);
+            }
+
+            fn queryOneCompiledFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32) ?NodeTypeWrapper {
+                const mut_self: *DocSelf = @constCast(self);
                 mut_self.ensureQueryPrereqs(sel);
-                if (scope_root == InvalidIndex) return self.queryOneCompiled(&sel);
-                const idx = matcher.queryOneIndex(DocSelf, self, sel, scope_root) orelse return null;
+                const sel_hash = hashSelectorSource(sel.source);
+                const sel_len = sel.source.len;
+
+                if (mut_self.query_one_result_cache_valid and
+                    mut_self.query_one_result_scope_root == scope_root and
+                    mut_self.query_one_result_selector_len == sel_len and
+                    mut_self.query_one_result_selector_hash == sel_hash)
+                {
+                    const idx = mut_self.query_one_result_idx;
+                    if (idx == InvalidIndex) return null;
+                    return self.nodeAt(idx);
+                }
+
+                const idx = matcher.queryOneIndex(DocSelf, self, sel, scope_root) orelse InvalidIndex;
+                mut_self.query_one_result_cache_valid = true;
+                mut_self.query_one_result_selector_len = sel_len;
+                mut_self.query_one_result_selector_hash = sel_hash;
+                mut_self.query_one_result_scope_root = scope_root;
+                mut_self.query_one_result_idx = idx;
+
+                if (idx == InvalidIndex) return null;
                 return self.nodeAt(idx);
             }
 
@@ -393,6 +418,11 @@ pub const ParseOptions = struct {
                 self.query_all_cache_valid = false;
                 self.query_all_cached_selector = "";
                 self.query_all_cached_compiled = null;
+                self.query_one_result_cache_valid = false;
+                self.query_one_result_selector_len = 0;
+                self.query_one_result_selector_hash = 0;
+                self.query_one_result_scope_root = InvalidIndex;
+                self.query_one_result_idx = InvalidIndex;
             }
 
             fn getOrCompileQueryOneSelector(noalias self: *DocSelf, selector: []const u8) runtime_selector.Error!ast.Selector {
@@ -672,6 +702,10 @@ const Document = DefaultTypeOptions.GetDocument();
 
 fn hashIdValue(id: []const u8) u64 {
     return std.hash.Wyhash.hash(0, id);
+}
+
+fn hashSelectorSource(source: []const u8) u64 {
+    return std.hash.Wyhash.hash(0x9E3779B97F4A7C15, source);
 }
 
 fn assertNodeTypeLayouts() void {
