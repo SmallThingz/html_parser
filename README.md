@@ -108,6 +108,18 @@ if (node == null) {
 }
 ```
 
+### Instrumentation hooks
+
+```zig
+var hooks = Hooks{};
+try html.parseWithHooks(&doc, &input, .{}, &hooks);
+_ = try html.queryOneRuntimeWithHooks(&doc, "a.primary", &hooks);
+```
+
+Reference examples:
+- `examples/debug_query_report.zig`
+- `examples/instrumentation_hooks.zig`
+
 ## Parse Option Recipes
 
 Two bundles are used by the benchmark harness and conformance runner:

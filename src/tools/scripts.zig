@@ -43,6 +43,10 @@ const query_modes = [_]struct { parser: []const u8, mode: []const u8 }{
     .{ .parser = "ours-fastest", .mode = "fastest" },
 };
 
+const query_parse_modes = [_]struct { parser: []const u8, mode: []const u8 }{
+    .{ .parser = "ours", .mode = "runtime" },
+};
+
 const FixtureCase = struct {
     name: []const u8,
     iterations: usize,
@@ -390,18 +394,18 @@ fn benchParseOne(alloc: std.mem.Allocator, parser_name: []const u8, fixture_name
     };
 }
 
-fn benchQueryParseOne(alloc: std.mem.Allocator, parser_name: []const u8, mode: []const u8, case_name: []const u8, selector: []const u8, iterations: usize) !QueryResult {
+fn benchQueryParseOne(alloc: std.mem.Allocator, parser_name: []const u8, case_name: []const u8, selector: []const u8, iterations: usize) !QueryResult {
     const iter_s = try std.fmt.allocPrint(alloc, "{d}", .{iterations});
     defer alloc.free(iter_s);
 
     {
-        const warm = [_][]const u8{ "zig-out/bin/htmlparser-bench", "query-parse", mode, selector, "1" };
+        const warm = [_][]const u8{ "zig-out/bin/htmlparser-bench", "query-parse", selector, "1" };
         _ = try runIntCmd(alloc, &warm);
     }
 
     const samples = try alloc.alloc(u64, repeats);
     for (samples) |*slot| {
-        const argv = [_][]const u8{ "zig-out/bin/htmlparser-bench", "query-parse", mode, selector, iter_s };
+        const argv = [_][]const u8{ "zig-out/bin/htmlparser-bench", "query-parse", selector, iter_s };
         slot.* = try runIntCmd(alloc, &argv);
     }
 
@@ -411,7 +415,7 @@ fn benchQueryParseOne(alloc: std.mem.Allocator, parser_name: []const u8, mode: [
     const ns_per_op = @as(f64, @floatFromInt(median_ns)) / @as(f64, @floatFromInt(iterations));
     return .{
         .parser = parser_name,
-        .mode = mode,
+        .mode = "runtime",
         .case = case_name,
         .selector = selector,
         .iterations = iterations,
@@ -943,10 +947,10 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
 
     var query_parse_results = std.ArrayList(QueryResult).empty;
     defer query_parse_results.deinit(alloc);
-    for (query_modes) |qm| {
+    for (query_parse_modes) |qm| {
         for (profile.query_parse_cases) |qc| {
             std.debug.print("benchmarking query-parse {s} on {s} ({d} iters)\n", .{ qm.parser, qc.name, qc.iterations });
-            const row = try benchQueryParseOne(alloc, qm.parser, qm.mode, qc.name, qc.selector, qc.iterations);
+            const row = try benchQueryParseOne(alloc, qm.parser, qc.name, qc.selector, qc.iterations);
             try query_parse_results.append(alloc, row);
         }
     }
@@ -1035,7 +1039,11 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
 
         var base_parse = try parseBaselineParseMap(alloc, parsed.value, "ours-strictest");
         defer base_parse.deinit();
-        var base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours-strictest");
+        var base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours");
+        if (base_qp.count() == 0) {
+            base_qp.deinit();
+            base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours-strictest");
+        }
         defer base_qp.deinit();
         var base_qm = try parseBaselineOpsMap(alloc, parsed.value, "query_match_results", "ours-strictest");
         defer base_qm.deinit();
@@ -1061,9 +1069,9 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
                     }
                 }
             }
-            try checkQuerySection(alloc, &failures, query_parse_results.items, "query-parse", base_qp, StableQueryMinRatio);
-            try checkQuerySection(alloc, &failures, query_match_results.items, "query-match", base_qm, StableQueryMinRatio);
-            try checkQuerySection(alloc, &failures, query_compiled_results.items, "query-compiled", base_qc, StableQueryMinRatio);
+            try checkQuerySection(alloc, &failures, query_parse_results.items, "ours", "query-parse", base_qp, StableQueryMinRatio);
+            try checkQuerySection(alloc, &failures, query_match_results.items, "ours-strictest", "query-match", base_qm, StableQueryMinRatio);
+            try checkQuerySection(alloc, &failures, query_compiled_results.items, "ours-strictest", "query-compiled", base_qc, StableQueryMinRatio);
         } else {
             for (profile.fixtures) |fx| {
                 const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
@@ -1105,6 +1113,7 @@ fn checkQuerySection(
     alloc: std.mem.Allocator,
     failures: *std.ArrayList([]const u8),
     rows: []const QueryResult,
+    parser_filter: []const u8,
     section_name: []const u8,
     baseline: std.StringHashMap(f64),
     min_ratio: f64,
@@ -1112,7 +1121,7 @@ fn checkQuerySection(
     var current = std.StringHashMap(f64).init(alloc);
     defer current.deinit();
     for (rows) |r| {
-        if (!std.mem.eql(u8, r.parser, "ours-strictest")) continue;
+        if (!std.mem.eql(u8, r.parser, parser_filter)) continue;
         try current.put(r.case, r.ops_s);
     }
     var it = baseline.iterator();
@@ -1120,7 +1129,7 @@ fn checkQuerySection(
         if (current.get(entry.key_ptr.*)) |cur| {
             const min_expected = entry.value_ptr.* * min_ratio;
             if (cur < min_expected) {
-                const row = findQueryRow(rows, "ours-strictest", entry.key_ptr.*) orelse continue;
+                const row = findQueryRow(rows, parser_filter, entry.key_ptr.*) orelse continue;
                 const confirmed = try confirmQueryOps(alloc, section_name, row, RegressionConfirmRuns);
                 if (confirmed < min_expected) {
                     const msg = try std.fmt.allocPrint(alloc, "stable {s} regression >1%: {s} {d:.2} < {d:.2} (confirmed {d}x)", .{
@@ -1178,7 +1187,7 @@ fn confirmQueryOps(alloc: std.mem.Allocator, section_name: []const u8, row: Quer
 
     for (0..runs) |i| {
         const rerow = if (std.mem.eql(u8, section_name, "query-parse"))
-            try benchQueryParseOne(alloc, row.parser, row.mode, row.case, row.selector, row.iterations)
+            try benchQueryParseOne(alloc, row.parser, row.case, row.selector, row.iterations)
         else if (std.mem.eql(u8, section_name, "query-match"))
             try benchQueryExecOne(alloc, row.parser, row.mode, row.case, row.fixture.?, row.selector, row.iterations, false)
         else

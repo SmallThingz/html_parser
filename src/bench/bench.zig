@@ -14,20 +14,7 @@ fn parseMode(arg: []const u8) !BenchMode {
     return error.InvalidBenchMode;
 }
 
-fn parseDocForParseBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void {
-    switch (mode) {
-        .strictest => try doc.parse(input, .{
-            .eager_child_views = true,
-            .drop_whitespace_text_nodes = false,
-        }),
-        .fastest => try doc.parse(input, .{
-            .eager_child_views = false,
-            .drop_whitespace_text_nodes = true,
-        }),
-    }
-}
-
-fn parseDocForQueryBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void {
+fn parseDocForBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void {
     switch (mode) {
         .strictest => try doc.parse(input, .{
             .eager_child_views = true,
@@ -92,9 +79,9 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
             defer doc.deinit();
             if (working_opt) |working| {
                 @memcpy(working, input);
-                try parseDocForParseBench(&doc, working, mode);
+                try parseDocForBench(&doc, working, mode);
             } else {
-                try parseDocForParseBench(&doc, input, mode);
+                try parseDocForBench(&doc, input, mode);
             }
         }
         _ = parse_arena.reset(.retain_capacity);
@@ -136,7 +123,7 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, 
 
     var doc = Document.init(alloc);
     defer doc.deinit();
-    try parseDocForQueryBench(&doc, working, mode);
+    try parseDocForBench(&doc, working, mode);
 
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
@@ -166,7 +153,7 @@ pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usiz
 
     var doc = Document.init(alloc);
     defer doc.deinit();
-    try parseDocForQueryBench(&doc, working, mode);
+    try parseDocForBench(&doc, working, mode);
 
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
@@ -194,14 +181,6 @@ pub fn main() !void {
     if (args.len == 4 and std.mem.eql(u8, args[1], "query-parse")) {
         const iterations = try std.fmt.parseInt(usize, args[3], 10);
         const total_ns = try runQueryParse(args[2], iterations);
-        std.debug.print("{d}\n", .{total_ns});
-        return;
-    }
-
-    if (args.len == 5 and std.mem.eql(u8, args[1], "query-parse")) {
-        _ = try parseMode(args[2]);
-        const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryParse(args[3], iterations);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -246,8 +225,8 @@ pub fn main() !void {
 
     if (args.len != 3) {
         std.debug.print(
-            "usage:\n  {s} <html-file> <iterations>\n  {s} parse <strictest|fastest> <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-parse <strictest|fastest> <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-match <strictest|fastest> <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n  {s} query-compiled <strictest|fastest> <html-file> <selector> <iterations>\n",
-            .{ args[0], args[0], args[0], args[0], args[0], args[0], args[0], args[0] },
+            "usage:\n  {s} <html-file> <iterations>\n  {s} parse <strictest|fastest> <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-match <strictest|fastest> <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n  {s} query-compiled <strictest|fastest> <html-file> <selector> <iterations>\n",
+            .{ args[0], args[0], args[0], args[0], args[0], args[0], args[0] },
         );
         std.process.exit(2);
     }

@@ -1408,25 +1408,25 @@ test "leading child combinator works in node-scoped queries" {
     try std.testing.expectEqual(@as(usize, 1), hsoob_count);
 }
 
-test "attribute parsing preserves selector/query behavior for representative input" {
+test "parse option bundles preserve selector/query behavior for representative input" {
     const alloc = std.testing.allocator;
 
-    var eager_doc = Document.init(alloc);
-    defer eager_doc.deinit();
-    var deferred_doc = Document.init(alloc);
-    defer deferred_doc.deinit();
+    var strict_doc = Document.init(alloc);
+    defer strict_doc.deinit();
+    var fast_doc = Document.init(alloc);
+    defer fast_doc.deinit();
 
-    var eager_html = ("<html><body>" ++
+    var strict_html = ("<html><body>" ++
         "<div id='x' class='alpha beta' data-k='v' data-q='1>2'>x</div>" ++
         "<img id='im' src='a.png' />" ++
         "<a id='a1' href='https://example.com' class='nav button'>ok</a>" ++
         "<p id='p1'>a<span id='s1'>b</span></p>" ++
         "<div id='e' a= ></div>" ++
         "</body></html>").*;
-    var deferred_html = eager_html;
+    var fast_html = strict_html;
 
-    try eager_doc.parse(&eager_html, .{});
-    try deferred_doc.parse(&deferred_html, .{
+    try strict_doc.parse(&strict_html, .{});
+    try fast_doc.parse(&fast_html, .{
         .eager_child_views = false,
     });
 
@@ -1439,14 +1439,14 @@ test "attribute parsing preserves selector/query behavior for representative inp
     };
 
     for (selectors) |sel| {
-        const a = try eager_doc.queryOneRuntime(sel);
-        const b = try deferred_doc.queryOneRuntime(sel);
+        const a = try strict_doc.queryOneRuntime(sel);
+        const b = try fast_doc.queryOneRuntime(sel);
         try std.testing.expect((a == null) == (b == null));
     }
 
-    const eager_empty = (eager_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
-    const deferred_empty = (deferred_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings(eager_empty, deferred_empty);
+    const strict_empty = (strict_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    const fast_empty = (fast_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings(strict_empty, fast_empty);
 }
 
 test "attribute scanner handles quoted > and self-closing tails" {

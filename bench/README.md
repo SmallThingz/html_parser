@@ -8,6 +8,7 @@ This directory benchmarks `htmlparser` against other high-performance HTML parse
 
 It also benchmarks `htmlparser` query parsing throughput (runtime selector compile path).
 Query sections remain `htmlparser`-only; external parser comparisons are parse throughput only.
+`query-parse` is mode-independent and is measured once (`ours`) to avoid duplicate compatibility rows.
 
 `htmlparser` parse results are reported in two internal benchmark modes:
 

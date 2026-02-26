@@ -122,3 +122,53 @@ test "example parity: strictest and fastest selectors agree" {
     try std.testing.expectEqual(@as(usize, 2), strictest_count);
     try std.testing.expectEqual(strictest_count, fastest_count);
 }
+
+test "example parity: debug query report" {
+    var doc = Document.init(std.testing.allocator);
+    defer doc.deinit();
+
+    var input = "<div><a id='one' class='nav'></a><a id='two'></a></div>".*;
+    try doc.parse(&input, .{});
+
+    var report: html.QueryDebugReport = .{};
+    const node = try doc.queryOneRuntimeDebug("a[href^=https]", &report);
+    try std.testing.expect(node == null);
+    try std.testing.expect(report.visited_elements > 0);
+    try std.testing.expect(report.near_miss_len > 0);
+    try std.testing.expect(report.near_misses[0].reason.kind != .none);
+}
+
+test "example parity: instrumentation hooks" {
+    const Hooks = struct {
+        parse_start_calls: usize = 0,
+        parse_end_calls: usize = 0,
+        query_start_calls: usize = 0,
+        query_end_calls: usize = 0,
+
+        pub fn onParseStart(self: *@This(), _: usize) void {
+            self.parse_start_calls += 1;
+        }
+        pub fn onParseEnd(self: *@This(), _: html.ParseInstrumentationStats) void {
+            self.parse_end_calls += 1;
+        }
+        pub fn onQueryStart(self: *@This(), _: html.QueryInstrumentationKind, _: usize) void {
+            self.query_start_calls += 1;
+        }
+        pub fn onQueryEnd(self: *@This(), _: html.QueryInstrumentationStats) void {
+            self.query_end_calls += 1;
+        }
+    };
+
+    var doc = Document.init(std.testing.allocator);
+    defer doc.deinit();
+    var hooks: Hooks = .{};
+
+    var input = "<div><span id='x'></span></div>".*;
+    try html.parseWithHooks(&doc, &input, .{}, &hooks);
+    _ = try html.queryOneRuntimeWithHooks(&doc, "span#x", &hooks);
+
+    try std.testing.expectEqual(@as(usize, 1), hooks.parse_start_calls);
+    try std.testing.expectEqual(@as(usize, 1), hooks.parse_end_calls);
+    try std.testing.expectEqual(@as(usize, 1), hooks.query_start_calls);
+    try std.testing.expectEqual(@as(usize, 1), hooks.query_end_calls);
+}

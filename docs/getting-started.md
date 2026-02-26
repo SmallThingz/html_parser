@@ -49,6 +49,26 @@ _ = node;
 
 Source of truth: `examples/runtime_selector.zig` and `examples/compiled_selector.zig`.
 
+## Debug Diagnostics and Hooks
+
+Selector mismatch diagnostics:
+
+```zig
+var report: html.QueryDebugReport = .{};
+const node = try doc.queryOneRuntimeDebug("a[href^=https]", &report);
+_ = node;
+```
+
+Instrumentation wrappers:
+
+```zig
+var hooks = Hooks{};
+try html.parseWithHooks(&doc, &input, .{}, &hooks);
+_ = try html.queryOneRuntimeWithHooks(&doc, "a.primary", &hooks);
+```
+
+Source of truth: `examples/debug_query_report.zig` and `examples/instrumentation_hooks.zig`.
+
 ## Parse Options
 
 ```zig
