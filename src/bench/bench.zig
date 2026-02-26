@@ -228,7 +228,7 @@ pub fn main() !void {
 
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-match")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryMatch(args[2], args[3], iterations, .strictest);
+        const total_ns = try runQueryMatch(args[2], args[3], iterations, .fastest);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -243,7 +243,7 @@ pub fn main() !void {
 
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-compiled")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryCompiled(args[2], args[3], iterations, .strictest);
+        const total_ns = try runQueryCompiled(args[2], args[3], iterations, .fastest);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -273,6 +273,6 @@ pub fn main() !void {
     }
 
     const iterations = try std.fmt.parseInt(usize, args[2], 10);
-    const total_ns = try runParseFile(args[1], iterations, .strictest);
+    const total_ns = try runParseFile(args[1], iterations, .fastest);
     std.debug.print("{d}\n", .{total_ns});
 }

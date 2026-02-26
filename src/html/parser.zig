@@ -89,7 +89,16 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             const start = self.i;
             self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
-            if (opts.drop_whitespace_text_nodes and isAllAsciiWhitespace(self.input[start..self.i])) return;
+
+            if (opts.drop_whitespace_text_nodes) {
+                const text = self.input[start..self.i];
+                if (tables.WhitespaceTable[text[0]] and
+                    tables.WhitespaceTable[text[text.len - 1]] and
+                    isAllAsciiWhitespace(text))
+                {
+                    return;
+                }
+            }
 
             const parent_idx = self.currentParent();
             const node_idx = try self.appendNode(.text, parent_idx);
@@ -131,7 +140,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             const tag_name = self.input[name_start..self.i];
             const tag_name_hash = if (EnableIncrementalTagHash) tag_hash_acc.value() else tags.hashBytes(tag_name);
 
-            if (tags.mayTriggerImplicitCloseHash(tag_name, tag_name_hash)) {
+            if (self.doc.parse_stack.items.len > 1 and tags.mayTriggerImplicitCloseHash(tag_name, tag_name_hash)) {
                 self.applyImplicitClosures(tag_name, tag_name_hash);
             }
 
@@ -204,9 +213,10 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             node.attr_bytes.end = @intCast(attr_bytes_end);
 
-            const self_close = explicit_self_close or tags.isVoidTagHash(tag_name, tag_name_hash);
+            const self_close = explicit_self_close or
+                (tag_name.len <= 6 and tags.isVoidTagHash(tag_name, tag_name_hash));
 
-            if (!self_close and tags.isRawTextTagHash(tag_name, tag_name_hash)) {
+            if (!self_close and tag_name.len >= 5 and tag_name.len <= 6 and tags.isRawTextTagHash(tag_name, tag_name_hash)) {
                 // Raw-text elements are consumed as plain text until an explicit
                 // matching close tag candidate is found.
                 const content_start = self.i;
@@ -367,6 +377,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             while (self.doc.parse_stack.items.len > 1) {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
+                if (!tags.isImplicitCloseSourceHash(top.tag_hash)) break;
                 if (!tags.shouldImplicitlyCloseHash(top.name.slice(self.input), top.tag_hash, new_tag, new_tag_hash)) break;
 
                 _ = self.doc.parse_stack.pop();

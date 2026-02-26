@@ -206,8 +206,8 @@ pub const Document = struct {
     child_indexes: std.ArrayListUnmanaged(u32) = .{},
     parse_stack: std.ArrayListUnmanaged(u32) = .{},
 
-    query_one_arena: std.heap.ArenaAllocator,
-    query_all_arena: std.heap.ArenaAllocator,
+    query_one_arena: ?std.heap.ArenaAllocator = null,
+    query_all_arena: ?std.heap.ArenaAllocator = null,
     query_all_generation: u64 = 1,
     // One-entry selector caches avoid recompiling hot repeated runtime selectors.
     query_one_cached_selector: []const u8 = "",
@@ -230,8 +230,6 @@ pub const Document = struct {
     pub fn init(allocator: std.mem.Allocator) Document {
         return .{
             .allocator = allocator,
-            .query_one_arena = std.heap.ArenaAllocator.init(allocator),
-            .query_all_arena = std.heap.ArenaAllocator.init(allocator),
         };
     }
 
@@ -242,8 +240,8 @@ pub const Document = struct {
         self.query_accel_id_map.deinit(self.allocator);
         self.query_accel_tag_entries.deinit(self.allocator);
         self.query_accel_tag_nodes.deinit(self.allocator);
-        self.query_one_arena.deinit();
-        self.query_all_arena.deinit();
+        if (self.query_one_arena) |*arena| arena.deinit();
+        if (self.query_all_arena) |*arena| arena.deinit();
     }
 
     pub fn clear(noalias self: *Document) void {
@@ -251,8 +249,8 @@ pub const Document = struct {
         self.child_indexes.clearRetainingCapacity();
         self.parse_stack.clearRetainingCapacity();
         self.child_views_ready = false;
-        _ = self.query_one_arena.reset(.retain_capacity);
-        _ = self.query_all_arena.reset(.retain_capacity);
+        if (self.query_one_arena) |*arena| _ = arena.reset(.retain_capacity);
+        if (self.query_all_arena) |*arena| _ = arena.reset(.retain_capacity);
         self.invalidateRuntimeSelectorCaches();
         self.resetQueryAccel();
         self.query_all_generation +%= 1;
@@ -373,8 +371,9 @@ pub const Document = struct {
             return self.query_one_cached_compiled.?;
         }
 
-        _ = self.query_one_arena.reset(.retain_capacity);
-        const sel = try ast.Selector.compileRuntime(self.query_one_arena.allocator(), selector);
+        const arena = self.ensureQueryOneArena();
+        _ = arena.reset(.retain_capacity);
+        const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
         self.query_one_cached_selector = sel.source;
         self.query_one_cached_compiled = sel;
         self.query_one_cache_valid = true;
@@ -386,12 +385,27 @@ pub const Document = struct {
             return self.query_all_cached_compiled.?;
         }
 
-        _ = self.query_all_arena.reset(.retain_capacity);
-        const sel = try ast.Selector.compileRuntime(self.query_all_arena.allocator(), selector);
+        const arena = self.ensureQueryAllArena();
+        _ = arena.reset(.retain_capacity);
+        const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
         self.query_all_cached_selector = sel.source;
         self.query_all_cached_compiled = sel;
         self.query_all_cache_valid = true;
         return sel;
+    }
+
+    fn ensureQueryOneArena(noalias self: *Document) *std.heap.ArenaAllocator {
+        if (self.query_one_arena == null) {
+            self.query_one_arena = std.heap.ArenaAllocator.init(self.allocator);
+        }
+        return &self.query_one_arena.?;
+    }
+
+    fn ensureQueryAllArena(noalias self: *Document) *std.heap.ArenaAllocator {
+        if (self.query_all_arena == null) {
+            self.query_all_arena = std.heap.ArenaAllocator.init(self.allocator);
+        }
+        return &self.query_all_arena.?;
     }
 
     fn resetQueryAccel(self: *Document) void {

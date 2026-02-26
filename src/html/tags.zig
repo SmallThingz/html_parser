@@ -203,6 +203,22 @@ pub fn mayTriggerImplicitCloseHash(new_tag: []const u8, new_hash: TagHashValue) 
     }
 }
 
+pub fn isImplicitCloseSourceHash(open_hash: TagHashValue) bool {
+    return switch (open_hash) {
+        HASH_LI,
+        HASH_P,
+        HASH_DT,
+        HASH_DD,
+        HASH_OPTION,
+        HASH_TR,
+        HASH_TD,
+        HASH_TH,
+        HASH_HEAD,
+        => true,
+        else => false,
+    };
+}
+
 pub fn shouldImplicitlyCloseHash(open_tag: []const u8, open_hash: TagHashValue, new_tag: []const u8, new_hash: TagHashValue) bool {
     if (open_hash != InvalidTagHash and new_hash != InvalidTagHash) {
         switch (open_hash) {
