@@ -16,6 +16,8 @@ const repeats: usize = 5;
 const StableParseMinRatio: f64 = 0.99;
 const StableQueryMinRatio: f64 = 0.99;
 const RegressionConfirmRuns: usize = 3;
+const ReadmeBenchmarkStartMarker = "<!-- BENCHMARK_SNAPSHOT:START -->";
+const ReadmeBenchmarkEndMarker = "<!-- BENCHMARK_SNAPSHOT:END -->";
 
 const ParserCapability = struct {
     parser: []const u8,
@@ -288,6 +290,27 @@ const GateRow = struct {
     pass: bool,
 };
 
+const ReadmeParseResult = struct {
+    parser: []const u8,
+    fixture: []const u8,
+    throughput_mb_s: f64,
+};
+
+const ReadmeQueryResult = struct {
+    parser: []const u8,
+    case: []const u8,
+    ops_s: f64,
+    ns_per_op: f64,
+};
+
+const ReadmeBenchSnapshot = struct {
+    profile: []const u8,
+    parse_results: []const ReadmeParseResult,
+    query_parse_results: []const ReadmeQueryResult,
+    query_match_results: []const ReadmeQueryResult,
+    query_compiled_results: []const ReadmeQueryResult,
+};
+
 fn runnerCmdParse(alloc: std.mem.Allocator, parser_name: []const u8, fixture: []const u8, iterations: usize) ![]const []const u8 {
     const iter_s = try std.fmt.allocPrint(alloc, "{d}", .{iterations});
     if (std.mem.eql(u8, parser_name, "ours-strictest")) {
@@ -475,6 +498,172 @@ fn findParseThroughput(rows: []const ParseResult, parser_name: []const u8, fixtu
         }
     }
     return null;
+}
+
+fn findReadmeParseThroughput(rows: []const ReadmeParseResult, parser_name: []const u8, fixture_name: []const u8) ?f64 {
+    for (rows) |row| {
+        if (std.mem.eql(u8, row.parser, parser_name) and std.mem.eql(u8, row.fixture, fixture_name)) {
+            return row.throughput_mb_s;
+        }
+    }
+    return null;
+}
+
+fn findReadmeQuery(rows: []const ReadmeQueryResult, parser_name: []const u8, case_name: []const u8) ?ReadmeQueryResult {
+    for (rows) |row| {
+        if (std.mem.eql(u8, row.parser, parser_name) and std.mem.eql(u8, row.case, case_name)) return row;
+    }
+    return null;
+}
+
+fn appendUniqueString(list: *std.ArrayList([]const u8), alloc: std.mem.Allocator, value: []const u8) !void {
+    for (list.items) |it| {
+        if (std.mem.eql(u8, it, value)) return;
+    }
+    try list.append(alloc, value);
+}
+
+fn writeMaybeF64(w: anytype, value: ?f64) !void {
+    if (value) |v| {
+        try w.print("{d:.2}", .{v});
+    } else {
+        try w.writeAll("-");
+    }
+}
+
+fn renderReadmeBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBenchSnapshot) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    errdefer out.deinit(alloc);
+    const w = out.writer(alloc);
+
+    var fixtures = std.ArrayList([]const u8).empty;
+    defer fixtures.deinit(alloc);
+    for (snap.parse_results) |row| {
+        try appendUniqueString(&fixtures, alloc, row.fixture);
+    }
+
+    var query_match_cases = std.ArrayList([]const u8).empty;
+    defer query_match_cases.deinit(alloc);
+    for (snap.query_match_results) |row| {
+        try appendUniqueString(&query_match_cases, alloc, row.case);
+    }
+
+    var query_parse_cases = std.ArrayList([]const u8).empty;
+    defer query_parse_cases.deinit(alloc);
+    for (snap.query_parse_results) |row| {
+        try appendUniqueString(&query_parse_cases, alloc, row.case);
+    }
+
+    try w.print("Source: `bench/results/latest.json` (`{s}` profile).\n\n", .{snap.profile});
+
+    try w.writeAll("#### Parse Throughput Comparison (MB/s)\n\n");
+    try w.writeAll("| Fixture | ours-fastest | ours-strictest | lol-html | lexbor |\n");
+    try w.writeAll("|---|---:|---:|---:|---:|\n");
+    for (fixtures.items) |fixture| {
+        try w.print("| `{s}` | ", .{fixture});
+        try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "ours-fastest", fixture));
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "ours-strictest", fixture));
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "lol-html", fixture));
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "lexbor", fixture));
+        try w.writeAll(" |\n");
+    }
+
+    try w.writeAll("\n#### Query Match Throughput (ours)\n\n");
+    try w.writeAll("| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |\n");
+    try w.writeAll("|---|---:|---:|---:|---:|\n");
+    for (query_match_cases.items) |case_name| {
+        const strictest = findReadmeQuery(snap.query_match_results, "ours-strictest", case_name);
+        const fastest = findReadmeQuery(snap.query_match_results, "ours-fastest", case_name);
+        try w.print("| `{s}` | ", .{case_name});
+        try writeMaybeF64(w, if (strictest) |s| s.ops_s else null);
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, if (strictest) |s| s.ns_per_op else null);
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, if (fastest) |s| s.ops_s else null);
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, if (fastest) |s| s.ns_per_op else null);
+        try w.writeAll(" |\n");
+    }
+
+    try w.writeAll("\n#### Cached Query Throughput (ours)\n\n");
+    try w.writeAll("| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |\n");
+    try w.writeAll("|---|---:|---:|---:|---:|\n");
+    for (query_match_cases.items) |case_name| {
+        const strictest = findReadmeQuery(snap.query_compiled_results, "ours-strictest", case_name);
+        const fastest = findReadmeQuery(snap.query_compiled_results, "ours-fastest", case_name);
+        try w.print("| `{s}` | ", .{case_name});
+        try writeMaybeF64(w, if (strictest) |s| s.ops_s else null);
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, if (strictest) |s| s.ns_per_op else null);
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, if (fastest) |s| s.ops_s else null);
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, if (fastest) |s| s.ns_per_op else null);
+        try w.writeAll(" |\n");
+    }
+
+    try w.writeAll("\n#### Query Parse Throughput (ours)\n\n");
+    try w.writeAll("| Selector case | Ops/s | ns/op |\n");
+    try w.writeAll("|---|---:|---:|\n");
+    for (query_parse_cases.items) |case_name| {
+        const ours = findReadmeQuery(snap.query_parse_results, "ours", case_name) orelse
+            findReadmeQuery(snap.query_parse_results, "ours-strictest", case_name) orelse
+            findReadmeQuery(snap.query_parse_results, "ours-fastest", case_name);
+        try w.print("| `{s}` | ", .{case_name});
+        try writeMaybeF64(w, if (ours) |r| r.ops_s else null);
+        try w.writeAll(" | ");
+        try writeMaybeF64(w, if (ours) |r| r.ns_per_op else null);
+        try w.writeAll(" |\n");
+    }
+
+    try w.writeAll("\nFor full per-parser, per-fixture tables and gate output:\n");
+    try w.writeAll("- `bench/results/latest.md`\n");
+    try w.writeAll("- `bench/results/latest.json`\n");
+
+    return out.toOwnedSlice(alloc);
+}
+
+fn updateReadmeBenchmarkSnapshot(alloc: std.mem.Allocator) !void {
+    const latest_json = try common.readFileAlloc(alloc, "bench/results/latest.json");
+    defer alloc.free(latest_json);
+
+    const parsed = try std.json.parseFromSlice(ReadmeBenchSnapshot, alloc, latest_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    const replacement = try renderReadmeBenchmarkSection(alloc, parsed.value);
+    defer alloc.free(replacement);
+
+    const readme = try common.readFileAlloc(alloc, "README.md");
+    defer alloc.free(readme);
+
+    const start = std.mem.indexOf(u8, readme, ReadmeBenchmarkStartMarker) orelse return error.ReadmeBenchMarkersMissing;
+    const after_start = start + ReadmeBenchmarkStartMarker.len;
+    const end = std.mem.indexOfPos(u8, readme, after_start, ReadmeBenchmarkEndMarker) orelse return error.ReadmeBenchMarkersMissing;
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(alloc);
+    try out.appendSlice(alloc, readme[0..after_start]);
+    try out.appendSlice(alloc, "\n\n");
+    try out.appendSlice(alloc, replacement);
+    if (replacement.len == 0 or replacement[replacement.len - 1] != '\n') {
+        try out.append(alloc, '\n');
+    }
+    if (readme[end - 1] != '\n') {
+        try out.append(alloc, '\n');
+    }
+    try out.appendSlice(alloc, readme[end..]);
+
+    if (!std.mem.eql(u8, out.items, readme)) {
+        try common.writeFile("README.md", out.items);
+        std.debug.print("wrote README.md benchmark snapshot\n", .{});
+    } else {
+        std.debug.print("README.md benchmark snapshot already up-to-date\n", .{});
+    }
 }
 
 fn writeMarkdown(
@@ -1015,6 +1204,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     const md = try writeMarkdown(alloc, profile.name, parse_results.items, query_parse_results.items, query_match_results.items, query_compiled_results.items, gate_rows);
     defer alloc.free(md);
     try common.writeFile("bench/results/latest.md", md);
+    try updateReadmeBenchmarkSnapshot(alloc);
 
     // Optional baseline behavior.
     const baseline_default = try std.fmt.allocPrint(alloc, "bench/results/baseline_{s}.json", .{profile.name});
@@ -1948,6 +2138,7 @@ fn usage() void {
         \\  htmlparser-tools setup-parsers
         \\  htmlparser-tools setup-fixtures [--refresh]
         \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--baseline path] [--write-baseline]
+        \\  htmlparser-tools sync-readme-bench
         \\  htmlparser-tools run-external-suites [--mode strictest|fastest|both] [--max-html5lib-cases N] [--json-out path]
         \\  htmlparser-tools docs-check
         \\  htmlparser-tools examples-check
@@ -1985,6 +2176,11 @@ pub fn main() !void {
     }
     if (std.mem.eql(u8, cmd, "run-benchmarks")) {
         try runBenchmarks(alloc, rest);
+        return;
+    }
+    if (std.mem.eql(u8, cmd, "sync-readme-bench")) {
+        if (rest.len != 0) return error.InvalidArgument;
+        try updateReadmeBenchmarkSnapshot(alloc);
         return;
     }
     if (std.mem.eql(u8, cmd, "run-external-suites")) {

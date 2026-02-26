@@ -177,11 +177,15 @@ Runs the benchmark suite and produces Markdown/JSON output in `bench/results/`:
 zig build bench-compare
 ```
 
+`run-benchmarks` now auto-refreshes the snapshot block below from `bench/results/latest.json`.
+
 The benchmark harness includes a “fastest vs lol-html” parse-throughput gate in the `stable` profile. See `bench/README.md` for details.
 
-### Latest Stable Snapshot
+### Latest Benchmark Snapshot
 
-Source: `bench/results/latest.md` (`stable` profile).
+<!-- BENCHMARK_SNAPSHOT:START -->
+
+Source: `bench/results/latest.json` (`stable` profile).
 
 #### Parse Throughput Comparison (MB/s)
 
@@ -193,24 +197,32 @@ Source: `bench/results/latest.md` (`stable` profile).
 | `w3-html52.html` | 973.60 | 884.27 | 747.58 | 199.74 |
 | `hn.html` | 1429.47 | 1280.50 | 864.01 | 225.05 |
 
-#### Query Throughput (ours only)
+#### Query Match Throughput (ours)
 
-| Case | Runtime query-match (ops/s) | Runtime query-match (ns/op) | Compiled query (ops/s) | Compiled query (ns/op) |
+| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
 |---|---:|---:|---:|---:|
-| `attr-heavy-button` | 145,812,129.82 | 6.86 | 214,695,936.88 | 4.66 |
-| `attr-heavy-nav` | 144,100,316.88 | 6.94 | 211,891,791.10 | 4.72 |
+| `attr-heavy-button` | 145652845.18 | 6.87 | 145812129.82 | 6.86 |
+| `attr-heavy-nav` | 143301582.48 | 6.98 | 144100316.88 | 6.94 |
+
+#### Cached Query Throughput (ours)
+
+| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
+|---|---:|---:|---:|---:|
+| `attr-heavy-button` | 214695936.88 | 4.66 | 212517267.03 | 4.71 |
+| `attr-heavy-nav` | 211891791.10 | 4.72 | 203910597.44 | 4.90 |
 
 #### Query Parse Throughput (ours)
 
 | Selector case | Ops/s | ns/op |
 |---|---:|---:|
-| `simple` | 19,273,218.49 | 51.89 |
-| `complex` | 6,549,192.38 | 152.69 |
-| `grouped` | 7,544,814.12 | 132.54 |
+| `simple` | 19273218.49 | 51.89 |
+| `complex` | 6549192.38 | 152.69 |
+| `grouped` | 7544814.12 | 132.54 |
 
 For full per-parser, per-fixture tables and gate output:
 - `bench/results/latest.md`
 - `bench/results/latest.json`
+<!-- BENCHMARK_SNAPSHOT:END -->
 
 ## Conformance
 

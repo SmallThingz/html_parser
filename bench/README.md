@@ -48,6 +48,8 @@ zig build tools -- run-benchmarks --profile stable
 zig build tools -- run-benchmarks --profile stable --write-baseline
 # compare against explicit baseline file
 zig build tools -- run-benchmarks --profile stable --baseline bench/results/baseline_stable.json
+# refresh README benchmark snapshot from existing latest.json
+zig build tools -- sync-readme-bench
 ```
 
 Or run the full setup + comparison from Zig build:
@@ -60,6 +62,8 @@ Results are written to:
 
 - `bench/results/latest.json`
 - `bench/results/latest.md`
+
+`run-benchmarks` also updates the `README.md` benchmark snapshot block from `bench/results/latest.json`.
 
 The benchmark output also includes a hard gate table:
 
