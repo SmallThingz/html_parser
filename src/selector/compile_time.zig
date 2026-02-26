@@ -19,8 +19,10 @@ pub const ComptimeAllocator = struct {
         if (!@inComptime()) return null;
         _ = ret_addr;
 
-        var allocation: [len]u8 align(alignment.toByteUnits()) = undefined;
-        return &allocation;
+        comptime {
+            var allocation: [len]u8 align(alignment.toByteUnits()) = undefined;
+            return &allocation;
+        }
     }
 
     pub fn resize(_: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
