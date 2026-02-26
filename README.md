@@ -179,6 +179,39 @@ zig build bench-compare
 
 The benchmark harness includes a “fastest vs lol-html” parse-throughput gate in the `stable` profile. See `bench/README.md` for details.
 
+### Latest Stable Snapshot
+
+Source: `bench/results/latest.md` (`stable` profile).
+
+#### Parse Throughput Comparison (MB/s)
+
+| Fixture | ours-fastest | ours-strictest | lol-html | lexbor |
+|---|---:|---:|---:|---:|
+| `rust-lang.html` | 2082.45 | 1982.18 | 1496.85 | 340.35 |
+| `wiki-html.html` | 1289.89 | 1120.64 | 1216.45 | 273.68 |
+| `mdn-html.html` | 2676.82 | 2528.35 | 1853.95 | 410.77 |
+| `w3-html52.html` | 973.60 | 884.27 | 747.58 | 199.74 |
+| `hn.html` | 1429.47 | 1280.50 | 864.01 | 225.05 |
+
+#### Query Throughput (ours only)
+
+| Case | Runtime query-match (ops/s) | Runtime query-match (ns/op) | Compiled query (ops/s) | Compiled query (ns/op) |
+|---|---:|---:|---:|---:|
+| `attr-heavy-button` | 145,812,129.82 | 6.86 | 214,695,936.88 | 4.66 |
+| `attr-heavy-nav` | 144,100,316.88 | 6.94 | 211,891,791.10 | 4.72 |
+
+#### Query Parse Throughput (ours)
+
+| Selector case | Ops/s | ns/op |
+|---|---:|---:|
+| `simple` | 19,273,218.49 | 51.89 |
+| `complex` | 6,549,192.38 | 152.69 |
+| `grouped` | 7,544,814.12 | 132.54 |
+
+For full per-parser, per-fixture tables and gate output:
+- `bench/results/latest.md`
+- `bench/results/latest.json`
+
 ## Conformance
 
 Runs known-good external selector and parser suites (both `strictest` and `fastest` modes):
