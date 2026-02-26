@@ -75,12 +75,6 @@ test "compile-time parser" {
     try std.testing.expect(sel.compounds[2].combinator == .adjacent);
 }
 
-test "deinitRuntime is no-op for comptime selectors" {
-    var sel = comptime compileImpl("div.x");
-    sel.deinitRuntime(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 1), sel.groups.len);
-}
-
 test "compile-time parser covers all attribute operators" {
     const sel = comptime compileImpl("div[a][b=v][c^=x][d$=y][e*=z][f~=m][g|=en]");
     try std.testing.expectEqual(@as(usize, 1), sel.groups.len);

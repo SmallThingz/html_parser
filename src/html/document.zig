@@ -49,23 +49,15 @@ pub const Span = struct {
     }
 };
 
-pub const Node = struct {
-    doc: *Document,
-    index: u32,
+pub const NodeRaw = struct {
     kind: NodeType,
 
     name: Span = .{},
     tag_hash: tags.TagHashValue = 0,
     text: Span = .{},
 
-    open_start: u32 = 0,
-    open_end: u32 = 0,
-    close_start: u32 = 0,
-    close_end: u32 = 0,
-
     // In-place attribute byte range inside the opening tag.
-    attr_bytes_start: u32 = 0,
-    attr_bytes_end: u32 = 0,
+    attr_bytes: Span = .{},
 
     first_child: u32 = InvalidIndex,
     last_child: u32 = InvalidIndex,
@@ -77,82 +69,92 @@ pub const Node = struct {
     child_view_len: u32 = 0,
 
     subtree_end: u32 = 0,
+};
 
-    pub fn tagName(self: *const @This()) []const u8 {
-        return self.name.slice(self.doc.source);
+pub const Node = struct {
+    doc: *Document,
+    index: u32,
+
+    pub fn raw(self: @This()) *const NodeRaw {
+        return &self.doc.nodes.items[self.index];
     }
 
-    pub fn innerText(self: *const @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
+    pub fn tagName(self: @This()) []const u8 {
+        return self.raw().name.slice(self.doc.source);
+    }
+
+    pub fn innerText(self: @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
         return node_api.innerText(@This(), self, arena_alloc, .{});
     }
 
-    pub fn innerTextWithOptions(self: *const @This(), arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
+    pub fn innerTextWithOptions(self: @This(), arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
         return node_api.innerText(@This(), self, arena_alloc, opts);
     }
 
-    pub fn getAttributeValue(self: *const @This(), name: []const u8) ?[]const u8 {
+    pub fn getAttributeValue(self: @This(), name: []const u8) ?[]const u8 {
         return node_api.getAttributeValue(@This(), self, name);
     }
 
-    pub fn firstChild(self: *const @This()) ?*const @This() {
+    pub fn firstChild(self: @This()) ?@This() {
         return node_api.firstChild(@This(), self);
     }
 
-    pub fn lastChild(self: *const @This()) ?*const @This() {
+    pub fn lastChild(self: @This()) ?@This() {
         return node_api.lastChild(@This(), self);
     }
 
-    pub fn nextSibling(self: *const @This()) ?*const @This() {
+    pub fn nextSibling(self: @This()) ?@This() {
         return node_api.nextSibling(@This(), self);
     }
 
-    pub fn prevSibling(self: *const @This()) ?*const @This() {
+    pub fn prevSibling(self: @This()) ?@This() {
         return node_api.prevSibling(@This(), self);
     }
 
-    pub fn parentNode(self: *const @This()) ?*const @This() {
+    pub fn parentNode(self: @This()) ?@This() {
         return node_api.parentNode(@This(), self);
     }
 
-    pub fn children(self: *const @This()) []const *const @This() {
+    pub fn children(self: @This()) []const u32 {
         return node_api.children(@This(), self);
     }
 
-    pub fn queryOne(self: *const @This(), comptime selector: []const u8) ?*const @This() {
+    pub fn queryOne(self: @This(), comptime selector: []const u8) ?@This() {
         const sel = comptime ast.Selector.compile(selector);
         return self.queryOneCompiled(&sel);
     }
 
-    pub fn queryOneCompiled(self: *const @This(), sel: *const ast.Selector) ?*const @This() {
-        return matcher.queryOne(Document, @This(), self.doc, sel.*, self.index);
+    pub fn queryOneCompiled(self: @This(), sel: *const ast.Selector) ?@This() {
+        const idx = matcher.queryOneIndex(Document, self.doc, sel.*, self.index) orelse return null;
+        return self.doc.nodeAt(idx);
     }
 
-    pub fn queryOneRuntime(self: *const @This(), selector: []const u8) runtime_selector.Error!?*const @This() {
+    pub fn queryOneRuntime(self: @This(), selector: []const u8) runtime_selector.Error!?@This() {
         return self.doc.queryOneRuntimeFrom(selector, self.index);
     }
 
-    pub fn queryAll(self: *const @This(), comptime selector: []const u8) QueryIter {
+    pub fn queryAll(self: @This(), comptime selector: []const u8) QueryIter {
         const sel = comptime ast.Selector.compile(selector);
         return self.queryAllCompiled(&sel);
     }
 
-    pub fn queryAllCompiled(self: *const @This(), sel: *const ast.Selector) QueryIter {
+    pub fn queryAllCompiled(self: @This(), sel: *const ast.Selector) QueryIter {
         return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
     }
 
-    pub fn queryAllRuntime(self: *const @This(), selector: []const u8) runtime_selector.Error!QueryIter {
+    pub fn queryAllRuntime(self: @This(), selector: []const u8) runtime_selector.Error!QueryIter {
         return self.doc.queryAllRuntimeFrom(selector, self.index);
     }
 };
 
 pub const QueryIter = struct {
-    doc: *const Document,
+    doc: *Document,
     selector: ast.Selector,
     scope_root: u32 = InvalidIndex,
     next_index: u32 = 1,
     runtime_generation: u64 = 0,
 
-    pub fn next(self: *QueryIter) ?*const Node {
+    pub fn next(self: *QueryIter) ?Node {
         if (self.runtime_generation != 0 and self.runtime_generation != self.doc.query_all_generation) {
             return null;
         }
@@ -170,7 +172,7 @@ pub const QueryIter = struct {
 
             if (matcher.matchesSelectorAt(Document, self.doc, self.selector, idx, self.scope_root)) {
                 self.next_index += 1;
-                return node;
+                return self.doc.nodeAt(idx);
             }
         }
         return null;
@@ -184,8 +186,8 @@ pub const Document = struct {
     child_views_ready: bool = false,
     input_was_normalized: bool = true,
 
-    nodes: std.ArrayListUnmanaged(Node) = .{},
-    child_ptrs: std.ArrayListUnmanaged(*const Node) = .{},
+    nodes: std.ArrayListUnmanaged(NodeRaw) = .{},
+    child_indexes: std.ArrayListUnmanaged(u32) = .{},
     parse_stack: std.ArrayListUnmanaged(u32) = .{},
 
     query_one_arena: std.heap.ArenaAllocator,
@@ -209,7 +211,7 @@ pub const Document = struct {
 
     pub fn deinit(self: *Document) void {
         self.nodes.deinit(self.allocator);
-        self.child_ptrs.deinit(self.allocator);
+        self.child_indexes.deinit(self.allocator);
         self.parse_stack.deinit(self.allocator);
         self.query_one_arena.deinit();
         self.query_all_arena.deinit();
@@ -217,7 +219,7 @@ pub const Document = struct {
 
     pub fn clear(self: *Document) void {
         self.nodes.clearRetainingCapacity();
-        self.child_ptrs.clearRetainingCapacity();
+        self.child_indexes.clearRetainingCapacity();
         self.parse_stack.clearRetainingCapacity();
         self.child_views_ready = false;
         _ = self.query_one_arena.reset(.retain_capacity);
@@ -238,24 +240,26 @@ pub const Document = struct {
         }
     }
 
-    pub fn queryOne(self: *const Document, comptime selector: []const u8) ?*const Node {
+    pub fn queryOne(self: *const Document, comptime selector: []const u8) ?Node {
         const sel = comptime ast.Selector.compile(selector);
         return self.queryOneCompiled(&sel);
     }
 
-    pub fn queryOneCompiled(self: *const Document, sel: *const ast.Selector) ?*const Node {
-        return matcher.queryOne(Document, Node, self, sel.*, InvalidIndex);
+    pub fn queryOneCompiled(self: *const Document, sel: *const ast.Selector) ?Node {
+        const idx = matcher.queryOneIndex(Document, self, sel.*, InvalidIndex) orelse return null;
+        return self.nodeAt(idx);
     }
 
-    pub fn queryOneRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!?*const Node {
+    pub fn queryOneRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!?Node {
         return self.queryOneRuntimeFrom(selector, InvalidIndex);
     }
 
-    fn queryOneRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!?*const Node {
+    fn queryOneRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!?Node {
         const mut_self: *Document = @constCast(self);
         const sel = try mut_self.getOrCompileQueryOneSelector(selector);
         if (scope_root == InvalidIndex) return self.queryOneCompiled(&sel);
-        return matcher.queryOne(Document, Node, self, sel, scope_root);
+        const idx = matcher.queryOneIndex(Document, self, sel, scope_root) orelse return null;
+        return self.nodeAt(idx);
     }
 
     pub fn queryAll(self: *const Document, comptime selector: []const u8) QueryIter {
@@ -264,7 +268,7 @@ pub const Document = struct {
     }
 
     pub fn queryAllCompiled(self: *const Document, sel: *const ast.Selector) QueryIter {
-        return .{ .doc = self, .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
+        return .{ .doc = @constCast(self), .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
     }
 
     pub fn queryAllRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!QueryIter {
@@ -283,7 +287,7 @@ pub const Document = struct {
             self.queryAllCompiled(&sel)
         else
             QueryIter{
-                .doc = self,
+                .doc = @constCast(self),
                 .selector = sel,
                 .scope_root = scope_root,
                 .next_index = scope_root + 1,
@@ -292,33 +296,36 @@ pub const Document = struct {
         return out;
     }
 
-    pub fn html(self: *const Document) ?*const Node {
+    pub fn html(self: *const Document) ?Node {
         return self.findFirstTag("html");
     }
 
-    pub fn head(self: *const Document) ?*const Node {
+    pub fn head(self: *const Document) ?Node {
         return self.findFirstTag("head");
     }
 
-    pub fn body(self: *const Document) ?*const Node {
+    pub fn body(self: *const Document) ?Node {
         return self.findFirstTag("body");
     }
 
-    pub fn findFirstTag(self: *const Document, name: []const u8) ?*const Node {
+    pub fn findFirstTag(self: *const Document, name: []const u8) ?Node {
         var i: usize = 1;
         while (i < self.nodes.items.len) : (i += 1) {
             const n = &self.nodes.items[i];
             if (n.kind != .element) continue;
             if (self.input_was_normalized) {
-                if (std.mem.eql(u8, n.name.slice(self.source), name)) return n;
-            } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return n;
+                if (std.mem.eql(u8, n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
+            } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
         }
         return null;
     }
 
-    pub fn nodeAt(self: *const Document, idx: u32) ?*const Node {
+    pub fn nodeAt(self: *const Document, idx: u32) ?Node {
         if (idx == InvalidIndex or idx >= self.nodes.items.len) return null;
-        return &self.nodes.items[idx];
+        return .{
+            .doc = @constCast(self),
+            .index = idx,
+        };
     }
 
     fn invalidateRuntimeSelectorCaches(self: *Document) void {
@@ -365,19 +372,19 @@ pub const Document = struct {
 
     fn buildChildViews(self: *Document) !void {
         const alloc = self.allocator;
-        self.child_ptrs.clearRetainingCapacity();
-        const child_ptr_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
-        try self.child_ptrs.ensureTotalCapacity(alloc, child_ptr_count);
+        self.child_indexes.clearRetainingCapacity();
+        const child_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
+        try self.child_indexes.ensureTotalCapacity(alloc, child_count);
 
         var i: u32 = 0;
         while (i < self.nodes.items.len) : (i += 1) {
             var n = &self.nodes.items[i];
-            n.child_view_start = @intCast(self.child_ptrs.items.len);
+            n.child_view_start = @intCast(self.child_indexes.items.len);
             n.child_view_len = 0;
 
             var child = n.first_child;
             while (child != InvalidIndex) {
-                self.child_ptrs.appendAssumeCapacity(&self.nodes.items[child]);
+                self.child_indexes.appendAssumeCapacity(child);
                 n.child_view_len += 1;
                 child = self.nodes.items[child].next_sibling;
             }
@@ -388,6 +395,7 @@ pub const Document = struct {
 };
 
 fn assertNodeTypeLayouts() void {
+    _ = @sizeOf(NodeRaw);
     _ = @sizeOf(Node);
 }
 
@@ -430,7 +438,7 @@ fn expectDocQueryRuntime(doc: *const Document, selector: []const u8, expected_id
     }
 }
 
-fn expectNodeQueryComptime(scope: *const Node, comptime selector: []const u8, expected_ids: []const []const u8) !void {
+fn expectNodeQueryComptime(scope: Node, comptime selector: []const u8, expected_ids: []const []const u8) !void {
     var it = scope.queryAll(selector);
     try expectIterIds(&it, expected_ids);
 
@@ -444,7 +452,7 @@ fn expectNodeQueryComptime(scope: *const Node, comptime selector: []const u8, ex
     }
 }
 
-fn expectNodeQueryRuntime(scope: *const Node, selector: []const u8, expected_ids: []const []const u8) !void {
+fn expectNodeQueryRuntime(scope: Node, selector: []const u8, expected_ids: []const []const u8) !void {
     var it = try scope.queryAllRuntime(selector);
     try expectIterIds(&it, expected_ids);
 
@@ -456,6 +464,12 @@ fn expectNodeQueryRuntime(scope: *const Node, selector: []const u8, expected_ids
         const id = node.getAttributeValue("id") orelse return error.TestUnexpectedResult;
         try std.testing.expectEqualStrings(expected_ids[0], id);
     }
+}
+
+fn parseViaMove(alloc: std.mem.Allocator, input: []u8) !Document {
+    var doc = Document.init(alloc);
+    try doc.parse(input, .{});
+    return doc;
 }
 
 const selector_fixture_html =
@@ -533,15 +547,14 @@ test "raw text element metadata remains valid after child append growth" {
     try doc.parse(&html, .{});
 
     const script = doc.queryOne("script") orelse return error.TestUnexpectedResult;
-    try std.testing.expect(script.close_start > script.open_end);
-    try std.testing.expect(script.subtree_end > script.index);
+    try std.testing.expect(script.raw().subtree_end > script.index);
 
     const text_node = doc.nodes.items[script.index + 1];
     try std.testing.expect(text_node.kind == .text);
     try std.testing.expectEqualStrings("const x = 1;", text_node.text.slice(doc.source));
 
     const div = doc.queryOne("div") orelse return error.TestUnexpectedResult;
-    try std.testing.expect(div.index > script.subtree_end);
+    try std.testing.expect(div.index > script.raw().subtree_end);
 }
 
 test "query results matrix (comptime selectors)" {
@@ -774,7 +787,7 @@ test "inplace attr lazy parse updates state markers and supports selector-trigge
     try std.testing.expectEqualStrings("&z", q);
     try std.testing.expectEqualStrings("a&b", n);
 
-    const span = doc.source[node.attr_bytes_start..node.attr_bytes_end];
+    const span = doc.source[node.raw().attr_bytes.start..node.raw().attr_bytes.end];
     const q_marker = [_]u8{ 'q', 0, 0 };
     const q_pos = std.mem.indexOf(u8, span, &q_marker) orelse return error.TestUnexpectedResult;
     try std.testing.expect(q_pos < span.len);
@@ -801,7 +814,7 @@ test "attribute matching short-circuits and does not parse later attrs on early 
     try std.testing.expect((try doc.queryOneRuntime("div[href^=https][class*=button]")) == null);
 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
-    const span = doc.source[node.attr_bytes_start..node.attr_bytes_end];
+    const span = doc.source[node.raw().attr_bytes.start..node.raw().attr_bytes.end];
     const class_pos = std.mem.indexOf(u8, span, "class") orelse return error.TestUnexpectedResult;
     const marker_pos = class_pos + "class".len;
     try std.testing.expect(marker_pos < span.len);
@@ -905,7 +918,7 @@ test "raw-text close handles mixed-case end tag and embedded < bytes" {
 
     const script = doc.queryOne("script") orelse return error.TestUnexpectedResult;
     const after = doc.queryOne("div#after") orelse return error.TestUnexpectedResult;
-    try std.testing.expect(script.close_end <= after.open_start);
+    try std.testing.expect(script.raw().subtree_end < after.index);
 }
 
 test "raw-text unterminated tail keeps element open to end of input" {
@@ -917,8 +930,8 @@ test "raw-text unterminated tail keeps element open to end of input" {
     try doc.parse(&html, .{});
 
     const script = doc.queryOne("script") orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(u32, @intCast(html.len)), script.close_start);
-    try std.testing.expectEqual(@as(u32, @intCast(html.len)), script.close_end);
+    try std.testing.expectEqual(@as(u32, @intCast(doc.nodes.items.len - 1)), script.raw().subtree_end);
+    try std.testing.expect((doc.queryOne("div")) == null);
 }
 
 test "optional-close p/li/td-th/dt-dd/head-body preserve expected query semantics" {
@@ -996,7 +1009,12 @@ test "runtime selector supports nth-child shorthand variants" {
     var html = "<div id='pseudos'><div></div><div></div><div></div><div></div><a></a><div></div><div></div></div>".*;
     try doc.parse(&html, .{});
 
-    try std.testing.expectEqual(@as(?*const Node, doc.queryOne("#pseudos :nth-child(odd)")), (try doc.queryOneRuntime("#pseudos :nth-child(odd)")));
+    const comptime_one = doc.queryOne("#pseudos :nth-child(odd)");
+    const runtime_one = try doc.queryOneRuntime("#pseudos :nth-child(odd)");
+    try std.testing.expect((comptime_one == null) == (runtime_one == null));
+    if (comptime_one) |a| {
+        try std.testing.expectEqual(a.index, runtime_one.?.index);
+    }
 
     var c_odd: usize = 0;
     var it_odd = try doc.queryAllRuntime("#pseudos :nth-child(odd)");
@@ -1147,14 +1165,26 @@ test "children() lazily builds child views when eager child views are disabled" 
     try std.testing.expect(!doc.child_views_ready);
 
     const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
-    const before_len = doc.child_ptrs.items.len;
+    const before_len = doc.child_indexes.items.len;
     const kids = root.children();
     try std.testing.expectEqual(@as(usize, 2), kids.len);
     try std.testing.expect(doc.child_views_ready);
-    try std.testing.expect(doc.child_ptrs.items.len >= before_len);
-    const after_first = doc.child_ptrs.items.len;
+    try std.testing.expect(doc.child_indexes.items.len >= before_len);
+    const after_first = doc.child_indexes.items.len;
 
     const again = root.children();
     try std.testing.expectEqual(@as(usize, 2), again.len);
-    try std.testing.expectEqual(after_first, doc.child_ptrs.items.len);
+    try std.testing.expectEqual(after_first, doc.child_indexes.items.len);
+}
+
+test "moved document keeps node-scoped queries and navigation valid" {
+    const alloc = std.testing.allocator;
+    var html = "<root><div id='a'><span id='b'></span></div></root>".*;
+    var doc = try parseViaMove(alloc, &html);
+    defer doc.deinit();
+
+    const a = doc.queryOne("#a") orelse return error.TestUnexpectedResult;
+    const b = a.queryOne("span#b") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("span", b.tagName());
+    try std.testing.expectEqual(@as(u32, a.index), b.parentNode().?.index);
 }

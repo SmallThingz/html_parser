@@ -9,7 +9,7 @@ const MaxProbeEntries: usize = 24;
 const HashId: u32 = hashIgnoreCaseAscii("id");
 const HashClass: u32 = hashIgnoreCaseAscii("class");
 
-pub fn queryOne(comptime Doc: type, comptime NodeT: type, doc: *const Doc, selector: ast.Selector, scope_root: u32) ?*const NodeT {
+pub fn queryOneIndex(comptime Doc: type, doc: *const Doc, selector: ast.Selector, scope_root: u32) ?u32 {
     const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
     const end_excl: u32 = if (scope_root == InvalidIndex)
         @as(u32, @intCast(doc.nodes.items.len))
@@ -18,11 +18,10 @@ pub fn queryOne(comptime Doc: type, comptime NodeT: type, doc: *const Doc, selec
 
     var i = start;
     while (i < end_excl and i < doc.nodes.items.len) : (i += 1) {
-        const node: *const NodeT = &doc.nodes.items[i];
+        const node = &doc.nodes.items[i];
         if (node.kind != .element) continue;
-        if (matchesSelectorAt(Doc, doc, selector, i, scope_root)) return node;
+        if (matchesSelectorAt(Doc, doc, selector, i, scope_root)) return i;
     }
-
     return null;
 }
 
@@ -273,12 +272,7 @@ fn attrValue(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []con
 
 fn attrValueByHash(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []const u8, name_hash: u32) ?[]const u8 {
     if (findProbeEntry(probe, name, name_hash, doc.input_was_normalized)) |idx| {
-        var entry = &probe.entries[idx];
-        if (!entry.resolved) {
-            entry.value = attr_inline.getAttrValue(doc, node, name);
-            entry.resolved = true;
-        }
-        return entry.value;
+        return probe.entries[idx].value;
     }
 
     if (!probe.overflow and probe.count < MaxProbeEntries) {
@@ -287,7 +281,6 @@ fn attrValueByHash(doc: anytype, node: anytype, noalias probe: *AttrProbe, name:
         probe.entries[idx] = .{
             .name = name,
             .name_hash = name_hash,
-            .resolved = true,
             .value = value,
         };
         probe.count += 1;
@@ -303,7 +296,6 @@ fn attrValueByHash(doc: anytype, node: anytype, noalias probe: *AttrProbe, name:
 const AttrProbeEntry = struct {
     name: []const u8 = "",
     name_hash: u32 = 0,
-    resolved: bool = false,
     value: ?[]const u8 = null,
 };
 

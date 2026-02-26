@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const Document = @import("html/document.zig").Document;
 pub const Node = @import("html/document.zig").Node;
+pub const NodeRaw = @import("html/document.zig").NodeRaw;
 pub const ParseOptions = @import("html/document.zig").ParseOptions;
 pub const TextOptions = @import("html/document.zig").TextOptions;
 pub const Selector = @import("selector/ast.zig").Selector;

@@ -120,7 +120,6 @@ pub const Group = extern struct {
 
 pub const Selector = struct {
     source: []const u8,
-    owns_source: bool = false,
     groups: []const Group,
     compounds: []const Compound,
     classes: []const Range,
@@ -136,8 +135,7 @@ pub const Selector = struct {
         return @import("runtime.zig").compileRuntimeImpl(allocator, source);
     }
 
-    pub fn deinitRuntime(self: *@This(), allocator: std.mem.Allocator) void {
-        if (!self.owns_source) return;
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         allocator.free(@constCast(self.source));
         allocator.free(self.groups);
         allocator.free(self.compounds);

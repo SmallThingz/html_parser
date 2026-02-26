@@ -34,8 +34,8 @@ pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const 
     const lookup_hash = if (lookup_kind == .generic) hashIgnoreCaseAscii(name) else 0;
     const input_normalized = mut_doc.input_was_normalized;
 
-    var i: usize = node.attr_bytes_start;
-    const end: usize = node.attr_bytes_end;
+    var i: usize = node.attr_bytes.start;
+    const end: usize = node.attr_bytes.end;
     if (i >= end) return null;
 
     while (i < end) {
@@ -99,8 +99,8 @@ pub fn collectSelectedValues(doc_ptr: anytype, node: anytype, selected_names: []
     if (selected_names.len == 0) return;
     if (selected_names.len != out_values.len) return;
 
-    var i: usize = node.attr_bytes_start;
-    const end: usize = node.attr_bytes_end;
+    var i: usize = node.attr_bytes.start;
+    const end: usize = node.attr_bytes.end;
     var remaining: usize = 0;
     for (out_values) |v| {
         if (v == null) remaining += 1;

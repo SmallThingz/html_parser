@@ -31,8 +31,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             try self.reserveCapacities();
 
             try self.doc.nodes.append(alloc, .{
-                .doc = self.doc,
-                .index = 0,
                 .kind = .document,
                 .subtree_end = 0,
             });
@@ -63,12 +61,9 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 }
             }
 
-            const end: u32 = @intCast(self.input.len);
             while (self.doc.parse_stack.items.len > 1) {
                 const idx = self.doc.parse_stack.pop().?;
                 var node = &self.doc.nodes.items[idx];
-                node.close_start = end;
-                node.close_end = end;
                 node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
             }
             self.doc.nodes.items[0].subtree_end = @intCast(self.doc.nodes.items.len - 1);
@@ -106,7 +101,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         }
 
         fn parseOpeningTag(self: *Self) !void {
-            const open_start = self.i;
             self.i += 1; // <
             self.skipWs();
 
@@ -127,7 +121,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const tag_name_hash = tags.hashBytes(tag_name);
 
             if (tags.mayTriggerImplicitCloseHash(tag_name, tag_name_hash)) {
-                self.applyImplicitClosures(tag_name, tag_name_hash, @intCast(open_start));
+                self.applyImplicitClosures(tag_name, tag_name_hash);
             }
 
             const parent_idx = self.currentParent();
@@ -135,10 +129,9 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var node = &self.doc.nodes.items[node_idx];
             node.name = .{ .start = @intCast(name_start), .end = @intCast(self.i) };
             node.tag_hash = tag_name_hash;
-            node.open_start = @intCast(open_start);
 
-            node.attr_bytes_start = @intCast(self.i);
-            node.attr_bytes_end = @intCast(self.i);
+            node.attr_bytes.start = @intCast(self.i);
+            node.attr_bytes.end = @intCast(self.i);
 
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
@@ -190,8 +183,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 attr_bytes_end = self.i;
             }
 
-            node.open_end = @intCast(self.i);
-            node.attr_bytes_end = @intCast(attr_bytes_end);
+            node.attr_bytes.end = @intCast(attr_bytes_end);
 
             const self_close = explicit_self_close or tags.isVoidTagHash(tag_name, tag_name_hash);
 
@@ -209,8 +201,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
                     // appendNode() above may grow `nodes`; reacquire element pointer.
                     node = &self.doc.nodes.items[node_idx];
-                    node.close_start = @intCast(close.close_start);
-                    node.close_end = @intCast(close.close_end);
                     node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
                     self.i = close.close_end;
                     return;
@@ -223,8 +213,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                     }
                     // appendNode() above may grow `nodes`; reacquire element pointer.
                     node = &self.doc.nodes.items[node_idx];
-                    node.close_start = @intCast(self.input.len);
-                    node.close_end = @intCast(self.input.len);
                     node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
                     self.i = self.input.len;
                     return;
@@ -232,8 +220,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             }
 
             if (self_close) {
-                node.close_start = @intCast(self.i);
-                node.close_end = @intCast(self.i);
                 node.subtree_end = node_idx;
                 return;
             }
@@ -280,7 +266,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         }
 
         fn parseClosingTag(self: *Self) void {
-            const close_start = self.i;
             self.i += 2; // </
             self.skipWs();
 
@@ -297,7 +282,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             self.i = scanner.findByte(self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
-            const close_end: u32 = @intCast(self.i);
 
             if (close_name.len == 0) return;
 
@@ -312,8 +296,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                     } else {
                         _ = self.doc.parse_stack.pop();
                         var node = &self.doc.nodes.items[top_idx];
-                        node.close_start = @intCast(close_start);
-                        node.close_end = close_end;
                         node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
                         return;
                     }
@@ -339,14 +321,12 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 while (self.doc.parse_stack.items.len > pos) {
                     const idx = self.doc.parse_stack.pop().?;
                     var node = &self.doc.nodes.items[idx];
-                    node.close_start = @intCast(close_start);
-                    node.close_end = close_end;
                     node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
                 }
             }
         }
 
-        fn applyImplicitClosures(self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue, close_pos: u32) void {
+        fn applyImplicitClosures(self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue) void {
             while (self.doc.parse_stack.items.len > 1) {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
@@ -354,8 +334,6 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
                 _ = self.doc.parse_stack.pop();
                 var n = &self.doc.nodes.items[top_idx];
-                n.close_start = close_pos;
-                n.close_end = close_pos;
                 n.subtree_end = @intCast(self.doc.nodes.items.len - 1);
             }
         }
@@ -366,13 +344,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const build_links = parent_idx != InvalidIndex and (!self.opts.turbo_parse or self.doc.store_parent_pointers);
 
             var node: @TypeOf(self.doc.nodes.items[0]) = .{
-                .doc = self.doc,
-                .index = idx,
                 .kind = kind,
-                .open_start = @intCast(self.i),
-                .open_end = @intCast(self.i),
-                .close_start = @intCast(self.i),
-                .close_end = @intCast(self.i),
                 .subtree_end = idx,
             };
 
@@ -445,7 +417,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             while (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) : (self.i += 1) {}
         }
 
-        fn findRawTextClose(self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_start: usize, close_end: usize } {
+        fn findRawTextClose(self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_end: usize } {
             var j = scanner.findByte(self.input, start, '<') orelse return null;
             const tag_len = tag_name.len;
             if (tag_len == 0) return null;
@@ -483,7 +455,10 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                     continue;
                 }
 
-                return .{ .content_end = j, .close_start = j, .close_end = k + 1 };
+                return .{
+                    .content_end = j,
+                    .close_end = k + 1,
+                };
             }
             return null;
         }
