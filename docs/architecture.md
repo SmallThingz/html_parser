@@ -26,4 +26,4 @@
 
 - Parser is permissive and attempts recovery for malformed markup.
 - Raw-text elements and optional-close behavior use table/tag-aware logic.
-- In turbo mode, some parse-time normalizations are deferred.
+- Parse options can defer attribute parsing and child-view materialization when needed.

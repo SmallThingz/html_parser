@@ -11,7 +11,7 @@ pub const TagHash = struct {
         return .{};
     }
 
-    pub fn update(self: *TagHash, c: u8) void {
+    pub fn update(noalias self: *TagHash, c: u8) void {
         if (self.value_ == InvalidTagHash) return;
         if ((self.value_ >> (64 - 5)) != 0) {
             self.value_ = InvalidTagHash;

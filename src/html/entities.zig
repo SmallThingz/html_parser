@@ -1,4 +1,5 @@
 const std = @import("std");
+const scanner = @import("scanner.zig");
 
 const Decoded = struct {
     consumed: usize,
@@ -12,7 +13,7 @@ pub fn decodeInPlace(slice: []u8) usize {
 
 pub fn decodeInPlaceIfEntity(slice: []u8) usize {
     // Fast reject to keep the no-entity path single-pass and branch-light.
-    const first = std.mem.indexOfScalar(u8, slice, '&') orelse return slice.len;
+    const first = scanner.findByte(slice, 0, '&') orelse return slice.len;
     return decodeInPlaceFrom(slice, first);
 }
 
@@ -21,7 +22,7 @@ fn decodeInPlaceFrom(slice: []u8, start_index: usize) usize {
     var w: usize = start_index;
 
     while (r < slice.len) {
-        const amp_rel = std.mem.indexOfScalarPos(u8, slice, r, '&') orelse {
+        const amp_rel = scanner.findByte(slice, r, '&') orelse {
             if (w != r) {
                 std.mem.copyForwards(u8, slice[w .. w + (slice.len - r)], slice[r..slice.len]);
             }

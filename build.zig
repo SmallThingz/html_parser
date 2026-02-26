@@ -50,7 +50,7 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run parser/query benchmarks");
     const tools_step = b.step("tools", "Run htmlparser-tools utility");
     const bench_compare_step = b.step("bench-compare", "Benchmark against external parser implementations");
-    const conformance_step = b.step("conformance", "Run external parser/selector conformance suites (strict+turbo)");
+    const conformance_step = b.step("conformance", "Run external parser/selector conformance suites (strictest+fastest)");
     const docs_check_step = b.step("docs-check", "Validate markdown links and documented commands");
     const examples_check_step = b.step("examples-check", "Compile and run all examples in test mode");
 

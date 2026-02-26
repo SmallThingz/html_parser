@@ -2,16 +2,19 @@
 
 ## Modes
 
-- `strict` mode (`turbo_parse = false`): default semantics and eager parse behavior.
-- `turbo` mode (`turbo_parse = true`): parse-throughput-oriented path that defers non-essential work.
+- `ours-strictest`: benchmark profile that enables the most parse-time work.
+- `ours-fastest`: benchmark profile that enables the least parse-time work.
 
-Typical turbo configuration:
+Typical fastest configuration:
 
 ```zig
 try doc.parse(&input, .{
-    .turbo_parse = true,
+    .store_parent_pointers = false,
+    .normalize_input = false,
+    .normalize_text_on_parse = false,
     .eager_child_views = false,
     .eager_attr_empty_rewrite = false,
+    .defer_attribute_parsing = true,
 });
 ```
 
@@ -30,7 +33,7 @@ Output artifacts:
 
 ## Throughput Notes
 
-- Parse throughput is benchmarked against `strlen`, `lexbor`, `gumbo-modern`, `html5ever`, and parse-only `lol-html`.
+- Parse throughput is benchmarked against `strlen`, `lexbor`, and parse-only `lol-html`.
 - Query parse/match sections are measured on `htmlparser` only.
 - For repeated runtime selector workloads, prefer `Selector.compileRuntime` + `query*Compiled` APIs.
 

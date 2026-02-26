@@ -6,7 +6,7 @@ const scanner = @import("scanner.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
-pub fn parseInto(comptime Doc: type, doc: *Doc, input: []u8, comptime opts: anytype) !void {
+pub fn parseInto(comptime Doc: type, noalias doc: *Doc, input: []u8, comptime opts: anytype) !void {
     const OptType = @TypeOf(opts);
     var p = Parser(Doc, OptType){
         .doc = doc,
@@ -26,7 +26,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         const Self = @This();
 
-        fn parse(self: *Self) !void {
+        fn parse(noalias self: *Self) !void {
             const alloc = self.doc.allocator;
             try self.reserveCapacities();
 
@@ -70,7 +70,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.doc.parse_stack.clearRetainingCapacity();
         }
 
-        fn reserveCapacities(self: *Self) !void {
+        fn reserveCapacities(noalias self: *Self) !void {
             const alloc = self.doc.allocator;
             const input_len = self.input.len;
             const estimated_nodes = @max(@as(usize, 16), (input_len / 12) + 8);
@@ -80,13 +80,10 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             try self.doc.parse_stack.ensureTotalCapacity(alloc, estimated_stack);
         }
 
-        fn parseText(self: *Self) !void {
+        fn parseText(noalias self: *Self) !void {
             const start = self.i;
             self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
-            // Turbo mode targets parsing throughput and intentionally skips
-            // creating text nodes.
-            if (self.opts.turbo_parse) return;
 
             const parent_idx = self.currentParent();
             const node_idx = try self.appendNode(.text, parent_idx);
@@ -100,7 +97,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             node.subtree_end = node_idx;
         }
 
-        fn parseOpeningTag(self: *Self) !void {
+        fn parseOpeningTag(noalias self: *Self) !void {
             self.i += 1; // <
             self.skipWs();
 
@@ -136,7 +133,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
 
-            if (self.opts.turbo_parse) {
+            if (self.opts.defer_attribute_parsing) {
                 // Fast path: scan to tag end while honoring quotes so `>` inside
                 // attribute values does not terminate the tag early.
                 if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
@@ -192,7 +189,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 // matching close tag candidate is found.
                 const content_start = self.i;
                 if (self.findRawTextClose(tag_name, self.i)) |close| {
-                    if (!self.opts.turbo_parse and close.content_end > content_start) {
+                    if (close.content_end > content_start) {
                         const text_idx = try self.appendNode(.text, node_idx);
                         var text_node = &self.doc.nodes.items[text_idx];
                         text_node.text = .{ .start = @intCast(content_start), .end = @intCast(close.content_end) };
@@ -205,7 +202,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                     self.i = close.close_end;
                     return;
                 } else {
-                    if (!self.opts.turbo_parse and self.input.len > content_start) {
+                    if (self.input.len > content_start) {
                         const text_idx = try self.appendNode(.text, node_idx);
                         var text_node = &self.doc.nodes.items[text_idx];
                         text_node.text = .{ .start = @intCast(content_start), .end = @intCast(self.input.len) };
@@ -227,7 +224,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             try self.doc.parse_stack.append(self.doc.allocator, node_idx);
         }
 
-        fn parseAttribute(self: *Self) !void {
+        fn parseAttribute(noalias self: *Self) !void {
             const name_start = self.i;
             var saw_upper = false;
             while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {
@@ -265,7 +262,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             }
         }
 
-        fn parseClosingTag(self: *Self) void {
+        fn parseClosingTag(noalias self: *Self) void {
             self.i += 2; // </
             self.skipWs();
 
@@ -326,7 +323,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             }
         }
 
-        fn applyImplicitClosures(self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue) void {
+        fn applyImplicitClosures(noalias self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue) void {
             while (self.doc.parse_stack.items.len > 1) {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
@@ -338,10 +335,10 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             }
         }
 
-        fn appendNode(self: *Self, kind: anytype, parent_idx: u32) !u32 {
+        fn appendNode(noalias self: *Self, kind: anytype, parent_idx: u32) !u32 {
             const alloc = self.doc.allocator;
             const idx: u32 = @intCast(self.doc.nodes.items.len);
-            const build_links = parent_idx != InvalidIndex and (!self.opts.turbo_parse or self.doc.store_parent_pointers);
+            const build_links = parent_idx != InvalidIndex;
 
             var node: @TypeOf(self.doc.nodes.items[0]) = .{
                 .kind = kind,
@@ -368,12 +365,12 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             return idx;
         }
 
-        fn currentParent(self: *Self) u32 {
+        fn currentParent(noalias self: *Self) u32 {
             if (self.doc.parse_stack.items.len == 0) return InvalidIndex;
             return self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
         }
 
-        fn skipComment(self: *Self) void {
+        fn skipComment(noalias self: *Self) void {
             self.i += 4;
             var j = self.i;
             while (j + 2 < self.input.len) {
@@ -390,13 +387,13 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.i = self.input.len;
         }
 
-        fn skipBangNode(self: *Self) void {
+        fn skipBangNode(noalias self: *Self) void {
             self.i += 2;
             self.i = scanner.findByte(self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
         }
 
-        fn skipPi(self: *Self) void {
+        fn skipPi(noalias self: *Self) void {
             self.i += 2;
             var j = self.i;
             while (j + 1 < self.input.len) {
@@ -413,11 +410,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             self.i = self.input.len;
         }
 
-        fn skipWs(self: *Self) void {
+        fn skipWs(noalias self: *Self) void {
             while (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) : (self.i += 1) {}
         }
 
-        fn findRawTextClose(self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_end: usize } {
+        fn findRawTextClose(noalias self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_end: usize } {
             var j = scanner.findByte(self.input, start, '<') orelse return null;
             const tag_len = tag_name.len;
             if (tag_len == 0) return null;

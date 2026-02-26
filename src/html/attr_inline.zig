@@ -1,6 +1,7 @@
 const std = @import("std");
 const tables = @import("tables.zig");
 const entities = @import("entities.zig");
+const scanner = @import("scanner.zig");
 
 const RawKind = enum {
     empty,
@@ -27,7 +28,7 @@ const LookupKind = enum(u8) {
 // - `name=...` raw value, lazily materialized on first read
 // - `name\0...` parsed value (with marker layout handled by parseParsedValue)
 // - `name` + delimiter/end -> boolean/name-only attribute
-pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const u8 {
+pub fn getAttrValue(noalias doc_ptr: anytype, node: anytype, name: []const u8) ?[]const u8 {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
     const lookup_kind = classifyLookupName(name);
@@ -93,7 +94,7 @@ pub fn getAttrValue(doc_ptr: anytype, node: anytype, name: []const u8) ?[]const 
     return null;
 }
 
-pub fn collectSelectedValues(doc_ptr: anytype, node: anytype, selected_names: []const []const u8, out_values: []?[]const u8) void {
+pub fn collectSelectedValues(noalias doc_ptr: anytype, node: anytype, selected_names: []const []const u8, out_values: []?[]const u8) void {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
     if (selected_names.len == 0) return;
@@ -209,8 +210,7 @@ fn parseRawValue(source: []u8, span_end: usize, eq_index: usize) RawValue {
 
     if (c == '\'' or c == '"') {
         const q = c;
-        var j = i + 1;
-        while (j < span_end and source[j] != q) : (j += 1) {}
+        const j = scanner.findByte(source, i + 1, q) orelse span_end;
         const next_start = if (j < span_end) j + 1 else span_end;
         return .{ .kind = .quoted, .start = i + 1, .end = j, .next_start = next_start };
     }
@@ -366,6 +366,7 @@ fn matchesLookupName(attr_name: []const u8, lookup: []const u8, lookup_kind: Loo
     }
 
     if (attr_name.len != lookup.len) return false;
+    if (attr_name.len != 0 and toLowerAscii(attr_name[0]) != toLowerAscii(lookup[0])) return false;
     if (hashIgnoreCaseAscii(attr_name) != lookup_hash) return false;
     if (input_normalized and isAlreadyLowerAscii(lookup)) return std.mem.eql(u8, attr_name, lookup);
     return tables.eqlIgnoreCaseAscii(attr_name, lookup);

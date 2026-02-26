@@ -4,17 +4,15 @@ This directory benchmarks `htmlparser` against other high-performance HTML parse
 
 - `strlen` baseline (C) for raw string scan comparison
 - `lexbor` (C, HTML5 parser)
-- `gumbo-modern` (maintained Gumbo fork, C, HTML5 parser)
-- `html5ever` (Rust, browser-grade HTML5 parser)
 - `lol-html` (Rust, streaming rewriter/parser; parse-only comparison in this suite)
 
 It also benchmarks `htmlparser` query parsing throughput (runtime selector compile path).
 Query sections remain `htmlparser`-only; external parser comparisons are parse throughput only.
 
-`htmlparser` parse results are reported in two internal modes:
+`htmlparser` parse results are reported in two internal benchmark modes:
 
-- `ours-strict`: default parser behavior (public default options)
-- `ours-turbo`: opt-in throughput mode (`turbo_parse=true`, lazy child views, deferred empty assignment rewrite)
+- `ours-strictest`: most-work parse option bundle
+- `ours-fastest`: least-work parse option bundle (deferred attribute parsing, no parent pointers, lazy child views)
 
 Default fixture set includes:
 - `rust-lang.html`
@@ -64,7 +62,7 @@ Results are written to:
 
 The benchmark output also includes a hard gate table:
 
-- `PASS/FAIL: ours-turbo > lol-html` per fixture
+- `PASS/FAIL: ours-fastest > lol-html` per fixture
 - strict-mode regression checks against baseline:
   - parse throughput not worse than -3% per fixture
   - query parse/match/compiled not worse than -2%

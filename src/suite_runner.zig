@@ -2,23 +2,33 @@ const std = @import("std");
 const html = @import("root.zig");
 
 const ParseMode = enum {
-    strict,
-    turbo,
+    strictest,
+    fastest,
 };
 
 fn parseMode(s: []const u8) ?ParseMode {
-    if (std.mem.eql(u8, s, "strict")) return .strict;
-    if (std.mem.eql(u8, s, "turbo")) return .turbo;
+    if (std.mem.eql(u8, s, "strictest") or std.mem.eql(u8, s, "strict")) return .strictest;
+    if (std.mem.eql(u8, s, "fastest") or std.mem.eql(u8, s, "turbo")) return .fastest;
     return null;
 }
 
-fn parseDoc(doc: *html.Document, input: []u8, mode: ParseMode) !void {
+fn parseDoc(noalias doc: *html.Document, input: []u8, mode: ParseMode) !void {
     switch (mode) {
-        .strict => try doc.parse(input, .{}),
-        .turbo => try doc.parse(input, .{
+        .strictest => try doc.parse(input, .{
+            .store_parent_pointers = true,
+            .normalize_input = true,
+            .normalize_text_on_parse = true,
+            .eager_child_views = true,
+            .eager_attr_empty_rewrite = true,
+            .defer_attribute_parsing = false,
+        }),
+        .fastest => try doc.parse(input, .{
+            .store_parent_pointers = false,
+            .normalize_input = false,
+            .normalize_text_on_parse = false,
             .eager_child_views = false,
             .eager_attr_empty_rewrite = false,
-            .turbo_parse = true,
+            .defer_attribute_parsing = true,
         }),
     }
 }
@@ -145,7 +155,7 @@ fn runParseTagsFile(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []c
 
     for (doc.nodes.items) |*n| {
         if (n.kind != .element) continue;
-        try tags.append(alloc, n.tagName());
+        try tags.append(alloc, n.name.slice(doc.source));
     }
 
     var out_buf = std.ArrayList(u8).empty;
@@ -157,7 +167,7 @@ fn runParseTagsFile(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []c
 
 fn usage() noreturn {
     std.debug.print(
-        "usage:\n  suite_runner selector-ids <strict|turbo> <fixture.html> <selector>\n  suite_runner selector-count <strict|turbo> <fixture.html> <selector>\n  suite_runner selector-count-scope-tag <strict|turbo> <fixture.html> <scope-tag> <selector>\n  suite_runner parse-tags-file <strict|turbo> <fixture.html>\n",
+        "usage:\n  suite_runner selector-ids <strictest|fastest> <fixture.html> <selector>\n  suite_runner selector-count <strictest|fastest> <fixture.html> <selector>\n  suite_runner selector-count-scope-tag <strictest|fastest> <fixture.html> <scope-tag> <selector>\n  suite_runner parse-tags-file <strictest|fastest> <fixture.html>\n",
         .{},
     );
     std.process.exit(2);

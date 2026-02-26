@@ -20,8 +20,8 @@ pub const ParseOptions = struct {
     eager_child_views: bool = true,
     // Canonicalize explicit empty assignments (`a=`) during parse.
     eager_attr_empty_rewrite: bool = true,
-    // Parse-throughput mode that skips non-essential work.
-    turbo_parse: bool = false,
+    // Skip per-attribute parse-time work; keep raw attr bytes and parse lazily.
+    defer_attribute_parsing: bool = false,
 };
 
 pub const TextOptions = node_api.TextOptions;
@@ -154,7 +154,7 @@ pub const QueryIter = struct {
     next_index: u32 = 1,
     runtime_generation: u64 = 0,
 
-    pub fn next(self: *QueryIter) ?Node {
+    pub fn next(noalias self: *QueryIter) ?Node {
         if (self.runtime_generation != 0 and self.runtime_generation != self.doc.query_all_generation) {
             return null;
         }
@@ -209,7 +209,7 @@ pub const Document = struct {
         };
     }
 
-    pub fn deinit(self: *Document) void {
+    pub fn deinit(noalias self: *Document) void {
         self.nodes.deinit(self.allocator);
         self.child_indexes.deinit(self.allocator);
         self.parse_stack.deinit(self.allocator);
@@ -217,7 +217,7 @@ pub const Document = struct {
         self.query_all_arena.deinit();
     }
 
-    pub fn clear(self: *Document) void {
+    pub fn clear(noalias self: *Document) void {
         self.nodes.clearRetainingCapacity();
         self.child_indexes.clearRetainingCapacity();
         self.parse_stack.clearRetainingCapacity();
@@ -229,7 +229,7 @@ pub const Document = struct {
         if (self.query_all_generation == 0) self.query_all_generation = 1;
     }
 
-    pub fn parse(self: *Document, input: []u8, comptime opts: ParseOptions) !void {
+    pub fn parse(noalias self: *Document, input: []u8, comptime opts: ParseOptions) !void {
         self.clear();
         self.source = input;
         self.store_parent_pointers = opts.store_parent_pointers;
@@ -328,7 +328,7 @@ pub const Document = struct {
         };
     }
 
-    fn invalidateRuntimeSelectorCaches(self: *Document) void {
+    fn invalidateRuntimeSelectorCaches(noalias self: *Document) void {
         self.query_one_cache_valid = false;
         self.query_one_cached_selector = "";
         self.query_one_cached_compiled = null;
@@ -337,7 +337,7 @@ pub const Document = struct {
         self.query_all_cached_compiled = null;
     }
 
-    fn getOrCompileQueryOneSelector(self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
+    fn getOrCompileQueryOneSelector(noalias self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
         if (self.query_one_cache_valid and std.mem.eql(u8, self.query_one_cached_selector, selector)) {
             return self.query_one_cached_compiled.?;
         }
@@ -350,7 +350,7 @@ pub const Document = struct {
         return sel;
     }
 
-    fn getOrCompileQueryAllSelector(self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
+    fn getOrCompileQueryAllSelector(noalias self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
         if (self.query_all_cache_valid and std.mem.eql(u8, self.query_all_cached_selector, selector)) {
             return self.query_all_cached_compiled.?;
         }
@@ -363,14 +363,14 @@ pub const Document = struct {
         return sel;
     }
 
-    pub fn ensureChildViewsBuilt(self: *Document) void {
+    pub fn ensureChildViewsBuilt(noalias self: *Document) void {
         if (self.child_views_ready) return;
         // Allocation failure here indicates an unrecoverable internal state for
         // callers expecting non-fallible navigation APIs.
         self.buildChildViews() catch @panic("out of memory building child views");
     }
 
-    fn buildChildViews(self: *Document) !void {
+    fn buildChildViews(noalias self: *Document) !void {
         const alloc = self.allocator;
         self.child_indexes.clearRetainingCapacity();
         const child_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
@@ -1075,28 +1075,28 @@ test "leading child combinator works in node-scoped queries" {
     try std.testing.expectEqual(@as(usize, 1), hsoob_count);
 }
 
-test "turbo parse mode preserves selector/query behavior for representative input" {
+test "deferred attribute parsing preserves selector/query behavior for representative input" {
     const alloc = std.testing.allocator;
 
-    var strict_doc = Document.init(alloc);
-    defer strict_doc.deinit();
-    var turbo_doc = Document.init(alloc);
-    defer turbo_doc.deinit();
+    var eager_doc = Document.init(alloc);
+    defer eager_doc.deinit();
+    var deferred_doc = Document.init(alloc);
+    defer deferred_doc.deinit();
 
-    var strict_html = ("<html><body>" ++
+    var eager_html = ("<html><body>" ++
         "<div id='x' class='alpha beta' data-k='v' data-q='1>2'>x</div>" ++
         "<img id='im' src='a.png' />" ++
         "<a id='a1' href='https://example.com' class='nav button'>ok</a>" ++
         "<p id='p1'>a<span id='s1'>b</span></p>" ++
         "<div id='e' a= ></div>" ++
         "</body></html>").*;
-    var turbo_html = strict_html;
+    var deferred_html = eager_html;
 
-    try strict_doc.parse(&strict_html, .{});
-    try turbo_doc.parse(&turbo_html, .{
+    try eager_doc.parse(&eager_html, .{});
+    try deferred_doc.parse(&deferred_html, .{
         .eager_child_views = false,
         .eager_attr_empty_rewrite = false,
-        .turbo_parse = true,
+        .defer_attribute_parsing = true,
     });
 
     const selectors = [_][]const u8{
@@ -1108,17 +1108,17 @@ test "turbo parse mode preserves selector/query behavior for representative inpu
     };
 
     for (selectors) |sel| {
-        const a = try strict_doc.queryOneRuntime(sel);
-        const b = try turbo_doc.queryOneRuntime(sel);
+        const a = try eager_doc.queryOneRuntime(sel);
+        const b = try deferred_doc.queryOneRuntime(sel);
         try std.testing.expect((a == null) == (b == null));
     }
 
-    const strict_empty = (strict_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
-    const turbo_empty = (turbo_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings(strict_empty, turbo_empty);
+    const eager_empty = (eager_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    const deferred_empty = (deferred_doc.queryOne("#e") orelse return error.TestUnexpectedResult).getAttributeValue("a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings(eager_empty, deferred_empty);
 }
 
-test "turbo scanner handles quoted > and self-closing tails" {
+test "deferred-attr scanner handles quoted > and self-closing tails" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -1127,7 +1127,7 @@ test "turbo scanner handles quoted > and self-closing tails" {
     try doc.parse(&html, .{
         .eager_child_views = false,
         .eager_attr_empty_rewrite = false,
-        .turbo_parse = true,
+        .defer_attribute_parsing = true,
     });
 
     try std.testing.expect(doc.queryOne("div#a[data-q='x>y']") != null);
@@ -1135,7 +1135,7 @@ test "turbo scanner handles quoted > and self-closing tails" {
     try std.testing.expect(doc.queryOne("br#b") != null);
 }
 
-test "turbo mode always builds element nodes (no scan-only shortcut)" {
+test "deferred attribute parsing still builds the DOM" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -1146,7 +1146,7 @@ test "turbo mode always builds element nodes (no scan-only shortcut)" {
         .normalize_input = false,
         .eager_child_views = false,
         .eager_attr_empty_rewrite = false,
-        .turbo_parse = true,
+        .defer_attribute_parsing = true,
     });
 
     // Document node plus parsed element nodes must exist.

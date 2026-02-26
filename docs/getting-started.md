@@ -56,7 +56,7 @@ try doc.parse(&input, .{
     .normalize_text_on_parse = false,
     .eager_child_views = true,
     .eager_attr_empty_rewrite = true,
-    .turbo_parse = false,
+    .defer_attribute_parsing = false,
 });
 ```
 

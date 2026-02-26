@@ -20,28 +20,24 @@ const ParserCapability = struct {
 };
 
 const parser_capabilities = [_]ParserCapability{
-    .{ .parser = "ours-strict", .capability = "dom" },
-    .{ .parser = "ours-turbo", .capability = "dom" },
+    .{ .parser = "ours-strictest", .capability = "dom" },
+    .{ .parser = "ours-fastest", .capability = "dom" },
     .{ .parser = "strlen", .capability = "scan" },
     .{ .parser = "lexbor", .capability = "dom" },
-    .{ .parser = "gumbo-modern", .capability = "dom" },
-    .{ .parser = "html5ever", .capability = "dom" },
     .{ .parser = "lol-html", .capability = "streaming" },
 };
 
 const parse_parsers = [_][]const u8{
-    "ours-strict",
-    "ours-turbo",
+    "ours-strictest",
+    "ours-fastest",
     "strlen",
     "lexbor",
-    "gumbo-modern",
-    "html5ever",
     "lol-html",
 };
 
 const query_modes = [_]struct { parser: []const u8, mode: []const u8 }{
-    .{ .parser = "ours-strict", .mode = "strict" },
-    .{ .parser = "ours-turbo", .mode = "turbo" },
+    .{ .parser = "ours-strictest", .mode = "strictest" },
+    .{ .parser = "ours-fastest", .mode = "fastest" },
 };
 
 const FixtureCase = struct {
@@ -79,11 +75,11 @@ const quick_fixtures = [_]FixtureCase{
 };
 
 const stable_fixtures = [_]FixtureCase{
-    .{ .name = "rust-lang.html", .iterations = 30 },
-    .{ .name = "wiki-html.html", .iterations = 30 },
-    .{ .name = "mdn-html.html", .iterations = 30 },
-    .{ .name = "w3-html52.html", .iterations = 30 },
-    .{ .name = "hn.html", .iterations = 30 },
+    .{ .name = "rust-lang.html", .iterations = 300 },
+    .{ .name = "wiki-html.html", .iterations = 300 },
+    .{ .name = "mdn-html.html", .iterations = 300 },
+    .{ .name = "w3-html52.html", .iterations = 300 },
+    .{ .name = "hn.html", .iterations = 300 },
 };
 
 const quick_query_parse = [_]QueryCase{
@@ -93,7 +89,7 @@ const quick_query_parse = [_]QueryCase{
 };
 
 const stable_query_parse = [_]QueryCase{
-    .{ .name = "simple", .selector = "li.x", .iterations = 1_000_000 },
+    .{ .name = "simple", .selector = "li.x", .iterations = 100_000 },
     .{ .name = "complex", .selector = "ul > li.item[data-prefix^=pre]:not(.skip) span.name", .iterations = 400_000 },
     .{ .name = "grouped", .selector = "li#li1, li#li2, li:nth-child(2n+1)", .iterations = 400_000 },
 };
@@ -104,8 +100,8 @@ const quick_query_exec = [_]QueryExecCase{
 };
 
 const stable_query_exec = [_]QueryExecCase{
-    .{ .name = "attr-heavy-button", .fixture = "rust-lang.html", .selector = "a[href^=https][class*=button]:not(.missing)", .iterations = 1_000_000 },
-    .{ .name = "attr-heavy-nav", .fixture = "rust-lang.html", .selector = "a[href^=https][class*=nav]:not(.missing)", .iterations = 1_000_000 },
+    .{ .name = "attr-heavy-button", .fixture = "rust-lang.html", .selector = "a[href^=https][class*=button]:not(.missing)", .iterations = 100_000 },
+    .{ .name = "attr-heavy-nav", .fixture = "rust-lang.html", .selector = "a[href^=https][class*=nav]:not(.missing)", .iterations = 100_000 },
 };
 
 fn getProfile(name: []const u8) !Profile {
@@ -138,8 +134,6 @@ fn setupParsers(alloc: std.mem.Allocator) !void {
     try common.ensureDir(PARSERS_DIR);
     const repos = [_]struct { url: []const u8, dir: []const u8 }{
         .{ .url = "https://github.com/lexbor/lexbor.git", .dir = "lexbor" },
-        .{ .url = "https://codeberg.org/gumbo-parser/gumbo-parser.git", .dir = "gumbo-modern" },
-        .{ .url = "https://github.com/servo/html5ever.git", .dir = "html5ever" },
         .{ .url = "https://github.com/cloudflare/lol-html.git", .dir = "lol-html" },
     };
     for (repos) |repo| {
@@ -219,20 +213,6 @@ fn ensureExternalParsersBuilt(alloc: std.mem.Allocator) !void {
         const cmake_build = [_][]const u8{ "cmake", "--build", "bench/build/lexbor", "-j" };
         try common.runInherit(alloc, &cmake_build, REPO_ROOT);
     }
-
-    if (!pathExists("bench/build/gumbo-modern/libgumbo.a")) {
-        const meson_setup = [_][]const u8{
-            "meson",
-            "setup",
-            "bench/build/gumbo-modern",
-            "bench/parsers/gumbo-modern",
-            "--buildtype",
-            "release",
-        };
-        try common.runInherit(alloc, &meson_setup, REPO_ROOT);
-        const ninja_build = [_][]const u8{ "ninja", "-C", "bench/build/gumbo-modern" };
-        try common.runInherit(alloc, &ninja_build, REPO_ROOT);
-    }
 }
 
 fn buildRunners(alloc: std.mem.Allocator) !void {
@@ -261,26 +241,6 @@ fn buildRunners(alloc: std.mem.Allocator) !void {
         "bench/build/bin/lexbor_runner",
     };
     try common.runInherit(alloc, &lexbor_cc, REPO_ROOT);
-
-    const gumbo_cc = [_][]const u8{
-        "cc",
-        "-O3",
-        "bench/runners/gumbo_runner.c",
-        "bench/build/gumbo-modern/libgumbo.a",
-        "-Ibench/parsers/gumbo-modern/src",
-        "-o",
-        "bench/build/bin/gumbo_runner",
-    };
-    try common.runInherit(alloc, &gumbo_cc, REPO_ROOT);
-
-    const cargo_html5ever = [_][]const u8{
-        "cargo",
-        "build",
-        "--release",
-        "--manifest-path",
-        "bench/runners/html5ever_runner/Cargo.toml",
-    };
-    try common.runInherit(alloc, &cargo_html5ever, REPO_ROOT);
 
     const cargo_lol = [_][]const u8{
         "cargo",
@@ -316,27 +276,27 @@ const QueryResult = struct {
 
 const GateRow = struct {
     fixture: []const u8,
-    ours_turbo_mb_s: f64,
+    ours_fastest_mb_s: f64,
     lol_html_mb_s: f64,
     pass: bool,
 };
 
 fn runnerCmdParse(alloc: std.mem.Allocator, parser_name: []const u8, fixture: []const u8, iterations: usize) ![]const []const u8 {
     const iter_s = try std.fmt.allocPrint(alloc, "{d}", .{iterations});
-    if (std.mem.eql(u8, parser_name, "ours-strict")) {
+    if (std.mem.eql(u8, parser_name, "ours-strictest")) {
         const argv = try alloc.alloc([]const u8, 5);
         argv[0] = "zig-out/bin/htmlparser-bench";
         argv[1] = "parse";
-        argv[2] = "strict";
+        argv[2] = "strictest";
         argv[3] = fixture;
         argv[4] = iter_s;
         return argv;
     }
-    if (std.mem.eql(u8, parser_name, "ours-turbo")) {
+    if (std.mem.eql(u8, parser_name, "ours-fastest")) {
         const argv = try alloc.alloc([]const u8, 5);
         argv[0] = "zig-out/bin/htmlparser-bench";
         argv[1] = "parse";
-        argv[2] = "turbo";
+        argv[2] = "fastest";
         argv[3] = fixture;
         argv[4] = iter_s;
         return argv;
@@ -351,20 +311,6 @@ fn runnerCmdParse(alloc: std.mem.Allocator, parser_name: []const u8, fixture: []
     if (std.mem.eql(u8, parser_name, "lexbor")) {
         const argv = try alloc.alloc([]const u8, 3);
         argv[0] = "bench/build/bin/lexbor_runner";
-        argv[1] = fixture;
-        argv[2] = iter_s;
-        return argv;
-    }
-    if (std.mem.eql(u8, parser_name, "gumbo-modern")) {
-        const argv = try alloc.alloc([]const u8, 3);
-        argv[0] = "bench/build/bin/gumbo_runner";
-        argv[1] = fixture;
-        argv[2] = iter_s;
-        return argv;
-    }
-    if (std.mem.eql(u8, parser_name, "html5ever")) {
-        const argv = try alloc.alloc([]const u8, 3);
-        argv[0] = "bench/runners/html5ever_runner/target/release/html5ever_runner";
         argv[1] = fixture;
         argv[2] = iter_s;
         return argv;
@@ -575,13 +521,13 @@ fn writeMarkdown(
     try writeQuerySection(alloc, &out, "## Query Compiled Throughput", query_compiled_results);
 
     if (gate_rows.len > 0) {
-        try w.writeAll("## Turbo vs lol-html Gate\n\n");
-        try w.writeAll("| Fixture | ours-turbo (MB/s) | lol-html (MB/s) | Result |\n");
+        try w.writeAll("## Fastest vs lol-html Gate\n\n");
+        try w.writeAll("| Fixture | ours-fastest (MB/s) | lol-html (MB/s) | Result |\n");
         try w.writeAll("|---|---:|---:|---|\n");
         for (gate_rows) |g| {
             try w.print("| {s} | {d:.2} | {d:.2} | {s} |\n", .{
                 g.fixture,
-                g.ours_turbo_mb_s,
+                g.ours_fastest_mb_s,
                 g.lol_html_mb_s,
                 if (g.pass) "PASS" else "FAIL",
             });
@@ -635,11 +581,11 @@ fn evaluateGateRows(alloc: std.mem.Allocator, profile: Profile, parse_results: [
     var rows = std.ArrayList(GateRow).empty;
     errdefer rows.deinit(alloc);
     for (profile.fixtures) |fx| {
-        const ours = findParseThroughput(parse_results, "ours-turbo", fx.name) orelse continue;
+        const ours = findParseThroughput(parse_results, "ours-fastest", fx.name) orelse continue;
         const lol = findParseThroughput(parse_results, "lol-html", fx.name) orelse continue;
         try rows.append(alloc, .{
             .fixture = fx.name,
-            .ours_turbo_mb_s = ours,
+            .ours_fastest_mb_s = ours,
             .lol_html_mb_s = lol,
             .pass = ours > lol,
         });
@@ -785,8 +731,8 @@ fn renderConsole(
     try renderQueryConsoleSection(alloc, &out, "Query Compiled Throughput", query_compiled_results);
 
     if (gate_rows.len > 0) {
-        try w.writeAll("Turbo vs lol-html Gate\n\n");
-        const headers = [_][]const u8{ "Fixture", "ours-turbo (MB/s)", "lol-html (MB/s)", "Result" };
+        try w.writeAll("Fastest vs lol-html Gate\n\n");
+        const headers = [_][]const u8{ "Fixture", "ours-fastest (MB/s)", "lol-html (MB/s)", "Result" };
         const aligns = [_]bool{ false, true, true, false };
         var widths = [_]usize{ headers[0].len, headers[1].len, headers[2].len, headers[3].len };
 
@@ -798,7 +744,7 @@ fn renderConsole(
         for (gate_rows) |g| {
             var cells: [4][]u8 = undefined;
             cells[0] = try alloc.dupe(u8, g.fixture);
-            cells[1] = try std.fmt.allocPrint(alloc, "{d:.2}", .{g.ours_turbo_mb_s});
+            cells[1] = try std.fmt.allocPrint(alloc, "{d:.2}", .{g.ours_fastest_mb_s});
             cells[2] = try std.fmt.allocPrint(alloc, "{d:.2}", .{g.lol_html_mb_s});
             cells[3] = try alloc.dupe(u8, if (g.pass) "PASS" else "FAIL");
             inline for (0..4) |i| widths[i] = @max(widths[i], cells[i].len);
@@ -994,7 +940,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
         .generated_unix = common.nowUnix(),
         .profile = profile.name,
         .repeats = repeats,
-        .bench_modes = .{ .parse = &[_][]const u8{ "strict", "turbo" }, .query = &[_][]const u8{ "strict", "turbo" } },
+        .bench_modes = .{ .parse = &[_][]const u8{ "strictest", "fastest" }, .query = &[_][]const u8{ "strictest", "fastest" } },
         .parser_capabilities = &parser_capabilities,
         .parse_results = parse_results.items,
         .query_parse_results = query_parse_results.items,
@@ -1037,21 +983,21 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
         const parsed = try std.json.parseFromSlice(std.json.Value, alloc, baseline_bytes, .{});
         defer parsed.deinit();
 
-        var base_parse = try parseBaselineParseMap(alloc, parsed.value, "ours-strict");
+        var base_parse = try parseBaselineParseMap(alloc, parsed.value, "ours-strictest");
         defer base_parse.deinit();
-        var base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours-strict");
+        var base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours-strictest");
         defer base_qp.deinit();
-        var base_qm = try parseBaselineOpsMap(alloc, parsed.value, "query_match_results", "ours-strict");
+        var base_qm = try parseBaselineOpsMap(alloc, parsed.value, "query_match_results", "ours-strictest");
         defer base_qm.deinit();
-        var base_qc = try parseBaselineOpsMap(alloc, parsed.value, "query_compiled_results", "ours-strict");
+        var base_qc = try parseBaselineOpsMap(alloc, parsed.value, "query_compiled_results", "ours-strictest");
         defer base_qc.deinit();
 
         if (std.mem.eql(u8, profile.name, "stable")) {
             for (profile.fixtures) |fx| {
-                const current = findParseThroughput(parse_results.items, "ours-strict", fx.name) orelse continue;
+                const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
                 if (base_parse.get(fx.name)) |base| {
                     if (current < base * 0.97) {
-                        const msg = try std.fmt.allocPrint(alloc, "stable strict parse regression >3%: {s} {d:.2} < {d:.2}", .{ fx.name, current, base * 0.97 });
+                        const msg = try std.fmt.allocPrint(alloc, "stable strictest parse regression >3%: {s} {d:.2} < {d:.2}", .{ fx.name, current, base * 0.97 });
                         try failures.append(alloc, msg);
                     }
                 }
@@ -1061,10 +1007,10 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
             try checkQuerySection(alloc, &failures, query_compiled_results.items, "query-compiled", base_qc, 0.98);
         } else {
             for (profile.fixtures) |fx| {
-                const current = findParseThroughput(parse_results.items, "ours-strict", fx.name) orelse continue;
+                const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
                 if (base_parse.get(fx.name)) |base| {
                     if (current < base * 0.97) {
-                        const msg = try std.fmt.allocPrint(alloc, "quick strict parse drift: {s} {d:.2} vs baseline {d:.2}", .{ fx.name, current, base });
+                        const msg = try std.fmt.allocPrint(alloc, "quick strictest parse drift: {s} {d:.2} vs baseline {d:.2}", .{ fx.name, current, base });
                         try warnings.append(alloc, msg);
                     }
                 }
@@ -1074,7 +1020,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
 
     for (gate_rows) |g| {
         if (std.mem.eql(u8, profile.name, "stable") and !g.pass) {
-            const msg = try std.fmt.allocPrint(alloc, "stable turbo-vs-lol fail: {s} ours-turbo {d:.2} <= lol-html {d:.2}", .{ g.fixture, g.ours_turbo_mb_s, g.lol_html_mb_s });
+            const msg = try std.fmt.allocPrint(alloc, "stable fastest-vs-lol fail: {s} ours-fastest {d:.2} <= lol-html {d:.2}", .{ g.fixture, g.ours_fastest_mb_s, g.lol_html_mb_s });
             try failures.append(alloc, msg);
         }
     }
@@ -1107,7 +1053,7 @@ fn checkQuerySection(
     var current = std.StringHashMap(f64).init(alloc);
     defer current.deinit();
     for (rows) |r| {
-        if (!std.mem.eql(u8, r.parser, "ours-strict")) continue;
+        if (!std.mem.eql(u8, r.parser, "ours-strictest")) continue;
         try current.put(r.case, r.ops_s);
     }
     var it = baseline.iterator();
@@ -1524,7 +1470,7 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
     try buildSuiteRunner(alloc);
     try common.ensureDir(RESULTS_DIR);
 
-    const modes = if (std.mem.eql(u8, mode_arg, "both")) &[_][]const u8{ "strict", "turbo" } else &[_][]const u8{mode_arg};
+    const modes = if (std.mem.eql(u8, mode_arg, "both")) &[_][]const u8{ "strictest", "fastest" } else &[_][]const u8{mode_arg};
     var mode_reports = std.ArrayList(struct {
         mode: []const u8,
         nw: SelectorSuiteSummary,
@@ -1848,7 +1794,7 @@ fn usage() void {
         \\  htmlparser-tools setup-parsers
         \\  htmlparser-tools setup-fixtures [--refresh]
         \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--baseline path] [--write-baseline]
-        \\  htmlparser-tools run-external-suites [--mode strict|turbo|both] [--max-html5lib-cases N] [--json-out path]
+        \\  htmlparser-tools run-external-suites [--mode strictest|fastest|strict|turbo|both] [--max-html5lib-cases N] [--json-out path]
         \\  htmlparser-tools docs-check
         \\  htmlparser-tools examples-check
         \\

@@ -55,7 +55,7 @@ Scoped query entrypoints:
 
 - `Selector.compile(comptime source)`
 - `try Selector.compileRuntime(allocator, source)`
-- `selector.deinitRuntime(allocator)` (for runtime-owned selector storage)
+- `selector.deinit(allocator)` (for runtime-owned selector storage)
 
 ## `ParseOptions`
 
@@ -64,7 +64,7 @@ Scoped query entrypoints:
 - `normalize_text_on_parse: bool = false`
 - `eager_child_views: bool = true`
 - `eager_attr_empty_rewrite: bool = true`
-- `turbo_parse: bool = false`
+- `defer_attribute_parsing: bool = false`
 
 ## `TextOptions`
 

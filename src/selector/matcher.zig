@@ -9,7 +9,7 @@ const MaxProbeEntries: usize = 24;
 const HashId: u32 = hashIgnoreCaseAscii("id");
 const HashClass: u32 = hashIgnoreCaseAscii("class");
 
-pub fn queryOneIndex(comptime Doc: type, doc: *const Doc, selector: ast.Selector, scope_root: u32) ?u32 {
+pub fn queryOneIndex(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, scope_root: u32) ?u32 {
     const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
     const end_excl: u32 = if (scope_root == InvalidIndex)
         @as(u32, @intCast(doc.nodes.items.len))
@@ -25,7 +25,7 @@ pub fn queryOneIndex(comptime Doc: type, doc: *const Doc, selector: ast.Selector
     return null;
 }
 
-pub fn matchesSelectorAt(comptime Doc: type, doc: *const Doc, selector: ast.Selector, node_index: u32, scope_root: u32) bool {
+pub fn matchesSelectorAt(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, node_index: u32, scope_root: u32) bool {
     for (selector.groups) |group| {
         if (group.compound_len == 0) continue;
         const rightmost = group.compound_len - 1;
@@ -34,7 +34,7 @@ pub fn matchesSelectorAt(comptime Doc: type, doc: *const Doc, selector: ast.Sele
     return false;
 }
 
-fn matchGroupFromRight(comptime Doc: type, doc: *const Doc, selector: ast.Selector, group: ast.Group, rel_index: u32, node_index: u32, scope_root: u32) bool {
+fn matchGroupFromRight(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, group: ast.Group, rel_index: u32, node_index: u32, scope_root: u32) bool {
     const comp_abs: usize = @intCast(group.compound_start + rel_index);
     const comp = selector.compounds[comp_abs];
 
@@ -106,7 +106,7 @@ fn matchesScopeAnchor(doc: anytype, combinator: ast.Combinator, node_index: u32,
     }
 }
 
-fn matchesCompound(comptime Doc: type, doc: *const Doc, selector: ast.Selector, comp: ast.Compound, node_index: u32) bool {
+fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, comp: ast.Compound, node_index: u32) bool {
     const node = &doc.nodes.items[node_index];
     if (node.kind != .element) return false;
     // Per-node memo for attribute probes inside one compound match.

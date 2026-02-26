@@ -2,36 +2,56 @@ const std = @import("std");
 const root = @import("htmlparser");
 
 const BenchMode = enum {
-    strict,
-    turbo,
+    strictest,
+    fastest,
 };
 
 fn parseMode(arg: []const u8) !BenchMode {
-    if (std.mem.eql(u8, arg, "strict")) return .strict;
-    if (std.mem.eql(u8, arg, "turbo")) return .turbo;
+    if (std.mem.eql(u8, arg, "strictest")) return .strictest;
+    if (std.mem.eql(u8, arg, "strict")) return .strictest;
+    if (std.mem.eql(u8, arg, "fastest")) return .fastest;
+    if (std.mem.eql(u8, arg, "turbo")) return .fastest;
     return error.InvalidBenchMode;
 }
 
-fn parseDocForParseBench(doc: *root.Document, input: []u8, mode: BenchMode) !void {
+fn parseDocForParseBench(noalias doc: *root.Document, input: []u8, mode: BenchMode) !void {
     switch (mode) {
-        .strict => try doc.parse(input, .{}),
-        .turbo => try doc.parse(input, .{
+        .strictest => try doc.parse(input, .{
+            .store_parent_pointers = true,
+            .normalize_input = true,
+            .normalize_text_on_parse = true,
+            .eager_child_views = true,
+            .eager_attr_empty_rewrite = true,
+            .defer_attribute_parsing = false,
+        }),
+        .fastest => try doc.parse(input, .{
             .store_parent_pointers = false,
             .normalize_input = false,
+            .normalize_text_on_parse = false,
             .eager_child_views = false,
             .eager_attr_empty_rewrite = false,
-            .turbo_parse = true,
+            .defer_attribute_parsing = true,
         }),
     }
 }
 
-fn parseDocForQueryBench(doc: *root.Document, input: []u8, mode: BenchMode) !void {
+fn parseDocForQueryBench(noalias doc: *root.Document, input: []u8, mode: BenchMode) !void {
     switch (mode) {
-        .strict => try doc.parse(input, .{}),
-        .turbo => try doc.parse(input, .{
+        .strictest => try doc.parse(input, .{
+            .store_parent_pointers = true,
+            .normalize_input = true,
+            .normalize_text_on_parse = true,
+            .eager_child_views = true,
+            .eager_attr_empty_rewrite = true,
+            .defer_attribute_parsing = false,
+        }),
+        .fastest => try doc.parse(input, .{
+            .store_parent_pointers = false,
+            .normalize_input = false,
+            .normalize_text_on_parse = false,
             .eager_child_views = false,
             .eager_attr_empty_rewrite = false,
-            .turbo_parse = true,
+            .defer_attribute_parsing = true,
         }),
     }
 }
@@ -197,7 +217,7 @@ pub fn main() !void {
 
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-match")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryMatch(args[2], args[3], iterations, .strict);
+        const total_ns = try runQueryMatch(args[2], args[3], iterations, .strictest);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -212,7 +232,7 @@ pub fn main() !void {
 
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-compiled")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryCompiled(args[2], args[3], iterations, .strict);
+        const total_ns = try runQueryCompiled(args[2], args[3], iterations, .strictest);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -235,13 +255,13 @@ pub fn main() !void {
 
     if (args.len != 3) {
         std.debug.print(
-            "usage:\n  {s} <html-file> <iterations>\n  {s} parse <strict|turbo> <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-parse <strict|turbo> <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-match <strict|turbo> <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n  {s} query-compiled <strict|turbo> <html-file> <selector> <iterations>\n",
+            "usage:\n  {s} <html-file> <iterations>\n  {s} parse <strictest|fastest> <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-parse <strictest|fastest> <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-match <strictest|fastest> <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n  {s} query-compiled <strictest|fastest> <html-file> <selector> <iterations>\n",
             .{ args[0], args[0], args[0], args[0], args[0], args[0], args[0], args[0] },
         );
         std.process.exit(2);
     }
 
     const iterations = try std.fmt.parseInt(usize, args[2], 10);
-    const total_ns = try runParseFile(args[1], iterations, .strict);
+    const total_ns = try runParseFile(args[1], iterations, .strictest);
     std.debug.print("{d}\n", .{total_ns});
 }

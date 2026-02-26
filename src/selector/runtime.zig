@@ -42,7 +42,7 @@ const Parser = struct {
         };
     }
 
-    fn parse(self: *Parser) Error!ast.Selector {
+    fn parse(noalias self: *Parser) Error!ast.Selector {
         defer self.groups.deinit(self.alloc);
         defer self.compounds.deinit(self.alloc);
         defer self.classes.deinit(self.alloc);
@@ -150,7 +150,7 @@ const Parser = struct {
         };
     }
 
-    fn parseCompound(self: *Parser, combinator: ast.Combinator) Error!void {
+    fn parseCompound(noalias self: *Parser, combinator: ast.Combinator) Error!void {
         var out: ast.Compound = .{ .combinator = combinator };
         out.class_start = @intCast(self.classes.items.len);
         out.attr_start = @intCast(self.attrs.items.len);
@@ -213,7 +213,7 @@ const Parser = struct {
         try self.compounds.append(self.alloc, out);
     }
 
-    fn parseAttrSelector(self: *Parser) Error!ast.AttrSelector {
+    fn parseAttrSelector(noalias self: *Parser) Error!ast.AttrSelector {
         self.skipWs();
         const name = self.parseIdent() orelse return error.InvalidSelector;
         self.lowerRange(name);
@@ -253,7 +253,7 @@ const Parser = struct {
         return .{ .name = name, .name_hash = hashIgnoreCaseAscii(name.slice(self.source)), .op = .eq, .value = v };
     }
 
-    fn parseAttrValueThenClose(self: *Parser) Error!ast.Range {
+    fn parseAttrValueThenClose(noalias self: *Parser) Error!ast.Range {
         self.skipWs();
         const v = self.parseValueToken() orelse return error.InvalidSelector;
         self.skipWs();
@@ -261,7 +261,7 @@ const Parser = struct {
         return v;
     }
 
-    fn parsePseudo(self: *Parser) Error!void {
+    fn parsePseudo(noalias self: *Parser) Error!void {
         const name = self.parseIdent() orelse return error.InvalidSelector;
         const name_slice = name.slice(self.source);
 
@@ -299,7 +299,7 @@ const Parser = struct {
         return error.InvalidSelector;
     }
 
-    fn parseSimpleNot(self: *Parser) Error!ast.NotSimple {
+    fn parseSimpleNot(noalias self: *Parser) Error!ast.NotSimple {
         if (self.i >= self.source.len) return error.InvalidSelector;
 
         if (self.peek() == '#') {
@@ -329,7 +329,7 @@ const Parser = struct {
         return error.InvalidSelector;
     }
 
-    fn parseUntil(self: *Parser, terminator: u8) ?ast.Range {
+    fn parseUntil(noalias self: *Parser, terminator: u8) ?ast.Range {
         const start = self.i;
         while (self.i < self.source.len and self.source[self.i] != terminator) : (self.i += 1) {}
         if (self.i >= self.source.len or self.source[self.i] != terminator) return null;
@@ -338,7 +338,7 @@ const Parser = struct {
         return out;
     }
 
-    fn parseValueToken(self: *Parser) ?ast.Range {
+    fn parseValueToken(noalias self: *Parser) ?ast.Range {
         if (self.i >= self.source.len) return null;
         const c = self.peek();
 
@@ -362,7 +362,7 @@ const Parser = struct {
         return ast.Range.from(start, self.i);
     }
 
-    fn parseIdent(self: *Parser) ?ast.Range {
+    fn parseIdent(noalias self: *Parser) ?ast.Range {
         if (self.i >= self.source.len) return null;
         if (!tables.IdentStartTable[self.source[self.i]]) return null;
         const start = self.i;
@@ -371,23 +371,23 @@ const Parser = struct {
         return ast.Range.from(start, self.i);
     }
 
-    fn lowerRange(self: *Parser, range: ast.Range) void {
+    fn lowerRange(noalias self: *Parser, range: ast.Range) void {
         const start: usize = @intCast(range.start);
         const end = start + @as(usize, @intCast(range.len));
         tables.toLowerInPlace(@constCast(self.source[start..end]));
     }
 
-    fn skipWs(self: *Parser) void {
+    fn skipWs(noalias self: *Parser) void {
         _ = self.skipWsRet();
     }
 
-    fn skipWsRet(self: *Parser) bool {
+    fn skipWsRet(noalias self: *Parser) bool {
         const start = self.i;
         while (self.i < self.source.len and tables.WhitespaceTable[self.source[self.i]]) : (self.i += 1) {}
         return self.i > start;
     }
 
-    fn consumeIf(self: *Parser, c: u8) bool {
+    fn consumeIf(noalias self: *Parser, c: u8) bool {
         if (self.i < self.source.len and self.source[self.i] == c) {
             self.i += 1;
             return true;

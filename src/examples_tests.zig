@@ -84,30 +84,44 @@ test "example parity: innerText options" {
     try std.testing.expect(std.mem.indexOfScalar(u8, raw, '\n') != null);
 }
 
-test "example parity: strict and turbo selectors agree" {
+test "example parity: strictest and fastest selectors agree" {
     const fixture =
         "<html><body>" ++
         "<ul><li class='item'>A</li><li class='item'>B</li></ul>" ++
         "</body></html>";
 
-    var strict_doc = html.Document.init(std.testing.allocator);
-    defer strict_doc.deinit();
-    var strict_buf = fixture.*;
-    try strict_doc.parse(&strict_buf, .{ .turbo_parse = false });
+    var strictest_doc = html.Document.init(std.testing.allocator);
+    defer strictest_doc.deinit();
+    var strictest_buf = fixture.*;
+    try strictest_doc.parse(&strictest_buf, .{
+        .store_parent_pointers = true,
+        .normalize_input = true,
+        .normalize_text_on_parse = true,
+        .eager_child_views = true,
+        .eager_attr_empty_rewrite = true,
+        .defer_attribute_parsing = false,
+    });
 
-    var turbo_doc = html.Document.init(std.testing.allocator);
-    defer turbo_doc.deinit();
-    var turbo_buf = fixture.*;
-    try turbo_doc.parse(&turbo_buf, .{ .turbo_parse = true, .eager_child_views = false, .eager_attr_empty_rewrite = false });
+    var fastest_doc = html.Document.init(std.testing.allocator);
+    defer fastest_doc.deinit();
+    var fastest_buf = fixture.*;
+    try fastest_doc.parse(&fastest_buf, .{
+        .store_parent_pointers = false,
+        .normalize_input = false,
+        .normalize_text_on_parse = false,
+        .eager_child_views = false,
+        .eager_attr_empty_rewrite = false,
+        .defer_attribute_parsing = true,
+    });
 
-    var strict_it = strict_doc.queryAll("li.item");
-    var strict_count: usize = 0;
-    while (strict_it.next() != null) strict_count += 1;
+    var strictest_it = strictest_doc.queryAll("li.item");
+    var strictest_count: usize = 0;
+    while (strictest_it.next() != null) strictest_count += 1;
 
-    var turbo_it = turbo_doc.queryAll("li.item");
-    var turbo_count: usize = 0;
-    while (turbo_it.next() != null) turbo_count += 1;
+    var fastest_it = fastest_doc.queryAll("li.item");
+    var fastest_count: usize = 0;
+    while (fastest_it.next() != null) fastest_count += 1;
 
-    try std.testing.expectEqual(@as(usize, 2), strict_count);
-    try std.testing.expectEqual(strict_count, turbo_count);
+    try std.testing.expectEqual(@as(usize, 2), strictest_count);
+    try std.testing.expectEqual(strictest_count, fastest_count);
 }

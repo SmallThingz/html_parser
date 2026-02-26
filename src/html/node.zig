@@ -125,14 +125,14 @@ pub fn innerText(comptime Node: type, self: Node, arena_alloc: std.mem.Allocator
     return try out.toOwnedSlice(arena_alloc);
 }
 
-fn decodeTextNode(node: anytype, doc: anytype) []const u8 {
+fn decodeTextNode(noalias node: anytype, doc: anytype) []const u8 {
     const text_mut = node.text.sliceMut(doc.source);
     const new_len = entities.decodeInPlaceIfEntity(text_mut);
     node.text.end = node.text.start + @as(u32, @intCast(new_len));
     return node.text.slice(doc.source);
 }
 
-fn normalizeTextNodeInPlace(node: anytype, doc: anytype) []const u8 {
+fn normalizeTextNodeInPlace(noalias node: anytype, doc: anytype) []const u8 {
     const text_mut = node.text.sliceMut(doc.source);
     const new_len = normalizeWhitespaceInPlace(text_mut);
     node.text.end = node.text.start + @as(u32, @intCast(new_len));

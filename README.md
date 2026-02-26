@@ -16,7 +16,7 @@ Target Zig version: `0.15.2`.
 - Element navigation APIs:
   - `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children`.
 - In-place attribute state machine with lazy parse/decode.
-- Optional throughput mode (`turbo_parse = true`) for benchmark-oriented parse workloads.
+- Parse options allow eager vs deferred attribute parsing and optional parent pointers.
 
 ## Installation
 
@@ -59,7 +59,7 @@ test "basic parse + query" {
 | `Document` | Parse owner, node storage, query entrypoint. |
 | `Node` | Borrowed handle for navigation, attributes, text extraction, scoped queries. |
 | `Selector` | Compiled selector representation (`compile` / `compileRuntime`). |
-| `ParseOptions` | Parse behavior knobs (normalization, parent pointers, turbo mode). |
+| `ParseOptions` | Parse behavior knobs (normalization, parent pointers, deferred attr parsing, eager views). |
 | `TextOptions` | Text extraction options (`normalize_whitespace`). |
 
 ## Operational Caveats
