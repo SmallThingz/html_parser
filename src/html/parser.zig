@@ -9,22 +9,19 @@ const EnableIncrementalTagHash = true;
 const EnableTextNormalizeFastPath = true;
 
 pub fn parseInto(comptime Doc: type, noalias doc: *Doc, input: []u8, comptime opts: anytype) !void {
-    const OptType = @TypeOf(opts);
-    var p = Parser(Doc, OptType){
+    var p = Parser(Doc, opts){
         .doc = doc,
         .input = input,
         .i = 0,
-        .opts = opts,
     };
     try p.parse();
 }
 
-fn Parser(comptime Doc: type, comptime OptType: type) type {
+fn Parser(comptime Doc: type, comptime opts: anytype) type {
     return struct {
         doc: *Doc,
         input: []u8,
         i: usize,
-        opts: OptType,
 
         const Self = @This();
 
@@ -74,8 +71,15 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         fn reserveCapacities(noalias self: *Self) !void {
             const alloc = self.doc.allocator;
             const input_len = self.input.len;
-            const estimated_nodes = @max(@as(usize, 16), (input_len / 12) + 8);
-            const estimated_stack = @max(@as(usize, 8), (input_len / 256) + 8);
+            var estimated_nodes = @max(@as(usize, 16), (input_len / 12) + 8);
+            var estimated_stack = @max(@as(usize, 8), (input_len / 256) + 8);
+
+            // Fastest-mode style parses benefit from larger upfront reserves to
+            // avoid repeated growth checks in the hot append path.
+            if (opts.defer_attribute_parsing and opts.drop_whitespace_text_nodes and !opts.normalize_text_on_parse) {
+                estimated_nodes = @max(@as(usize, 32), (input_len / 6) + 32);
+                estimated_stack = @max(@as(usize, 16), (input_len / 192) + 16);
+            }
 
             try self.doc.nodes.ensureTotalCapacity(alloc, estimated_nodes);
             try self.doc.parse_stack.ensureTotalCapacity(alloc, estimated_stack);
@@ -85,14 +89,14 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const start = self.i;
             self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
-            if (self.opts.drop_whitespace_text_nodes and isAllAsciiWhitespace(self.input[start..self.i])) return;
+            if (opts.drop_whitespace_text_nodes and isAllAsciiWhitespace(self.input[start..self.i])) return;
 
             const parent_idx = self.currentParent();
             const node_idx = try self.appendNode(.text, parent_idx);
             var node = &self.doc.nodes.items[node_idx];
             node.text = .{ .start = @intCast(start), .end = @intCast(self.i) };
 
-            if (self.opts.normalize_text_on_parse) {
+            if (opts.normalize_text_on_parse) {
                 normalizeTextNodeInPlace(self.input, &node.text);
             }
 
@@ -106,10 +110,16 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const name_start = self.i;
             var saw_upper = false;
             var tag_hash_acc = tags.TagHash.init();
-            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                const c = self.input[self.i];
-                if (c >= 'A' and c <= 'Z') saw_upper = true;
-                if (EnableIncrementalTagHash) tag_hash_acc.update(c);
+            if (opts.normalize_input) {
+                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                    const c = self.input[self.i];
+                    if (c >= 'A' and c <= 'Z') saw_upper = true;
+                    if (EnableIncrementalTagHash) tag_hash_acc.update(c);
+                }
+            } else {
+                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                    if (EnableIncrementalTagHash) tag_hash_acc.update(self.input[self.i]);
+                }
             }
             if (self.i == name_start) {
                 // malformed tag, consume one byte and move on
@@ -117,7 +127,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 return;
             }
 
-            if (self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
+            if (opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
             const tag_name = self.input[name_start..self.i];
             const tag_name_hash = if (EnableIncrementalTagHash) tag_hash_acc.value() else tags.hashBytes(tag_name);
 
@@ -137,7 +147,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
 
-            if (self.opts.defer_attribute_parsing) {
+            if (opts.defer_attribute_parsing) {
                 // Fast paths for very common cases with no attributes.
                 if (self.i < self.input.len and self.input[self.i] == '>') {
                     attr_bytes_end = self.i;
@@ -239,16 +249,20 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         fn parseAttribute(noalias self: *Self) !void {
             const name_start = self.i;
             var saw_upper = false;
-            while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {
-                const c = self.input[self.i];
-                if (c >= 'A' and c <= 'Z') saw_upper = true;
+            if (opts.normalize_input) {
+                while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {
+                    const c = self.input[self.i];
+                    if (c >= 'A' and c <= 'Z') saw_upper = true;
+                }
+            } else {
+                while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {}
             }
             if (self.i == name_start) {
                 self.i += 1;
                 return;
             }
 
-            if (self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
+            if (opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
 
             if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
             if (self.i < self.input.len and self.input[self.i] == '=') {
@@ -258,7 +272,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
                 if (self.i >= self.input.len or self.input[self.i] == '>' or (self.input[self.i] == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>')) {
                     // Canonical rewrite for explicit empty assignment: `a=` -> `a `.
-                    if (self.opts.eager_attr_empty_rewrite) self.input[eq_index] = ' ';
+                    if (opts.eager_attr_empty_rewrite) self.input[eq_index] = ' ';
                 } else if (self.i < self.input.len and (self.input[self.i] == '\'' or self.input[self.i] == '"')) {
                     const q = self.input[self.i];
                     const q_start = self.i + 1;
@@ -281,13 +295,19 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const name_start = self.i;
             var saw_upper = false;
             var close_hash_acc = tags.TagHash.init();
-            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                const c = self.input[self.i];
-                if (c >= 'A' and c <= 'Z') saw_upper = true;
-                if (EnableIncrementalTagHash) close_hash_acc.update(c);
+            if (opts.normalize_input) {
+                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                    const c = self.input[self.i];
+                    if (c >= 'A' and c <= 'Z') saw_upper = true;
+                    if (EnableIncrementalTagHash) close_hash_acc.update(c);
+                }
+            } else {
+                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                    if (EnableIncrementalTagHash) close_hash_acc.update(self.input[self.i]);
+                }
             }
             const name_end = self.i;
-            if (name_end > name_start and self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..name_end]);
+            if (name_end > name_start and opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..name_end]);
             const close_name = self.input[name_start..name_end];
             const close_hash = if (EnableIncrementalTagHash) close_hash_acc.value() else tags.hashBytes(close_name);
 
@@ -302,9 +322,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 const hash_mismatch = top.tag_hash != close_hash;
                 if (!hash_mismatch) {
                     const top_name = top.name.slice(self.input);
-                    if (!std.mem.eql(u8, top_name, close_name) and !tables.eqlIgnoreCaseAscii(top_name, close_name)) {
-                        // fall through to stack walk
-                    } else {
+                    const matches_top = if (opts.normalize_input)
+                        std.mem.eql(u8, top_name, close_name)
+                    else
+                        std.mem.eql(u8, top_name, close_name) or tables.eqlIgnoreCaseAscii(top_name, close_name);
+                    if (matches_top) {
                         _ = self.doc.parse_stack.pop();
                         var node = &self.doc.nodes.items[top_idx];
                         node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
@@ -321,7 +343,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 const n = &self.doc.nodes.items[idx];
                 if (n.tag_hash != close_hash) continue;
                 const open_name = n.name.slice(self.input);
-                if (!std.mem.eql(u8, open_name, close_name) and !tables.eqlIgnoreCaseAscii(open_name, close_name)) {
+                const matches = if (opts.normalize_input)
+                    std.mem.eql(u8, open_name, close_name)
+                else
+                    std.mem.eql(u8, open_name, close_name) or tables.eqlIgnoreCaseAscii(open_name, close_name);
+                if (!matches) {
                     continue;
                 }
                 found = s;
