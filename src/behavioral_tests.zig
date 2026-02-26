@@ -27,12 +27,12 @@ test "parent navigation materializes parent indexes lazily" {
 
     var input = "<div id='root'><span id='child'></span></div>".*;
     try doc.parse(&input, .{});
-    try std.testing.expect(!doc.store_parent_pointers);
+    try std.testing.expect(!doc.parent_indexes_ready);
 
     const child = doc.queryOne("span#child") orelse return error.TestUnexpectedResult;
     const parent = child.parentNode() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("root", parent.getAttributeValue("id").?);
-    try std.testing.expect(doc.store_parent_pointers);
+    try std.testing.expect(doc.parent_indexes_ready);
 
     const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
     try std.testing.expect(root.firstChild() != null);
@@ -45,10 +45,10 @@ test "queries that need ancestry lazily materialize parent pointers" {
 
     var input = "<div id='a'><span id='b'><em id='c'></em></span></div>".*;
     try doc.parse(&input, .{});
-    try std.testing.expect(!doc.store_parent_pointers);
+    try std.testing.expect(!doc.parent_indexes_ready);
 
     try std.testing.expect(doc.queryOne("#a #c") != null);
-    try std.testing.expect(doc.store_parent_pointers);
+    try std.testing.expect(doc.parent_indexes_ready);
 }
 
 test "attr-only queries do not force parent pointer materialization" {
@@ -57,10 +57,10 @@ test "attr-only queries do not force parent pointer materialization" {
 
     var input = "<div id='a' class='x'></div>".*;
     try doc.parse(&input, .{});
-    try std.testing.expect(!doc.store_parent_pointers);
+    try std.testing.expect(!doc.parent_indexes_ready);
 
     try std.testing.expect(doc.queryOne("div#a[class=x]") != null);
-    try std.testing.expect(!doc.store_parent_pointers);
+    try std.testing.expect(!doc.parent_indexes_ready);
 }
 
 test "queryAll yields matches in document preorder" {

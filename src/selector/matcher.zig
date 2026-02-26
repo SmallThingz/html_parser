@@ -176,9 +176,7 @@ fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Se
         const tag = comp.tag.slice(selector.source);
         const tag_hash: tags.TagHashValue = if (comp.tag_hash != 0) @intCast(comp.tag_hash) else tags.hashBytes(tag);
         if (node.tag_hash != tag_hash) return false;
-        if (doc.input_was_normalized) {
-            if (!std.mem.eql(u8, node.name.slice(doc.source), tag)) return false;
-        } else if (!tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag)) return false;
+        if (!tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag)) return false;
     }
 
     if (comp.has_id != 0) {
@@ -236,11 +234,7 @@ fn matchesNotSimple(
     item: ast.NotSimple,
 ) bool {
     return switch (item.kind) {
-        .tag => blk: {
-            const tag = item.text.slice(selector_source);
-            if (doc.input_was_normalized) break :blk std.mem.eql(u8, node.name.slice(doc.source), tag);
-            break :blk tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag);
-        },
+        .tag => tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), item.text.slice(selector_source)),
         .id => blk: {
             const id = item.text.slice(selector_source);
             const v = attrValueByHashFrom(doc, node, probe, collected, "id", HashId) orelse break :blk false;
@@ -365,7 +359,7 @@ fn attrValueByHashFrom(
     name_hash: u32,
 ) ?[]const u8 {
     if (collected) |c| {
-        if (findCollectedEntry(c, name, name_hash, doc.input_was_normalized)) |idx| {
+        if (findCollectedEntry(c, name, name_hash)) |idx| {
             if (c.materialized or c.looked[idx]) return c.values[idx];
 
             if (c.request_count == 0) {
@@ -382,7 +376,6 @@ fn attrValueByHashFrom(
                 c.names[0..c.count],
                 c.name_hashes[0..c.count],
                 c.values[0..c.count],
-                doc.input_was_normalized,
             );
             c.materialized = true;
             var i: usize = 0;
@@ -394,7 +387,7 @@ fn attrValueByHashFrom(
 }
 
 fn attrValueByHash(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []const u8, name_hash: u32) ?[]const u8 {
-    if (findProbeEntry(probe, name, name_hash, doc.input_was_normalized)) |idx| {
+    if (findProbeEntry(probe, name, name_hash)) |idx| {
         return probe.entries[idx].value;
     }
 
@@ -471,7 +464,7 @@ fn prepareCollectedAttrs(selector: ast.Selector, comp: ast.Compound, out: *Colle
 }
 
 fn pushCollectedName(out: *CollectedAttrs, name: []const u8, name_hash: u32) bool {
-    if (findCollectedEntry(out, name, name_hash, false) != null) return true;
+    if (findCollectedEntry(out, name, name_hash) != null) return true;
     if (out.count >= MaxCollectedAttrs) return false;
     out.names[out.count] = name;
     out.name_hashes[out.count] = name_hash;
@@ -480,28 +473,25 @@ fn pushCollectedName(out: *CollectedAttrs, name: []const u8, name_hash: u32) boo
     return true;
 }
 
-fn findCollectedEntry(collected: *const CollectedAttrs, needle: []const u8, needle_hash: u32, input_was_normalized: bool) ?usize {
+fn findCollectedEntry(collected: *const CollectedAttrs, needle: []const u8, needle_hash: u32) ?usize {
     var i: usize = 0;
     while (i < collected.count) : (i += 1) {
         if (collected.name_hashes[i] != needle_hash) continue;
-        if (input_was_normalized) {
-            if (std.mem.eql(u8, collected.names[i], needle)) return i;
-            continue;
-        }
-        if (tables.eqlIgnoreCaseAscii(collected.names[i], needle)) return i;
+        const cand = collected.names[i];
+        if (cand.len != needle.len) continue;
+        if (cand.len != 0 and tables.lower(cand[0]) != tables.lower(needle[0])) continue;
+        if (tables.eqlIgnoreCaseAscii(cand, needle)) return i;
     }
     return null;
 }
 
-fn findProbeEntry(noalias probe: *const AttrProbe, needle: []const u8, needle_hash: u32, input_was_normalized: bool) ?usize {
+fn findProbeEntry(noalias probe: *const AttrProbe, needle: []const u8, needle_hash: u32) ?usize {
     var i: usize = 0;
     while (i < probe.count) : (i += 1) {
         const entry = probe.entries[i];
         if (entry.name_hash != needle_hash) continue;
-        if (input_was_normalized) {
-            if (std.mem.eql(u8, entry.name, needle)) return i;
-            continue;
-        }
+        if (entry.name.len != needle.len) continue;
+        if (entry.name.len != 0 and tables.lower(entry.name[0]) != tables.lower(needle[0])) continue;
         if (tables.eqlIgnoreCaseAscii(entry.name, needle)) return i;
     }
     return null;

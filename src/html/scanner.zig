@@ -13,15 +13,15 @@ pub inline fn findByte(hay: []const u8, start: usize, needle: u8) ?usize {
 }
 
 pub fn findTagEndRespectQuotes(hay: []const u8, start: usize) ?TagEnd {
-    var i = start;
-    var quote: ?u8 = null;
+    const first = findAny3Dispatch(hay, start, '>', '"', '\'') orelse return null;
+    const first_ch = hay[first];
+    if (first_ch == '>') return finalizeTagEnd(hay, start, first);
+
+    var quote = first_ch;
+    var i = first + 1;
     while (i < hay.len) {
-        if (quote) |q| {
-            const q_pos = findByteDispatch(hay, i, q) orelse return null;
-            i = q_pos + 1;
-            quote = null;
-            continue;
-        }
+        const q_pos = findByteDispatch(hay, i, quote) orelse return null;
+        i = q_pos + 1;
 
         const pos = findAny3Dispatch(hay, i, '>', '"', '\'') orelse return null;
         const ch = hay[pos];

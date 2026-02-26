@@ -11,7 +11,6 @@ const tags = @import("tags.zig");
 pub const InvalidIndex: u32 = std.math.maxInt(u32);
 const QueryAccelMinBudgetBytes: usize = 4096;
 const QueryAccelBudgetDivisor: usize = 20; // 5%
-const EnableChildViewPrefixBuilder = false;
 
 const IndexSpan = struct {
     start: u32 = 0,
@@ -35,7 +34,7 @@ pub const ParseOptions = struct {
     // In fastest-mode style runs, whitespace-only text nodes can be dropped.
     drop_whitespace_text_nodes: bool = false,
 
-    pub fn GetNodeRaw(options: @This()) type {
+    pub fn GetNodeRaw(_: @This()) type {
         return struct {
             kind: NodeType,
 
@@ -51,8 +50,6 @@ pub const ParseOptions = struct {
             prev_sibling: u32 = InvalidIndex,
             next_sibling: u32 = InvalidIndex,
             parent: void = {},
-
-            child_view: if (options.eager_child_views) Span else void = if (options.eager_child_views) .{} else {},
 
             subtree_end: u32 = 0,
         };
@@ -187,9 +184,7 @@ pub const ParseOptions = struct {
 
             allocator: std.mem.Allocator,
             source: []u8 = &[_]u8{},
-            store_parent_pointers: bool = false,
             child_views_ready: bool = false,
-            input_was_normalized: bool = false,
 
             nodes: std.ArrayListUnmanaged(RawNodeType) = .{},
             child_indexes: std.ArrayListUnmanaged(u32) = .{},
@@ -260,8 +255,6 @@ pub const ParseOptions = struct {
             pub fn parse(noalias self: *DocSelf, input: []u8, comptime opts: ParseOptions) !void {
                 self.clear();
                 self.source = input;
-                self.store_parent_pointers = false;
-                self.input_was_normalized = false;
                 self.query_accel_budget_bytes = @max(input.len / QueryAccelBudgetDivisor, QueryAccelMinBudgetBytes);
                 try parser.parseInto(DocSelf, self, input, opts);
                 if (opts.eager_child_views) {
@@ -341,12 +334,8 @@ pub const ParseOptions = struct {
             }
 
             pub fn ensureParentIndexesBuilt(noalias self: *DocSelf) void {
-                if (self.parent_indexes_ready) {
-                    self.store_parent_pointers = true;
-                    return;
-                }
+                if (self.parent_indexes_ready) return;
                 self.buildParentIndexes() catch @panic("out of memory building parent indexes");
-                self.store_parent_pointers = true;
             }
 
             fn buildParentIndexes(noalias self: *DocSelf) !void {
@@ -384,9 +373,7 @@ pub const ParseOptions = struct {
                 while (i < self.nodes.items.len) : (i += 1) {
                     const n = &self.nodes.items[i];
                     if (n.kind != .element) continue;
-                    if (self.input_was_normalized) {
-                        if (std.mem.eql(u8, n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
-                    } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
+                    if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
                 }
                 return null;
             }
@@ -634,70 +621,23 @@ pub const ParseOptions = struct {
                 try self.child_view_lens.ensureTotalCapacity(alloc, node_count);
                 self.child_view_starts.items.len = node_count;
                 self.child_view_lens.items.len = node_count;
-
-                if (!EnableChildViewPrefixBuilder) {
-                    self.child_indexes.clearRetainingCapacity();
-                    const child_count = if (node_count > 0) node_count - 1 else 0;
-                    try self.child_indexes.ensureTotalCapacity(alloc, child_count);
-
-                    var i_old: u32 = 0;
-                    while (i_old < node_count) : (i_old += 1) {
-                        self.child_view_starts.items[i_old] = @intCast(self.child_indexes.items.len);
-                        self.child_view_lens.items[i_old] = 0;
-
-                        var child_old = self.nodes.items[i_old].first_child;
-                        while (child_old != InvalidIndex) {
-                            self.child_indexes.appendAssumeCapacity(child_old);
-                            self.child_view_lens.items[i_old] += 1;
-                            child_old = self.nodes.items[child_old].next_sibling;
-                        }
-                    }
-
-                    self.child_views_ready = true;
-                    return;
-                }
-
                 self.child_indexes.clearRetainingCapacity();
                 const child_count = if (node_count > 0) node_count - 1 else 0;
                 try self.child_indexes.ensureTotalCapacity(alloc, child_count);
-                self.child_indexes.items.len = child_count;
+                self.child_indexes.items.len = 0;
 
                 var i: u32 = 0;
                 while (i < node_count) : (i += 1) {
-                    var count: u32 = 0;
+                    self.child_view_starts.items[i] = @intCast(self.child_indexes.items.len);
+                    self.child_view_lens.items[i] = 0;
+
                     var child = self.nodes.items[i].first_child;
-                    while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
-                        count += 1;
-                    }
-                    self.child_view_lens.items[i] = count;
-                }
-
-                var offset: u32 = 0;
-                i = 0;
-                while (i < node_count) : (i += 1) {
-                    self.child_view_starts.items[i] = offset;
-                    offset += self.child_view_lens.items[i];
-                }
-
-                self.parse_stack.clearRetainingCapacity();
-                try self.parse_stack.ensureTotalCapacity(alloc, node_count);
-                self.parse_stack.items.len = node_count;
-
-                i = 0;
-                while (i < node_count) : (i += 1) {
-                    self.parse_stack.items[i] = self.child_view_starts.items[i];
-                }
-
-                i = 0;
-                while (i < node_count) : (i += 1) {
-                    var child = self.nodes.items[i].first_child;
-                    while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
-                        const write_idx = self.parse_stack.items[i];
-                        self.child_indexes.items[write_idx] = child;
-                        self.parse_stack.items[i] = write_idx + 1;
+                    while (child != InvalidIndex) {
+                        self.child_indexes.appendAssumeCapacity(child);
+                        self.child_view_lens.items[i] += 1;
+                        child = self.nodes.items[child].next_sibling;
                     }
                 }
-                self.parse_stack.clearRetainingCapacity();
 
                 self.child_views_ready = true;
             }

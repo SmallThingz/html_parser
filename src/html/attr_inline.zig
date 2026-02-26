@@ -23,6 +23,9 @@ const LookupKind = enum(u8) {
     href,
 };
 
+const FnvOffset: u32 = 2166136261;
+const FnvPrime: u32 = 16777619;
+
 // Attribute traversal and value materialization are intentionally in-place.
 // Wire states after name parsing:
 // - `name=...` raw value, lazily materialized on first read
@@ -33,7 +36,6 @@ pub fn getAttrValue(noalias doc_ptr: anytype, node: anytype, name: []const u8) ?
     const source: []u8 = mut_doc.source;
     const lookup_kind = classifyLookupName(name);
     const lookup_hash = if (lookup_kind == .generic) hashIgnoreCaseAscii(name) else 0;
-    const input_normalized = mut_doc.input_was_normalized;
 
     var i: usize = node.attr_bytes.start;
     const end: usize = node.attr_bytes.end;
@@ -47,7 +49,12 @@ pub fn getAttrValue(noalias doc_ptr: anytype, node: anytype, name: []const u8) ?
         if (c == '>' or c == '/') return null;
 
         const name_start = i;
-        while (i < end and tables.IdentCharTable[source[i]]) : (i += 1) {}
+        var attr_name_hash: u32 = FnvOffset;
+        while (i < end and tables.IdentCharTable[source[i]]) : (i += 1) {
+            if (lookup_kind == .generic) {
+                attr_name_hash = hashIgnoreCaseAsciiUpdate(attr_name_hash, source[i]);
+            }
+        }
         if (i == name_start) {
             i += 1;
             continue;
@@ -55,7 +62,7 @@ pub fn getAttrValue(noalias doc_ptr: anytype, node: anytype, name: []const u8) ?
 
         const name_end = i;
         const attr_name = source[name_start..name_end];
-        const is_target = matchesLookupName(attr_name, name, lookup_kind, lookup_hash, input_normalized);
+        const is_target = matchesLookupNameHashed(attr_name, attr_name_hash, name, lookup_kind, lookup_hash);
 
         if (i >= end) {
             if (is_target) return "";
@@ -181,7 +188,6 @@ pub fn collectSelectedValuesByHash(
     selected_names: []const []const u8,
     selected_hashes: []const u32,
     out_values: []?[]const u8,
-    input_normalized: bool,
 ) void {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
@@ -204,21 +210,22 @@ pub fn collectSelectedValuesByHash(
         if (c == '>' or c == '/') break;
 
         const name_start = i;
-        while (i < end and tables.IdentCharTable[source[i]]) : (i += 1) {}
+        var name_hash: u32 = FnvOffset;
+        while (i < end and tables.IdentCharTable[source[i]]) : (i += 1) {
+            name_hash = hashIgnoreCaseAsciiUpdate(name_hash, source[i]);
+        }
         if (i == name_start) {
             i += 1;
             continue;
         }
 
         const name_slice = source[name_start..i];
-        const name_hash = hashIgnoreCaseAscii(name_slice);
         const selected_idx = firstUnresolvedMatchByHash(
             selected_names,
             selected_hashes,
             out_values,
             name_slice,
             name_hash,
-            input_normalized,
         );
 
         if (i >= end) {
@@ -448,7 +455,7 @@ fn firstUnresolvedMatch(selected_names: []const []const u8, out_values: []const 
     var idx: usize = 0;
     while (idx < selected_names.len) : (idx += 1) {
         if (out_values[idx] != null) continue;
-        if (matchesLookupName(name, selected_names[idx], .generic, hashIgnoreCaseAscii(selected_names[idx]), false)) return idx;
+        if (matchesLookupName(name, selected_names[idx], .generic, hashIgnoreCaseAscii(selected_names[idx]))) return idx;
     }
     return null;
 }
@@ -459,18 +466,22 @@ fn firstUnresolvedMatchByHash(
     out_values: []const ?[]const u8,
     name: []const u8,
     name_hash: u32,
-    input_normalized: bool,
 ) ?usize {
     var idx: usize = 0;
     while (idx < selected_names.len) : (idx += 1) {
         if (out_values[idx] != null) continue;
         if (selected_hashes[idx] != name_hash) continue;
-        if (matchesLookupName(name, selected_names[idx], .generic, selected_hashes[idx], input_normalized)) return idx;
+        if (matchesLookupNameHashed(name, name_hash, selected_names[idx], .generic, selected_hashes[idx])) return idx;
     }
     return null;
 }
 
-fn matchesLookupName(attr_name: []const u8, lookup: []const u8, lookup_kind: LookupKind, lookup_hash: u32, input_normalized: bool) bool {
+fn matchesLookupName(attr_name: []const u8, lookup: []const u8, lookup_kind: LookupKind, lookup_hash: u32) bool {
+    const attr_hash = if (lookup_kind == .generic) hashIgnoreCaseAscii(attr_name) else 0;
+    return matchesLookupNameHashed(attr_name, attr_hash, lookup, lookup_kind, lookup_hash);
+}
+
+fn matchesLookupNameHashed(attr_name: []const u8, attr_hash: u32, lookup: []const u8, lookup_kind: LookupKind, lookup_hash: u32) bool {
     switch (lookup_kind) {
         .id => return isExactAsciiWord(attr_name, "id"),
         .class => return isExactAsciiWord(attr_name, "class"),
@@ -480,8 +491,7 @@ fn matchesLookupName(attr_name: []const u8, lookup: []const u8, lookup_kind: Loo
 
     if (attr_name.len != lookup.len) return false;
     if (attr_name.len != 0 and toLowerAscii(attr_name[0]) != toLowerAscii(lookup[0])) return false;
-    if (hashIgnoreCaseAscii(attr_name) != lookup_hash) return false;
-    if (input_normalized and isAlreadyLowerAscii(lookup)) return std.mem.eql(u8, attr_name, lookup);
+    if (attr_hash != lookup_hash) return false;
     return tables.eqlIgnoreCaseAscii(attr_name, lookup);
 }
 
@@ -493,18 +503,15 @@ fn classifyLookupName(lookup: []const u8) LookupKind {
 }
 
 fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
-    var h: u32 = 2166136261;
+    var h: u32 = FnvOffset;
     for (bytes) |c| {
-        h = (h ^ @as(u32, tables.lower(c))) *% 16777619;
+        h = hashIgnoreCaseAsciiUpdate(h, c);
     }
     return h;
 }
 
-fn isAlreadyLowerAscii(bytes: []const u8) bool {
-    for (bytes) |c| {
-        if (c >= 'A' and c <= 'Z') return false;
-    }
-    return true;
+inline fn hashIgnoreCaseAsciiUpdate(h: u32, c: u8) u32 {
+    return (h ^ @as(u32, tables.lower(c))) *% FnvPrime;
 }
 
 fn isExactAsciiWord(value: []const u8, comptime lower: []const u8) bool {
