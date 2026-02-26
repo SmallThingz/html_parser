@@ -19,6 +19,9 @@ fn run() !void {
 
     const children = main.children();
     try std.testing.expectEqual(@as(usize, 3), children.len);
+    const first_idx = children[0];
+    const first_via_index = main.doc.nodeAt(first_idx) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("title", first_via_index.getAttributeValue("id").?);
 }
 
 test "navigation and borrowed children slice" {

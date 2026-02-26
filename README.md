@@ -110,6 +110,8 @@ Two bundles are used by the benchmark harness and conformance runner:
 - eager child views off (child views are built lazily if `children()` is called)
 - drop whitespace-only text nodes during parse
 
+`children()` returns a borrowed `[]const u32` index slice into the document's node array.
+
 ## Selector Support (v1)
 
 Supported (intentionally limited scope):

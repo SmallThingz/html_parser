@@ -26,4 +26,4 @@
 
 - Parser is permissive and attempts recovery for malformed markup.
 - Raw-text elements and optional-close behavior use table/tag-aware logic.
-- Parse options can defer attribute parsing and child-view materialization when needed.
+- Parse options currently tune child-view eagerness and whitespace-only text-node dropping.

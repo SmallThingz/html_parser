@@ -63,7 +63,10 @@ test "example parity: navigation and children" {
 
     try std.testing.expectEqualStrings("title", first.getAttributeValue("id").?);
     try std.testing.expectEqualStrings("body", last.getAttributeValue("id").?);
-    try std.testing.expectEqual(@as(usize, 3), main.children().len);
+    const children = main.children();
+    try std.testing.expectEqual(@as(usize, 3), children.len);
+    const first_via_index = main.doc.nodeAt(children[0]) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("title", first_via_index.getAttributeValue("id").?);
 }
 
 test "example parity: innerText options" {

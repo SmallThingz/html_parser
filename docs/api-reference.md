@@ -46,6 +46,7 @@ Content/attributes:
 - `getAttributeValue(name)`
 - `innerText(arena_allocator)`
 - `innerTextWithOptions(arena_allocator, TextOptions)`
+- `children()` returns borrowed `[]const u32` child indexes
 
 Scoped query entrypoints:
 
