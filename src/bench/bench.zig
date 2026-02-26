@@ -23,6 +23,7 @@ fn parseDocForParseBench(noalias doc: *root.Document, input: []u8, mode: BenchMo
             .eager_child_views = true,
             .eager_attr_empty_rewrite = true,
             .defer_attribute_parsing = false,
+            .drop_whitespace_text_nodes = false,
         }),
         .fastest => try doc.parse(input, .{
             .store_parent_pointers = false,
@@ -31,6 +32,7 @@ fn parseDocForParseBench(noalias doc: *root.Document, input: []u8, mode: BenchMo
             .eager_child_views = false,
             .eager_attr_empty_rewrite = false,
             .defer_attribute_parsing = true,
+            .drop_whitespace_text_nodes = true,
         }),
     }
 }
@@ -44,6 +46,7 @@ fn parseDocForQueryBench(noalias doc: *root.Document, input: []u8, mode: BenchMo
             .eager_child_views = true,
             .eager_attr_empty_rewrite = true,
             .defer_attribute_parsing = false,
+            .drop_whitespace_text_nodes = false,
         }),
         .fastest => try doc.parse(input, .{
             .store_parent_pointers = false,
@@ -52,6 +55,7 @@ fn parseDocForQueryBench(noalias doc: *root.Document, input: []u8, mode: BenchMo
             .eager_child_views = false,
             .eager_attr_empty_rewrite = false,
             .defer_attribute_parsing = true,
+            .drop_whitespace_text_nodes = true,
         }),
     }
 }
@@ -90,8 +94,11 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     const input = try std.fs.cwd().readFileAlloc(alloc, path, std.math.maxInt(usize));
     defer alloc.free(input);
 
-    const working = try alloc.alloc(u8, input.len);
-    defer alloc.free(working);
+    var working_opt: ?[]u8 = null;
+    if (mode == .strictest) {
+        working_opt = try alloc.alloc(u8, input.len);
+    }
+    defer if (working_opt) |working| alloc.free(working);
 
     var parse_arena = std.heap.ArenaAllocator.init(alloc);
     defer parse_arena.deinit();
@@ -99,12 +106,16 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
-        @memcpy(working, input);
         const iter_alloc = parse_arena.allocator();
         {
             var doc = root.Document.init(iter_alloc);
             defer doc.deinit();
-            try parseDocForParseBench(&doc, working, mode);
+            if (working_opt) |working| {
+                @memcpy(working, input);
+                try parseDocForParseBench(&doc, working, mode);
+            } else {
+                try parseDocForParseBench(&doc, input, mode);
+            }
         }
         _ = parse_arena.reset(.retain_capacity);
     }

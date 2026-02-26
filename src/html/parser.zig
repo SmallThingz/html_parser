@@ -29,14 +29,13 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         const Self = @This();
 
         fn parse(noalias self: *Self) !void {
-            const alloc = self.doc.allocator;
             try self.reserveCapacities();
 
-            try self.doc.nodes.append(alloc, .{
+            _ = try self.pushNode(.{
                 .kind = .document,
                 .subtree_end = 0,
             });
-            try self.doc.parse_stack.append(alloc, 0);
+            try self.pushStack(0);
 
             while (self.i < self.input.len) {
                 if (self.input[self.i] != '<') {
@@ -86,6 +85,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             const start = self.i;
             self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
+            if (self.opts.drop_whitespace_text_nodes and isAllAsciiWhitespace(self.input[start..self.i])) return;
 
             const parent_idx = self.currentParent();
             const node_idx = try self.appendNode(.text, parent_idx);
@@ -138,9 +138,17 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             var attr_bytes_end: usize = self.i;
 
             if (self.opts.defer_attribute_parsing) {
-                // Fast path: scan to tag end while honoring quotes so `>` inside
-                // attribute values does not terminate the tag early.
-                if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
+                // Fast paths for very common cases with no attributes.
+                if (self.i < self.input.len and self.input[self.i] == '>') {
+                    attr_bytes_end = self.i;
+                    self.i += 1;
+                } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
+                    explicit_self_close = true;
+                    attr_bytes_end = self.i;
+                    self.i += 2;
+                } else if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
+                    // Scan to tag end while honoring quotes so `>` inside
+                    // attribute values does not terminate the tag early.
                     explicit_self_close = tag_end.self_close;
                     attr_bytes_end = tag_end.attr_end;
                     self.i = tag_end.gt_index + 1;
@@ -225,7 +233,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 return;
             }
 
-            try self.doc.parse_stack.append(self.doc.allocator, node_idx);
+            try self.pushStack(node_idx);
         }
 
         fn parseAttribute(noalias self: *Self) !void {
@@ -342,9 +350,8 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
         }
 
         fn appendNode(noalias self: *Self, kind: anytype, parent_idx: u32) !u32 {
-            const alloc = self.doc.allocator;
             const idx: u32 = @intCast(self.doc.nodes.items.len);
-            const build_links = parent_idx != InvalidIndex;
+            const build_links = parent_idx != InvalidIndex and kind == .element;
 
             var node: @TypeOf(self.doc.nodes.items[0]) = .{
                 .kind = kind,
@@ -353,7 +360,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             if (parent_idx != InvalidIndex and self.doc.store_parent_pointers) node.parent = parent_idx;
 
-            try self.doc.nodes.append(alloc, node);
+            _ = try self.pushNode(node);
 
             if (build_links) {
                 var p = &self.doc.nodes.items[parent_idx];
@@ -369,6 +376,27 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             }
 
             return idx;
+        }
+
+        fn pushNode(noalias self: *Self, node: @TypeOf(self.doc.nodes.items[0])) !u32 {
+            const len = self.doc.nodes.items.len;
+            if (len == self.doc.nodes.capacity) {
+                var target = len +| (len >> 1) + 16;
+                if (target <= len) target = len + 1;
+                try self.doc.nodes.ensureTotalCapacity(self.doc.allocator, target);
+            }
+            self.doc.nodes.appendAssumeCapacity(node);
+            return @intCast(len);
+        }
+
+        fn pushStack(noalias self: *Self, idx: u32) !void {
+            const len = self.doc.parse_stack.items.len;
+            if (len == self.doc.parse_stack.capacity) {
+                var target = len +| (len >> 1) + 16;
+                if (target <= len) target = len + 1;
+                try self.doc.parse_stack.ensureTotalCapacity(self.doc.allocator, target);
+            }
+            self.doc.parse_stack.appendAssumeCapacity(idx);
         }
 
         fn currentParent(noalias self: *Self) u32 {
@@ -524,6 +552,13 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
                 prev_ws = true;
             }
             return false;
+        }
+
+        fn isAllAsciiWhitespace(bytes: []const u8) bool {
+            for (bytes) |c| {
+                if (!tables.WhitespaceTable[c]) return false;
+            }
+            return true;
         }
     };
 }

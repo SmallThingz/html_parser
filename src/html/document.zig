@@ -36,6 +36,8 @@ pub const ParseOptions = struct {
     eager_attr_empty_rewrite: bool = true,
     // Skip per-attribute parse-time work; keep raw attr bytes and parse lazily.
     defer_attribute_parsing: bool = false,
+    // In fastest-mode style runs, whitespace-only text nodes can be dropped.
+    drop_whitespace_text_nodes: bool = false,
 };
 
 pub const TextOptions = node_api.TextOptions;
