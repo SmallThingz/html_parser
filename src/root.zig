@@ -1,11 +1,24 @@
 const std = @import("std");
 
-pub const Document = @import("html/document.zig").Document;
-pub const Node = @import("html/document.zig").Node;
-pub const NodeRaw = @import("html/document.zig").NodeRaw;
 pub const ParseOptions = @import("html/document.zig").ParseOptions;
 pub const TextOptions = @import("html/document.zig").TextOptions;
 pub const Selector = @import("selector/ast.zig").Selector;
+
+pub fn GetDocument(comptime options: ParseOptions) type {
+    return options.GetDocument();
+}
+
+pub fn GetNode(comptime options: ParseOptions) type {
+    return options.GetNode();
+}
+
+pub fn GetNodeRaw(comptime options: ParseOptions) type {
+    return options.GetNodeRaw();
+}
+
+pub fn GetQueryIter(comptime options: ParseOptions) type {
+    return options.QueryIter();
+}
 
 pub fn bufferedPrint() !void {
     var stdout_buffer: [1024]u8 = undefined;
@@ -18,6 +31,8 @@ pub fn bufferedPrint() !void {
 
 test "smoke parse/query" {
     const alloc = std.testing.allocator;
+    const opts: ParseOptions = .{};
+    const Document = opts.GetDocument();
 
     var doc = Document.init(alloc);
     defer doc.deinit();

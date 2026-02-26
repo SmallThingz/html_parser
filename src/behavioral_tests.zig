@@ -1,8 +1,10 @@
 const std = @import("std");
 const html = @import("root.zig");
+const default_options: html.ParseOptions = .{};
+const Document = default_options.GetDocument();
 
 test "document helpers find html/head/body on full documents and return null for fragments" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var full = "<!doctype html><html><head><title>x</title></head><body><h1 id='t'>T</h1></body></html>".*;
@@ -19,15 +21,18 @@ test "document helpers find html/head/body on full documents and return null for
     try std.testing.expect(doc.body() == null);
 }
 
-test "parent pointers can be disabled without breaking other navigation" {
-    var doc = html.Document.init(std.testing.allocator);
+test "parent navigation materializes parent indexes lazily" {
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='root'><span id='child'></span></div>".*;
-    try doc.parse(&input, .{ .store_parent_pointers = false });
+    try doc.parse(&input, .{});
+    try std.testing.expect(!doc.store_parent_pointers);
 
     const child = doc.queryOne("span#child") orelse return error.TestUnexpectedResult;
-    try std.testing.expect(child.parentNode() == null);
+    const parent = child.parentNode() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("root", parent.getAttributeValue("id").?);
+    try std.testing.expect(doc.store_parent_pointers);
 
     const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
     try std.testing.expect(root.firstChild() != null);
@@ -35,11 +40,11 @@ test "parent pointers can be disabled without breaking other navigation" {
 }
 
 test "queries that need ancestry lazily materialize parent pointers" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='a'><span id='b'><em id='c'></em></span></div>".*;
-    try doc.parse(&input, .{ .store_parent_pointers = false });
+    try doc.parse(&input, .{});
     try std.testing.expect(!doc.store_parent_pointers);
 
     try std.testing.expect(doc.queryOne("#a #c") != null);
@@ -47,11 +52,11 @@ test "queries that need ancestry lazily materialize parent pointers" {
 }
 
 test "attr-only queries do not force parent pointer materialization" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='a' class='x'></div>".*;
-    try doc.parse(&input, .{ .store_parent_pointers = false });
+    try doc.parse(&input, .{});
     try std.testing.expect(!doc.store_parent_pointers);
 
     try std.testing.expect(doc.queryOne("div#a[class=x]") != null);
@@ -59,7 +64,7 @@ test "attr-only queries do not force parent pointer materialization" {
 }
 
 test "queryAll yields matches in document preorder" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     const input =
@@ -83,7 +88,7 @@ test "queryAll yields matches in document preorder" {
 }
 
 test "element navigation skips text nodes for sibling/child helpers" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='r'>hello<span id='s1'></span>world<b id='b1'></b><i id='i1'></i></div>".*;
@@ -104,7 +109,7 @@ test "element navigation skips text nodes for sibling/child helpers" {
 }
 
 test "parser remains permissive on malformed nesting" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='a'><span id='b'></div><p id='c'>tail".*;

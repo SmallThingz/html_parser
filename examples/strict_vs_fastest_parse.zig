@@ -1,5 +1,7 @@
 const std = @import("std");
 const html = @import("htmlparser");
+const default_options: html.ParseOptions = .{};
+const Document = default_options.GetDocument();
 
 fn run() !void {
     const fixture =
@@ -7,28 +9,20 @@ fn run() !void {
         "<ul><li class='item'>A</li><li class='item'>B</li></ul>" ++
         "</body></html>";
 
-    var strictest_doc = html.Document.init(std.testing.allocator);
+    var strictest_doc = Document.init(std.testing.allocator);
     defer strictest_doc.deinit();
     var strictest_buf = fixture.*;
     try strictest_doc.parse(&strictest_buf, .{
-        .store_parent_pointers = true,
-        .normalize_input = true,
-        .normalize_text_on_parse = true,
         .eager_child_views = true,
-        .eager_attr_empty_rewrite = true,
-        .defer_attribute_parsing = false,
+        .drop_whitespace_text_nodes = false,
     });
 
-    var fastest_doc = html.Document.init(std.testing.allocator);
+    var fastest_doc = Document.init(std.testing.allocator);
     defer fastest_doc.deinit();
     var fastest_buf = fixture.*;
     try fastest_doc.parse(&fastest_buf, .{
-        .store_parent_pointers = false,
-        .normalize_input = false,
-        .normalize_text_on_parse = false,
         .eager_child_views = false,
-        .eager_attr_empty_rewrite = false,
-        .defer_attribute_parsing = true,
+        .drop_whitespace_text_nodes = true,
     });
 
     const strictest_count = blk: {

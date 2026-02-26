@@ -5,7 +5,7 @@
 Checklist:
 
 - Verify selector syntax (`queryOneRuntime` can surface `error.InvalidSelector`).
-- Confirm `normalize_input` setting matches selector casing expectations.
+- Selectors are matched case-insensitively against tag/attribute names by default.
 - Confirm you are querying the expected scope (`Document` vs `Node` scoped queries).
 
 ## Missing or Unexpected `innerText`
@@ -19,7 +19,7 @@ Checklist:
 
 ## Parent Navigation Returns `null`
 
-`parentNode()` requires parse option `store_parent_pointers = true`.
+`parentNode()` is available and parent indexes are built lazily when needed.
 
 ## Input Buffer Looks Modified
 

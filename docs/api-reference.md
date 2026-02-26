@@ -1,6 +1,11 @@
 # API Reference
 
-## `Document`
+## `Document` Type Factory
+
+Construct a document type from parse options:
+
+- `const opts: ParseOptions = .{};`
+- `const Document = opts.GetDocument();`
 
 Lifecycle:
 
@@ -59,12 +64,8 @@ Scoped query entrypoints:
 
 ## `ParseOptions`
 
-- `store_parent_pointers: bool = true`
-- `normalize_input: bool = true`
-- `normalize_text_on_parse: bool = false`
 - `eager_child_views: bool = true`
-- `eager_attr_empty_rewrite: bool = true`
-- `defer_attribute_parsing: bool = false`
+- `drop_whitespace_text_nodes: bool = false`
 
 ## `TextOptions`
 

@@ -9,7 +9,7 @@ pub const TextOptions = struct {
     normalize_whitespace: bool = true,
 };
 
-pub fn firstChild(comptime Node: type, self: Node) ?Node {
+pub fn firstChild(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.first_child;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
@@ -19,7 +19,7 @@ pub fn firstChild(comptime Node: type, self: Node) ?Node {
     return null;
 }
 
-pub fn lastChild(comptime Node: type, self: Node) ?Node {
+pub fn lastChild(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.last_child;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].prev_sibling) {
@@ -29,7 +29,7 @@ pub fn lastChild(comptime Node: type, self: Node) ?Node {
     return null;
 }
 
-pub fn nextSibling(comptime Node: type, self: Node) ?Node {
+pub fn nextSibling(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.next_sibling;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
@@ -39,7 +39,7 @@ pub fn nextSibling(comptime Node: type, self: Node) ?Node {
     return null;
 }
 
-pub fn prevSibling(comptime Node: type, self: Node) ?Node {
+pub fn prevSibling(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.prev_sibling;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].prev_sibling) {
@@ -49,28 +49,27 @@ pub fn prevSibling(comptime Node: type, self: Node) ?Node {
     return null;
 }
 
-pub fn parentNode(comptime Node: type, self: Node) ?Node {
-    const raw = &self.doc.nodes.items[self.index];
-    if (!self.doc.store_parent_pointers) return null;
-    if (raw.parent == InvalidIndex or raw.parent == 0) return null;
-    return self.doc.nodeAt(raw.parent);
+pub fn parentNode(self: anytype) ?@TypeOf(self) {
+    self.doc.ensureParentIndexesBuilt();
+    const parent = self.doc.parentIndex(self.index);
+    if (parent == InvalidIndex or parent == 0) return null;
+    return self.doc.nodeAt(parent);
 }
 
-pub fn children(comptime Node: type, self: Node) []const u32 {
+pub fn children(self: anytype) []const u32 {
     // Child views are built once and then borrowed on every call.
     self.doc.ensureChildViewsBuilt();
-    const raw = &self.doc.nodes.items[self.index];
-    const start: usize = @intCast(raw.child_view_start);
-    const end: usize = @intCast(raw.child_view_start + raw.child_view_len);
+    const start: usize = @intCast(self.doc.childViewStart(self.index));
+    const end: usize = start + @as(usize, @intCast(self.doc.childViewLen(self.index)));
     return self.doc.child_indexes.items[start..end];
 }
 
-pub fn getAttributeValue(comptime Node: type, self: Node, name: []const u8) ?[]const u8 {
+pub fn getAttributeValue(self: anytype, name: []const u8) ?[]const u8 {
     const raw = &self.doc.nodes.items[self.index];
     return attr_inline.getAttrValue(self.doc, raw, name);
 }
 
-pub fn innerText(comptime Node: type, self: Node, arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
+pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
     const doc = self.doc;
     const raw = &doc.nodes.items[self.index];
 

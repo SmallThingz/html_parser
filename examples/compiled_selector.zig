@@ -1,8 +1,10 @@
 const std = @import("std");
 const html = @import("htmlparser");
+const default_options: html.ParseOptions = .{};
+const Document = default_options.GetDocument();
 
 fn run() !void {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     const input =

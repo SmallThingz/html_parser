@@ -10,9 +10,11 @@
 ```zig
 const std = @import("std");
 const html = @import("htmlparser");
+const options: html.ParseOptions = .{};
+const Document = options.GetDocument();
 
 test "basic parse + query" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='app'><a class='nav' href='/docs'>Docs</a></div>".*;
@@ -51,12 +53,8 @@ Source of truth: `examples/runtime_selector.zig` and `examples/compiled_selector
 
 ```zig
 try doc.parse(&input, .{
-    .store_parent_pointers = true,
-    .normalize_input = true,
-    .normalize_text_on_parse = false,
     .eager_child_views = true,
-    .eager_attr_empty_rewrite = true,
-    .defer_attribute_parsing = false,
+    .drop_whitespace_text_nodes = false,
 });
 ```
 

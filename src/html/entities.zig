@@ -59,11 +59,11 @@ fn decodeInPlaceFrom(slice: []u8, start_index: usize) usize {
 fn decodeEntity(rem: []const u8) ?Decoded {
     if (rem.len < 4 or rem[0] != '&') return null;
 
-    if (std.mem.startsWith(u8, rem, "&amp;")) return literalDecoded(5, '&');
-    if (std.mem.startsWith(u8, rem, "&lt;")) return literalDecoded(4, '<');
-    if (std.mem.startsWith(u8, rem, "&gt;")) return literalDecoded(4, '>');
-    if (std.mem.startsWith(u8, rem, "&quot;")) return literalDecoded(6, '"');
-    if (std.mem.startsWith(u8, rem, "&apos;")) return literalDecoded(6, '\'');
+    if (std.mem.startsWith(u8, rem[1..], "amp;")) return literalDecoded(5, '&');
+    if (std.mem.startsWith(u8, rem[1..], "lt;")) return literalDecoded(4, '<');
+    if (std.mem.startsWith(u8, rem[1..], "gt;")) return literalDecoded(4, '>');
+    if (std.mem.startsWith(u8, rem[1..], "quot;")) return literalDecoded(6, '"');
+    if (std.mem.startsWith(u8, rem[1..], "apos;")) return literalDecoded(6, '\'');
 
     if (rem.len >= 4 and rem[1] == '#') {
         if (parseNumeric(rem)) |n| {

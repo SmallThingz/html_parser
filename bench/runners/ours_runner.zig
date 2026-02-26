@@ -1,5 +1,7 @@
 const std = @import("std");
 const htmlparser = @import("htmlparser");
+const default_options: htmlparser.ParseOptions = .{};
+const Document = default_options.GetDocument();
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -23,14 +25,14 @@ pub fn main() !void {
     var working = try alloc.alloc(u8, input.len);
     defer alloc.free(working);
 
-    var doc = htmlparser.Document.init();
+    var doc = Document.init(alloc);
     defer doc.deinit();
 
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         @memcpy(working, input);
-        try doc.parse(working, alloc, .{});
+        try doc.parse(working, .{});
     }
     const end = std.time.nanoTimestamp();
 

@@ -9,12 +9,8 @@ Typical fastest configuration:
 
 ```zig
 try doc.parse(&input, .{
-    .store_parent_pointers = false,
-    .normalize_input = false,
-    .normalize_text_on_parse = false,
     .eager_child_views = false,
-    .eager_attr_empty_rewrite = false,
-    .defer_attribute_parsing = true,
+    .drop_whitespace_text_nodes = true,
 });
 ```
 

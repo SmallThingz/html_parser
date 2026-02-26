@@ -109,6 +109,7 @@ pub fn shouldImplicitlyClose(open_tag: []const u8, new_tag: []const u8) bool {
 }
 
 pub fn isVoidTagHash(name: []const u8, name_hash: TagHashValue) bool {
+    _ = name;
     switch (name_hash) {
         HASH_AREA,
         HASH_BASE,
@@ -125,36 +126,20 @@ pub fn isVoidTagHash(name: []const u8, name_hash: TagHashValue) bool {
         HASH_TRACK,
         HASH_WBR,
         => return true,
-        InvalidTagHash => {
-            return tables.eqlIgnoreCaseAscii(name, "area") or
-                tables.eqlIgnoreCaseAscii(name, "base") or
-                tables.eqlIgnoreCaseAscii(name, "br") or
-                tables.eqlIgnoreCaseAscii(name, "col") or
-                tables.eqlIgnoreCaseAscii(name, "embed") or
-                tables.eqlIgnoreCaseAscii(name, "hr") or
-                tables.eqlIgnoreCaseAscii(name, "img") or
-                tables.eqlIgnoreCaseAscii(name, "input") or
-                tables.eqlIgnoreCaseAscii(name, "link") or
-                tables.eqlIgnoreCaseAscii(name, "meta") or
-                tables.eqlIgnoreCaseAscii(name, "param") or
-                tables.eqlIgnoreCaseAscii(name, "source") or
-                tables.eqlIgnoreCaseAscii(name, "track") or
-                tables.eqlIgnoreCaseAscii(name, "wbr");
-        },
         else => return false,
     }
 }
 
 pub fn isRawTextTagHash(name: []const u8, name_hash: TagHashValue) bool {
+    _ = name;
     switch (name_hash) {
         HASH_SCRIPT, HASH_STYLE => return true,
-        InvalidTagHash => return tables.eqlIgnoreCaseAscii(name, "script") or
-            tables.eqlIgnoreCaseAscii(name, "style"),
         else => return false,
     }
 }
 
 pub fn mayTriggerImplicitCloseHash(new_tag: []const u8, new_hash: TagHashValue) bool {
+    _ = new_tag;
     switch (new_hash) {
         HASH_LI,
         HASH_P,
@@ -190,15 +175,6 @@ pub fn mayTriggerImplicitCloseHash(new_tag: []const u8, new_hash: TagHashValue) 
         HASH_TABLE,
         HASH_UL,
         => return true,
-        InvalidTagHash => return closesPHash(new_tag, new_hash) or
-            hashEq(new_tag, new_hash, HASH_LI, "li") or
-            hashEq(new_tag, new_hash, HASH_DT, "dt") or
-            hashEq(new_tag, new_hash, HASH_DD, "dd") or
-            hashEq(new_tag, new_hash, HASH_OPTION, "option") or
-            hashEq(new_tag, new_hash, HASH_TR, "tr") or
-            hashEq(new_tag, new_hash, HASH_TD, "td") or
-            hashEq(new_tag, new_hash, HASH_TH, "th") or
-            hashEq(new_tag, new_hash, HASH_BODY, "body"),
         else => return false,
     }
 }
@@ -280,7 +256,7 @@ fn closesPHash(new_tag: []const u8, new_hash: TagHashValue) bool {
 }
 
 fn hashEq(name: []const u8, name_hash: TagHashValue, expected_hash: TagHashValue, expected_name: []const u8) bool {
+    _ = .{ name, expected_name };
     if (name_hash == expected_hash) return true;
-    if (name_hash == InvalidTagHash) return tables.eqlIgnoreCaseAscii(name, expected_name);
     return false;
 }

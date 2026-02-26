@@ -134,15 +134,15 @@ fn matchesScopeAnchor(doc: anytype, combinator: ast.Combinator, node_index: u32,
     const anchor: u32 = if (scope_root == InvalidIndex) 0 else scope_root;
     switch (combinator) {
         .child => {
-            const p = doc.nodes.items[node_index].parent;
+            const p = doc.parentIndex(node_index);
             return p != InvalidIndex and p == anchor;
         },
         .descendant => {
-            var p = doc.nodes.items[node_index].parent;
+            var p = doc.parentIndex(node_index);
             while (p != InvalidIndex) {
                 if (p == anchor) return true;
                 if (p == 0) break;
-                p = doc.nodes.items[p].parent;
+                p = doc.parentIndex(p);
             }
             return false;
         },
@@ -516,7 +516,7 @@ fn hashIgnoreCaseAscii(bytes: []const u8) u32 {
 }
 
 fn parentElement(doc: anytype, node_index: u32) ?u32 {
-    const p = doc.nodes.items[node_index].parent;
+    const p = doc.parentIndex(node_index);
     if (p == InvalidIndex or p == 0) return null;
     return p;
 }

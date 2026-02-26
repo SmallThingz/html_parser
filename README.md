@@ -51,9 +51,11 @@ This snippet matches `examples/basic_parse_query.zig`.
 ```zig
 const std = @import("std");
 const html = @import("htmlparser");
+const options: html.ParseOptions = .{};
+const Document = options.GetDocument();
 
 test "basic parse + query" {
-    var doc = html.Document.init(std.testing.allocator);
+    var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='app'><a class='nav' href='/docs'>Docs</a></div>".*;

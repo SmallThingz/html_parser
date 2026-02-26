@@ -1,5 +1,7 @@
 const std = @import("std");
 const root = @import("htmlparser");
+const default_options: root.ParseOptions = .{};
+const Document = default_options.GetDocument();
 
 const BenchMode = enum {
     strictest,
@@ -14,47 +16,27 @@ fn parseMode(arg: []const u8) !BenchMode {
     return error.InvalidBenchMode;
 }
 
-fn parseDocForParseBench(noalias doc: *root.Document, input: []u8, mode: BenchMode) !void {
+fn parseDocForParseBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void {
     switch (mode) {
         .strictest => try doc.parse(input, .{
-            .store_parent_pointers = true,
-            .normalize_input = true,
-            .normalize_text_on_parse = true,
             .eager_child_views = true,
-            .eager_attr_empty_rewrite = true,
-            .defer_attribute_parsing = false,
             .drop_whitespace_text_nodes = false,
         }),
         .fastest => try doc.parse(input, .{
-            .store_parent_pointers = false,
-            .normalize_input = false,
-            .normalize_text_on_parse = false,
             .eager_child_views = false,
-            .eager_attr_empty_rewrite = false,
-            .defer_attribute_parsing = true,
             .drop_whitespace_text_nodes = true,
         }),
     }
 }
 
-fn parseDocForQueryBench(noalias doc: *root.Document, input: []u8, mode: BenchMode) !void {
+fn parseDocForQueryBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void {
     switch (mode) {
         .strictest => try doc.parse(input, .{
-            .store_parent_pointers = true,
-            .normalize_input = true,
-            .normalize_text_on_parse = true,
             .eager_child_views = true,
-            .eager_attr_empty_rewrite = true,
-            .defer_attribute_parsing = false,
             .drop_whitespace_text_nodes = false,
         }),
         .fastest => try doc.parse(input, .{
-            .store_parent_pointers = false,
-            .normalize_input = false,
-            .normalize_text_on_parse = false,
             .eager_child_views = false,
-            .eager_attr_empty_rewrite = false,
-            .defer_attribute_parsing = true,
             .drop_whitespace_text_nodes = true,
         }),
     }
@@ -63,7 +45,7 @@ fn parseDocForQueryBench(noalias doc: *root.Document, input: []u8, mode: BenchMo
 pub fn runSynthetic() !void {
     const alloc = std.heap.page_allocator;
 
-    var doc = root.Document.init(alloc);
+    var doc = Document.init(alloc);
     defer doc.deinit();
 
     var src = "<html><body><ul><li class='x'>1</li><li class='x'>2</li><li>3</li></ul></body></html>".*;
@@ -108,7 +90,7 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     while (i < iterations) : (i += 1) {
         const iter_alloc = parse_arena.allocator();
         {
-            var doc = root.Document.init(iter_alloc);
+            var doc = Document.init(iter_alloc);
             defer doc.deinit();
             if (working_opt) |working| {
                 @memcpy(working, input);
@@ -154,7 +136,7 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, 
     const working = try alloc.dupe(u8, input);
     defer alloc.free(working);
 
-    var doc = root.Document.init(alloc);
+    var doc = Document.init(alloc);
     defer doc.deinit();
     try parseDocForQueryBench(&doc, working, mode);
 
@@ -184,7 +166,7 @@ pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usiz
 
     const sel = try root.Selector.compileRuntime(sel_arena.allocator(), selector);
 
-    var doc = root.Document.init(alloc);
+    var doc = Document.init(alloc);
     defer doc.deinit();
     try parseDocForQueryBench(&doc, working, mode);
 

@@ -1,5 +1,7 @@
 const std = @import("std");
 const html = @import("root.zig");
+const default_options: html.ParseOptions = .{};
+const Document = default_options.GetDocument();
 
 const ParseMode = enum {
     strictest,
@@ -12,23 +14,15 @@ fn parseMode(s: []const u8) ?ParseMode {
     return null;
 }
 
-fn parseDoc(noalias doc: *html.Document, input: []u8, mode: ParseMode) !void {
+fn parseDoc(noalias doc: *Document, input: []u8, mode: ParseMode) !void {
     switch (mode) {
         .strictest => try doc.parse(input, .{
-            .store_parent_pointers = true,
-            .normalize_input = true,
-            .normalize_text_on_parse = true,
             .eager_child_views = true,
-            .eager_attr_empty_rewrite = true,
-            .defer_attribute_parsing = false,
+            .drop_whitespace_text_nodes = false,
         }),
         .fastest => try doc.parse(input, .{
-            .store_parent_pointers = false,
-            .normalize_input = false,
-            .normalize_text_on_parse = false,
             .eager_child_views = false,
-            .eager_attr_empty_rewrite = false,
-            .defer_attribute_parsing = true,
+            .drop_whitespace_text_nodes = true,
         }),
     }
 }
@@ -70,7 +64,7 @@ fn runSelectorIds(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []con
     const working = try alloc.dupe(u8, input);
     defer alloc.free(working);
 
-    var doc = html.Document.init(alloc);
+    var doc = Document.init(alloc);
     defer doc.deinit();
     try parseDoc(&doc, working, mode);
 
@@ -98,7 +92,7 @@ fn runSelectorCount(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []c
     const working = try alloc.dupe(u8, input);
     defer alloc.free(working);
 
-    var doc = html.Document.init(alloc);
+    var doc = Document.init(alloc);
     defer doc.deinit();
     try parseDoc(&doc, working, mode);
 
@@ -121,7 +115,7 @@ fn runSelectorCountScopeTag(alloc: std.mem.Allocator, mode: ParseMode, fixture_p
     const working = try alloc.dupe(u8, input);
     defer alloc.free(working);
 
-    var doc = html.Document.init(alloc);
+    var doc = Document.init(alloc);
     defer doc.deinit();
     try parseDoc(&doc, working, mode);
 
@@ -146,7 +140,7 @@ fn runParseTagsFile(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []c
     const working = try alloc.dupe(u8, input);
     defer alloc.free(working);
 
-    var doc = html.Document.init(alloc);
+    var doc = Document.init(alloc);
     defer doc.deinit();
     try parseDoc(&doc, working, mode);
 

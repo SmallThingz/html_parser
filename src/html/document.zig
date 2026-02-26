@@ -23,30 +23,689 @@ const TagIndexEntry = struct {
     span: IndexSpan,
 };
 
-pub const ParseOptions = struct {
-    // Enables `parentNode()` navigation; disabling it trims parse work and memory.
-    store_parent_pointers: bool = true,
-    // Lowercases tag/attribute names in-place to accelerate case-insensitive matching.
-    normalize_input: bool = true,
-    // Optional parse-time text-node whitespace normalization.
-    normalize_text_on_parse: bool = false,
-    // Precompute `children()` slices during parse.
-    eager_child_views: bool = true,
-    // Canonicalize explicit empty assignments (`a=`) during parse.
-    eager_attr_empty_rewrite: bool = true,
-    // Skip per-attribute parse-time work; keep raw attr bytes and parse lazily.
-    defer_attribute_parsing: bool = false,
-    // In fastest-mode style runs, whitespace-only text nodes can be dropped.
-    drop_whitespace_text_nodes: bool = false,
-};
-
-pub const TextOptions = node_api.TextOptions;
-
 pub const NodeType = enum(u2) {
     document,
     element,
     text,
 };
+
+pub const ParseOptions = struct {
+    // Precompute `children()` slices during parse.
+    eager_child_views: bool = true,
+    // In fastest-mode style runs, whitespace-only text nodes can be dropped.
+    drop_whitespace_text_nodes: bool = false,
+
+    pub fn GetNodeRaw(options: @This()) type {
+        return struct {
+            kind: NodeType,
+
+            name: Span = .{},
+            tag_hash: tags.TagHashValue = 0,
+            text: Span = .{},
+
+            // In-place attribute byte range inside the opening tag.
+            attr_bytes: Span = .{},
+
+            first_child: u32 = InvalidIndex,
+            last_child: u32 = InvalidIndex,
+            prev_sibling: u32 = InvalidIndex,
+            next_sibling: u32 = InvalidIndex,
+            parent: void = {},
+
+            child_view: if (options.eager_child_views) Span else void = if (options.eager_child_views) .{} else {},
+
+            subtree_end: u32 = 0,
+        };
+    }
+
+    pub fn GetNode(options: @This()) type {
+        return struct {
+            const DocType = options.GetDocument();
+            const QueryIterType = options.QueryIter();
+
+            doc: *DocType,
+            index: u32,
+
+            pub fn raw(self: @This()) *const options.GetNodeRaw() {
+                return &self.doc.nodes.items[self.index];
+            }
+
+            pub fn tagName(self: @This()) []const u8 {
+                return self.raw().name.slice(self.doc.source);
+            }
+
+            pub fn innerText(self: @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
+                return node_api.innerText(self, arena_alloc, .{});
+            }
+
+            pub fn innerTextWithOptions(self: @This(), arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
+                return node_api.innerText(self, arena_alloc, opts);
+            }
+
+            pub fn getAttributeValue(self: @This(), name: []const u8) ?[]const u8 {
+                return node_api.getAttributeValue(self, name);
+            }
+
+            pub fn firstChild(self: @This()) ?@This() {
+                return node_api.firstChild(self);
+            }
+
+            pub fn lastChild(self: @This()) ?@This() {
+                return node_api.lastChild(self);
+            }
+
+            pub fn nextSibling(self: @This()) ?@This() {
+                return node_api.nextSibling(self);
+            }
+
+            pub fn prevSibling(self: @This()) ?@This() {
+                return node_api.prevSibling(self);
+            }
+
+            pub fn parentNode(self: @This()) ?@This() {
+                return node_api.parentNode(self);
+            }
+
+            pub fn children(self: @This()) []const u32 {
+                return node_api.children(self);
+            }
+
+            pub fn queryOne(self: @This(), comptime selector: []const u8) ?@This() {
+                const sel = comptime ast.Selector.compile(selector);
+                return self.queryOneCompiled(&sel);
+            }
+
+            pub fn queryOneCompiled(self: @This(), sel: *const ast.Selector) ?@This() {
+                self.doc.ensureQueryPrereqs(sel.*);
+                const idx = matcher.queryOneIndex(DocType, self.doc, sel.*, self.index) orelse return null;
+                return self.doc.nodeAt(idx);
+            }
+
+            pub fn queryOneRuntime(self: @This(), selector: []const u8) runtime_selector.Error!?@This() {
+                return self.doc.queryOneRuntimeFrom(selector, self.index);
+            }
+
+            pub fn queryAll(self: @This(), comptime selector: []const u8) QueryIterType {
+                const sel = comptime ast.Selector.compile(selector);
+                return self.queryAllCompiled(&sel);
+            }
+
+            pub fn queryAllCompiled(self: @This(), sel: *const ast.Selector) QueryIterType {
+                self.doc.ensureQueryPrereqs(sel.*);
+                return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
+            }
+
+            pub fn queryAllRuntime(self: @This(), selector: []const u8) runtime_selector.Error!QueryIterType {
+                return self.doc.queryAllRuntimeFrom(selector, self.index);
+            }
+        };
+    }
+
+    pub fn QueryIter(options: @This()) type {
+        return struct {
+            const DocType = options.GetDocument();
+            const NodeTypeWrapper = options.GetNode();
+
+            doc: *DocType,
+            selector: ast.Selector,
+            scope_root: u32 = InvalidIndex,
+            next_index: u32 = 1,
+            runtime_generation: u64 = 0,
+
+            pub fn next(noalias self: *@This()) ?NodeTypeWrapper {
+                if (self.runtime_generation != 0 and self.runtime_generation != self.doc.query_all_generation) {
+                    return null;
+                }
+
+                while (self.next_index < self.doc.nodes.items.len) : (self.next_index += 1) {
+                    const idx = self.next_index;
+
+                    if (self.scope_root != InvalidIndex) {
+                        const root = &self.doc.nodes.items[self.scope_root];
+                        if (idx <= self.scope_root or idx > root.subtree_end) continue;
+                    }
+
+                    const node = &self.doc.nodes.items[idx];
+                    if (node.kind != .element) continue;
+
+                    if (matcher.matchesSelectorAt(DocType, self.doc, self.selector, idx, self.scope_root)) {
+                        self.next_index += 1;
+                        return self.doc.nodeAt(idx);
+                    }
+                }
+                return null;
+            }
+        };
+    }
+
+    pub fn GetDocument(options: @This()) type {
+        return struct {
+            const DocSelf = @This();
+            const RawNodeType = options.GetNodeRaw();
+            const NodeTypeWrapper = options.GetNode();
+            const QueryIterType = options.QueryIter();
+
+            allocator: std.mem.Allocator,
+            source: []u8 = &[_]u8{},
+            store_parent_pointers: bool = false,
+            child_views_ready: bool = false,
+            input_was_normalized: bool = false,
+
+            nodes: std.ArrayListUnmanaged(RawNodeType) = .{},
+            child_indexes: std.ArrayListUnmanaged(u32) = .{},
+            child_view_starts: std.ArrayListUnmanaged(u32) = .{},
+            child_view_lens: std.ArrayListUnmanaged(u32) = .{},
+            parent_indexes: std.ArrayListUnmanaged(u32) = .{},
+            parent_indexes_ready: bool = false,
+            parse_stack: std.ArrayListUnmanaged(u32) = .{},
+
+            query_one_arena: ?std.heap.ArenaAllocator = null,
+            query_all_arena: ?std.heap.ArenaAllocator = null,
+            query_all_generation: u64 = 1,
+            // One-entry selector caches avoid recompiling hot repeated runtime selectors.
+            query_one_cached_selector: []const u8 = "",
+            query_one_cached_compiled: ?ast.Selector = null,
+            query_one_cache_valid: bool = false,
+            query_all_cached_selector: []const u8 = "",
+            query_all_cached_compiled: ?ast.Selector = null,
+            query_all_cache_valid: bool = false,
+
+            query_accel_budget_bytes: usize = 0,
+            query_accel_used_bytes: usize = 0,
+            query_accel_budget_exhausted: bool = false,
+            query_accel_id_built: bool = false,
+            query_accel_id_disabled: bool = false,
+            query_accel_tag_disabled: bool = false,
+            query_accel_id_map: std.AutoHashMapUnmanaged(u64, u32) = .{},
+            query_accel_tag_entries: std.ArrayListUnmanaged(TagIndexEntry) = .{},
+            query_accel_tag_nodes: std.ArrayListUnmanaged(u32) = .{},
+
+            pub fn init(allocator: std.mem.Allocator) DocSelf {
+                return .{
+                    .allocator = allocator,
+                };
+            }
+
+            pub fn deinit(noalias self: *DocSelf) void {
+                self.nodes.deinit(self.allocator);
+                self.child_indexes.deinit(self.allocator);
+                self.child_view_starts.deinit(self.allocator);
+                self.child_view_lens.deinit(self.allocator);
+                self.parent_indexes.deinit(self.allocator);
+                self.parse_stack.deinit(self.allocator);
+                self.query_accel_id_map.deinit(self.allocator);
+                self.query_accel_tag_entries.deinit(self.allocator);
+                self.query_accel_tag_nodes.deinit(self.allocator);
+                if (self.query_one_arena) |*arena| arena.deinit();
+                if (self.query_all_arena) |*arena| arena.deinit();
+            }
+
+            pub fn clear(noalias self: *DocSelf) void {
+                self.nodes.clearRetainingCapacity();
+                self.child_indexes.clearRetainingCapacity();
+                self.child_view_starts.clearRetainingCapacity();
+                self.child_view_lens.clearRetainingCapacity();
+                self.parent_indexes.clearRetainingCapacity();
+                self.parent_indexes_ready = false;
+                self.parse_stack.clearRetainingCapacity();
+                self.child_views_ready = false;
+                if (self.query_one_arena) |*arena| _ = arena.reset(.retain_capacity);
+                if (self.query_all_arena) |*arena| _ = arena.reset(.retain_capacity);
+                self.invalidateRuntimeSelectorCaches();
+                self.resetQueryAccel();
+                self.query_all_generation +%= 1;
+                if (self.query_all_generation == 0) self.query_all_generation = 1;
+            }
+
+            pub fn parse(noalias self: *DocSelf, input: []u8, comptime opts: ParseOptions) !void {
+                self.clear();
+                self.source = input;
+                self.store_parent_pointers = false;
+                self.input_was_normalized = false;
+                self.query_accel_budget_bytes = @max(input.len / QueryAccelBudgetDivisor, QueryAccelMinBudgetBytes);
+                try parser.parseInto(DocSelf, self, input, opts);
+                if (opts.eager_child_views) {
+                    try self.buildChildViews();
+                }
+            }
+
+            pub fn queryOne(self: *const DocSelf, comptime selector: []const u8) ?NodeTypeWrapper {
+                const sel = comptime ast.Selector.compile(selector);
+                return self.queryOneCompiled(&sel);
+            }
+
+            pub fn queryOneCompiled(self: *const DocSelf, sel: *const ast.Selector) ?NodeTypeWrapper {
+                const mut_self: *DocSelf = @constCast(self);
+                mut_self.ensureQueryPrereqs(sel.*);
+                const idx = matcher.queryOneIndex(DocSelf, self, sel.*, InvalidIndex) orelse return null;
+                return self.nodeAt(idx);
+            }
+
+            pub fn queryOneRuntime(self: *const DocSelf, selector: []const u8) runtime_selector.Error!?NodeTypeWrapper {
+                return self.queryOneRuntimeFrom(selector, InvalidIndex);
+            }
+
+            fn queryOneRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!?NodeTypeWrapper {
+                const mut_self: *DocSelf = @constCast(self);
+                const sel = try mut_self.getOrCompileQueryOneSelector(selector);
+                mut_self.ensureQueryPrereqs(sel);
+                if (scope_root == InvalidIndex) return self.queryOneCompiled(&sel);
+                const idx = matcher.queryOneIndex(DocSelf, self, sel, scope_root) orelse return null;
+                return self.nodeAt(idx);
+            }
+
+            pub fn queryAll(self: *const DocSelf, comptime selector: []const u8) QueryIterType {
+                const sel = comptime ast.Selector.compile(selector);
+                return self.queryAllCompiled(&sel);
+            }
+
+            pub fn queryAllCompiled(self: *const DocSelf, sel: *const ast.Selector) QueryIterType {
+                const mut_self: *DocSelf = @constCast(self);
+                mut_self.ensureQueryPrereqs(sel.*);
+                return .{ .doc = @constCast(self), .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
+            }
+
+            pub fn queryAllRuntime(self: *const DocSelf, selector: []const u8) runtime_selector.Error!QueryIterType {
+                return self.queryAllRuntimeFrom(selector, InvalidIndex);
+            }
+
+            fn queryAllRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!QueryIterType {
+                const mut_self: *DocSelf = @constCast(self);
+                // Runtime query-all iterators are invalidated when a newer runtime
+                // query-all is created, to avoid holding stale compiled selector state.
+                mut_self.query_all_generation +%= 1;
+                if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
+
+                const sel = try mut_self.getOrCompileQueryAllSelector(selector);
+                mut_self.ensureQueryPrereqs(sel);
+                var out = if (scope_root == InvalidIndex)
+                    self.queryAllCompiled(&sel)
+                else
+                    QueryIterType{
+                        .doc = @constCast(self),
+                        .selector = sel,
+                        .scope_root = scope_root,
+                        .next_index = scope_root + 1,
+                    };
+                out.runtime_generation = mut_self.query_all_generation;
+                return out;
+            }
+
+            fn ensureQueryPrereqs(noalias self: *DocSelf, selector: ast.Selector) void {
+                if (selector.requires_parent) self.ensureParentIndexesBuilt();
+            }
+
+            pub fn parentIndex(self: *const DocSelf, idx: u32) u32 {
+                if (!self.parent_indexes_ready or idx >= self.parent_indexes.items.len) return InvalidIndex;
+                return self.parent_indexes.items[idx];
+            }
+
+            pub fn ensureParentIndexesBuilt(noalias self: *DocSelf) void {
+                if (self.parent_indexes_ready) {
+                    self.store_parent_pointers = true;
+                    return;
+                }
+                self.buildParentIndexes() catch @panic("out of memory building parent indexes");
+                self.store_parent_pointers = true;
+            }
+
+            fn buildParentIndexes(noalias self: *DocSelf) !void {
+                const alloc = self.allocator;
+                const node_count = self.nodes.items.len;
+                self.parent_indexes.clearRetainingCapacity();
+                try self.parent_indexes.ensureTotalCapacity(alloc, node_count);
+                self.parent_indexes.items.len = node_count;
+                @memset(self.parent_indexes.items, InvalidIndex);
+
+                var parent_idx: u32 = 0;
+                while (parent_idx < node_count) : (parent_idx += 1) {
+                    var child = self.nodes.items[parent_idx].first_child;
+                    while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
+                        self.parent_indexes.items[child] = parent_idx;
+                    }
+                }
+                self.parent_indexes_ready = true;
+            }
+
+            pub fn html(self: *const DocSelf) ?NodeTypeWrapper {
+                return self.findFirstTag("html");
+            }
+
+            pub fn head(self: *const DocSelf) ?NodeTypeWrapper {
+                return self.findFirstTag("head");
+            }
+
+            pub fn body(self: *const DocSelf) ?NodeTypeWrapper {
+                return self.findFirstTag("body");
+            }
+
+            pub fn findFirstTag(self: *const DocSelf, name: []const u8) ?NodeTypeWrapper {
+                var i: usize = 1;
+                while (i < self.nodes.items.len) : (i += 1) {
+                    const n = &self.nodes.items[i];
+                    if (n.kind != .element) continue;
+                    if (self.input_was_normalized) {
+                        if (std.mem.eql(u8, n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
+                    } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
+                }
+                return null;
+            }
+
+            pub fn nodeAt(self: *const DocSelf, idx: u32) ?NodeTypeWrapper {
+                if (idx == InvalidIndex or idx >= self.nodes.items.len) return null;
+                return .{
+                    .doc = @constCast(self),
+                    .index = idx,
+                };
+            }
+
+            fn invalidateRuntimeSelectorCaches(noalias self: *DocSelf) void {
+                self.query_one_cache_valid = false;
+                self.query_one_cached_selector = "";
+                self.query_one_cached_compiled = null;
+                self.query_all_cache_valid = false;
+                self.query_all_cached_selector = "";
+                self.query_all_cached_compiled = null;
+            }
+
+            fn getOrCompileQueryOneSelector(noalias self: *DocSelf, selector: []const u8) runtime_selector.Error!ast.Selector {
+                if (self.query_one_cache_valid and std.mem.eql(u8, self.query_one_cached_selector, selector)) {
+                    return self.query_one_cached_compiled.?;
+                }
+
+                const arena = self.ensureQueryOneArena();
+                _ = arena.reset(.retain_capacity);
+                const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
+                self.query_one_cached_selector = sel.source;
+                self.query_one_cached_compiled = sel;
+                self.query_one_cache_valid = true;
+                return sel;
+            }
+
+            fn getOrCompileQueryAllSelector(noalias self: *DocSelf, selector: []const u8) runtime_selector.Error!ast.Selector {
+                if (self.query_all_cache_valid and std.mem.eql(u8, self.query_all_cached_selector, selector)) {
+                    return self.query_all_cached_compiled.?;
+                }
+
+                const arena = self.ensureQueryAllArena();
+                _ = arena.reset(.retain_capacity);
+                const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
+                self.query_all_cached_selector = sel.source;
+                self.query_all_cached_compiled = sel;
+                self.query_all_cache_valid = true;
+                return sel;
+            }
+
+            fn ensureQueryOneArena(noalias self: *DocSelf) *std.heap.ArenaAllocator {
+                if (self.query_one_arena == null) {
+                    self.query_one_arena = std.heap.ArenaAllocator.init(self.allocator);
+                }
+                return &self.query_one_arena.?;
+            }
+
+            fn ensureQueryAllArena(noalias self: *DocSelf) *std.heap.ArenaAllocator {
+                if (self.query_all_arena == null) {
+                    self.query_all_arena = std.heap.ArenaAllocator.init(self.allocator);
+                }
+                return &self.query_all_arena.?;
+            }
+
+            fn resetQueryAccel(self: *DocSelf) void {
+                self.query_accel_used_bytes = 0;
+                self.query_accel_budget_exhausted = false;
+                self.query_accel_id_built = false;
+                self.query_accel_id_disabled = false;
+                self.query_accel_tag_disabled = false;
+                self.query_accel_id_map.clearRetainingCapacity();
+                self.query_accel_tag_entries.clearRetainingCapacity();
+                self.query_accel_tag_nodes.clearRetainingCapacity();
+            }
+
+            fn queryAccelReserve(self: *DocSelf, bytes: usize) bool {
+                if (self.query_accel_budget_exhausted) return false;
+                const remaining = self.query_accel_budget_bytes -| self.query_accel_used_bytes;
+                if (bytes > remaining) {
+                    self.query_accel_budget_exhausted = true;
+                    return false;
+                }
+                self.query_accel_used_bytes += bytes;
+                return true;
+            }
+
+            fn ensureIdIndex(self: *DocSelf) bool {
+                if (self.query_accel_id_built) return true;
+                if (self.query_accel_id_disabled or self.query_accel_budget_exhausted) return false;
+
+                self.query_accel_id_map.clearRetainingCapacity();
+
+                var idx: u32 = 1;
+                while (idx < self.nodes.items.len) : (idx += 1) {
+                    const node = &self.nodes.items[idx];
+                    if (node.kind != .element) continue;
+
+                    const id = attr_inline.getAttrValue(self, node, "id") orelse continue;
+                    if (id.len == 0) continue;
+                    const id_hash = hashIdValue(id);
+
+                    const gop = self.query_accel_id_map.getOrPut(self.allocator, id_hash) catch {
+                        self.query_accel_id_disabled = true;
+                        self.query_accel_id_map.clearRetainingCapacity();
+                        return false;
+                    };
+
+                    if (gop.found_existing) {
+                        const existing_idx = gop.value_ptr.*;
+                        const existing_node = &self.nodes.items[existing_idx];
+                        const existing_id = attr_inline.getAttrValue(self, existing_node, "id") orelse "";
+                        // Hash collision on different ids would break index correctness.
+                        // Disable this accel path and fall back to exact scan semantics.
+                        if (!std.mem.eql(u8, existing_id, id)) {
+                            self.query_accel_id_disabled = true;
+                            self.query_accel_id_map.clearRetainingCapacity();
+                            return false;
+                        }
+                        continue;
+                    }
+
+                    if (!self.queryAccelReserve(@sizeOf(u64) + @sizeOf(u32) + 16)) {
+                        _ = self.query_accel_id_map.remove(id_hash);
+                        self.query_accel_id_disabled = true;
+                        self.query_accel_id_map.clearRetainingCapacity();
+                        return false;
+                    }
+
+                    gop.value_ptr.* = idx;
+                }
+
+                self.query_accel_id_built = true;
+                return true;
+            }
+
+            fn ensureTagIndex(self: *DocSelf, tag_hash: tags.TagHashValue) ?IndexSpan {
+                if (tag_hash == std.math.maxInt(tags.TagHashValue)) return null;
+                if (self.query_accel_tag_disabled or self.query_accel_budget_exhausted) return null;
+                for (self.query_accel_tag_entries.items) |entry| {
+                    if (entry.tag_hash == tag_hash) return entry.span;
+                }
+
+                var count: usize = 0;
+                for (self.nodes.items[1..]) |node| {
+                    if (node.kind == .element and node.tag_hash == tag_hash) count += 1;
+                }
+
+                const reserve_bytes = count * @sizeOf(u32) + @sizeOf(TagIndexEntry);
+                if (!self.queryAccelReserve(reserve_bytes)) {
+                    self.query_accel_tag_disabled = true;
+                    return null;
+                }
+
+                const start: usize = self.query_accel_tag_nodes.items.len;
+                self.query_accel_tag_nodes.ensureTotalCapacity(self.allocator, start + count) catch {
+                    self.query_accel_tag_disabled = true;
+                    return null;
+                };
+
+                var idx: u32 = 1;
+                while (idx < self.nodes.items.len) : (idx += 1) {
+                    const node = &self.nodes.items[idx];
+                    if (node.kind == .element and node.tag_hash == tag_hash) {
+                        self.query_accel_tag_nodes.appendAssumeCapacity(idx);
+                    }
+                }
+
+                const span: IndexSpan = .{
+                    .start = @intCast(start),
+                    .len = @intCast(self.query_accel_tag_nodes.items.len - start),
+                };
+                self.query_accel_tag_entries.append(self.allocator, .{
+                    .tag_hash = tag_hash,
+                    .span = span,
+                }) catch {
+                    self.query_accel_tag_disabled = true;
+                    return null;
+                };
+                return span;
+            }
+
+            pub fn queryAccelLookupId(self: *const DocSelf, id: []const u8, used_index: *bool) ?u32 {
+                const mut_self: *DocSelf = @constCast(self);
+                if (!mut_self.ensureIdIndex()) {
+                    used_index.* = false;
+                    return null;
+                }
+                const id_hash = hashIdValue(id);
+                const idx = mut_self.query_accel_id_map.get(id_hash) orelse {
+                    used_index.* = true;
+                    return null;
+                };
+                const node = &mut_self.nodes.items[idx];
+                const current_id = attr_inline.getAttrValue(mut_self, node, "id") orelse {
+                    used_index.* = true;
+                    return null;
+                };
+                if (std.mem.eql(u8, current_id, id)) {
+                    used_index.* = true;
+                    return idx;
+                }
+
+                // Collision or stale key materialization: permanently disable the id
+                // index for this document and let caller use the scan fallback.
+                mut_self.query_accel_id_disabled = true;
+                mut_self.query_accel_id_built = false;
+                mut_self.query_accel_id_map.clearRetainingCapacity();
+                used_index.* = false;
+                return null;
+            }
+
+            pub fn queryAccelLookupTag(self: *const DocSelf, tag_hash: tags.TagHashValue, used_index: *bool) ?[]const u32 {
+                const mut_self: *DocSelf = @constCast(self);
+                const span = mut_self.ensureTagIndex(tag_hash) orelse {
+                    used_index.* = false;
+                    return null;
+                };
+                used_index.* = true;
+                const start: usize = @intCast(span.start);
+                const end: usize = start + @as(usize, @intCast(span.len));
+                return mut_self.query_accel_tag_nodes.items[start..end];
+            }
+
+            pub fn ensureChildViewsBuilt(noalias self: *DocSelf) void {
+                if (self.child_views_ready) return;
+                // Allocation failure here indicates an unrecoverable internal state for
+                // callers expecting non-fallible navigation APIs.
+                self.buildChildViews() catch @panic("out of memory building child views");
+            }
+
+            pub fn childViewStart(self: *const DocSelf, idx: u32) u32 {
+                return self.child_view_starts.items[idx];
+            }
+
+            pub fn childViewLen(self: *const DocSelf, idx: u32) u32 {
+                return self.child_view_lens.items[idx];
+            }
+
+            fn buildChildViews(noalias self: *DocSelf) !void {
+                const node_count = self.nodes.items.len;
+                const alloc = self.allocator;
+
+                self.child_view_starts.clearRetainingCapacity();
+                self.child_view_lens.clearRetainingCapacity();
+                try self.child_view_starts.ensureTotalCapacity(alloc, node_count);
+                try self.child_view_lens.ensureTotalCapacity(alloc, node_count);
+                self.child_view_starts.items.len = node_count;
+                self.child_view_lens.items.len = node_count;
+
+                if (!EnableChildViewPrefixBuilder) {
+                    self.child_indexes.clearRetainingCapacity();
+                    const child_count = if (node_count > 0) node_count - 1 else 0;
+                    try self.child_indexes.ensureTotalCapacity(alloc, child_count);
+
+                    var i_old: u32 = 0;
+                    while (i_old < node_count) : (i_old += 1) {
+                        self.child_view_starts.items[i_old] = @intCast(self.child_indexes.items.len);
+                        self.child_view_lens.items[i_old] = 0;
+
+                        var child_old = self.nodes.items[i_old].first_child;
+                        while (child_old != InvalidIndex) {
+                            self.child_indexes.appendAssumeCapacity(child_old);
+                            self.child_view_lens.items[i_old] += 1;
+                            child_old = self.nodes.items[child_old].next_sibling;
+                        }
+                    }
+
+                    self.child_views_ready = true;
+                    return;
+                }
+
+                self.child_indexes.clearRetainingCapacity();
+                const child_count = if (node_count > 0) node_count - 1 else 0;
+                try self.child_indexes.ensureTotalCapacity(alloc, child_count);
+                self.child_indexes.items.len = child_count;
+
+                var i: u32 = 0;
+                while (i < node_count) : (i += 1) {
+                    var count: u32 = 0;
+                    var child = self.nodes.items[i].first_child;
+                    while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
+                        count += 1;
+                    }
+                    self.child_view_lens.items[i] = count;
+                }
+
+                var offset: u32 = 0;
+                i = 0;
+                while (i < node_count) : (i += 1) {
+                    self.child_view_starts.items[i] = offset;
+                    offset += self.child_view_lens.items[i];
+                }
+
+                self.parse_stack.clearRetainingCapacity();
+                try self.parse_stack.ensureTotalCapacity(alloc, node_count);
+                self.parse_stack.items.len = node_count;
+
+                i = 0;
+                while (i < node_count) : (i += 1) {
+                    self.parse_stack.items[i] = self.child_view_starts.items[i];
+                }
+
+                i = 0;
+                while (i < node_count) : (i += 1) {
+                    var child = self.nodes.items[i].first_child;
+                    while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
+                        const write_idx = self.parse_stack.items[i];
+                        self.child_indexes.items[write_idx] = child;
+                        self.parse_stack.items[i] = write_idx + 1;
+                    }
+                }
+                self.parse_stack.clearRetainingCapacity();
+
+                self.child_views_ready = true;
+            }
+        };
+    }
+};
+
+pub const TextOptions = node_api.TextOptions;
 
 pub const Span = struct {
     start: u32 = 0,
@@ -65,614 +724,11 @@ pub const Span = struct {
     }
 };
 
-pub const NodeRaw = struct {
-    kind: NodeType,
-
-    name: Span = .{},
-    tag_hash: tags.TagHashValue = 0,
-    text: Span = .{},
-
-    // In-place attribute byte range inside the opening tag.
-    attr_bytes: Span = .{},
-
-    first_child: u32 = InvalidIndex,
-    last_child: u32 = InvalidIndex,
-    prev_sibling: u32 = InvalidIndex,
-    next_sibling: u32 = InvalidIndex,
-    parent: u32 = InvalidIndex,
-
-    child_view_start: u32 = 0,
-    child_view_len: u32 = 0,
-
-    subtree_end: u32 = 0,
-};
-
-pub const Node = struct {
-    doc: *Document,
-    index: u32,
-
-    pub fn raw(self: @This()) *const NodeRaw {
-        return &self.doc.nodes.items[self.index];
-    }
-
-    pub fn tagName(self: @This()) []const u8 {
-        return self.raw().name.slice(self.doc.source);
-    }
-
-    pub fn innerText(self: @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
-        return node_api.innerText(@This(), self, arena_alloc, .{});
-    }
-
-    pub fn innerTextWithOptions(self: @This(), arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
-        return node_api.innerText(@This(), self, arena_alloc, opts);
-    }
-
-    pub fn getAttributeValue(self: @This(), name: []const u8) ?[]const u8 {
-        return node_api.getAttributeValue(@This(), self, name);
-    }
-
-    pub fn firstChild(self: @This()) ?@This() {
-        return node_api.firstChild(@This(), self);
-    }
-
-    pub fn lastChild(self: @This()) ?@This() {
-        return node_api.lastChild(@This(), self);
-    }
-
-    pub fn nextSibling(self: @This()) ?@This() {
-        return node_api.nextSibling(@This(), self);
-    }
-
-    pub fn prevSibling(self: @This()) ?@This() {
-        return node_api.prevSibling(@This(), self);
-    }
-
-    pub fn parentNode(self: @This()) ?@This() {
-        return node_api.parentNode(@This(), self);
-    }
-
-    pub fn children(self: @This()) []const u32 {
-        return node_api.children(@This(), self);
-    }
-
-    pub fn queryOne(self: @This(), comptime selector: []const u8) ?@This() {
-        const sel = comptime ast.Selector.compile(selector);
-        return self.queryOneCompiled(&sel);
-    }
-
-    pub fn queryOneCompiled(self: @This(), sel: *const ast.Selector) ?@This() {
-        self.doc.ensureQueryPrereqs(sel.*);
-        const idx = matcher.queryOneIndex(Document, self.doc, sel.*, self.index) orelse return null;
-        return self.doc.nodeAt(idx);
-    }
-
-    pub fn queryOneRuntime(self: @This(), selector: []const u8) runtime_selector.Error!?@This() {
-        return self.doc.queryOneRuntimeFrom(selector, self.index);
-    }
-
-    pub fn queryAll(self: @This(), comptime selector: []const u8) QueryIter {
-        const sel = comptime ast.Selector.compile(selector);
-        return self.queryAllCompiled(&sel);
-    }
-
-    pub fn queryAllCompiled(self: @This(), sel: *const ast.Selector) QueryIter {
-        self.doc.ensureQueryPrereqs(sel.*);
-        return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
-    }
-
-    pub fn queryAllRuntime(self: @This(), selector: []const u8) runtime_selector.Error!QueryIter {
-        return self.doc.queryAllRuntimeFrom(selector, self.index);
-    }
-};
-
-pub const QueryIter = struct {
-    doc: *Document,
-    selector: ast.Selector,
-    scope_root: u32 = InvalidIndex,
-    next_index: u32 = 1,
-    runtime_generation: u64 = 0,
-
-    pub fn next(noalias self: *QueryIter) ?Node {
-        if (self.runtime_generation != 0 and self.runtime_generation != self.doc.query_all_generation) {
-            return null;
-        }
-
-        while (self.next_index < self.doc.nodes.items.len) : (self.next_index += 1) {
-            const idx = self.next_index;
-
-            if (self.scope_root != InvalidIndex) {
-                const root = &self.doc.nodes.items[self.scope_root];
-                if (idx <= self.scope_root or idx > root.subtree_end) continue;
-            }
-
-            const node = &self.doc.nodes.items[idx];
-            if (node.kind != .element) continue;
-
-            if (matcher.matchesSelectorAt(Document, self.doc, self.selector, idx, self.scope_root)) {
-                self.next_index += 1;
-                return self.doc.nodeAt(idx);
-            }
-        }
-        return null;
-    }
-};
-
-pub const Document = struct {
-    allocator: std.mem.Allocator,
-    source: []u8 = &[_]u8{},
-    store_parent_pointers: bool = true,
-    child_views_ready: bool = false,
-    input_was_normalized: bool = true,
-
-    nodes: std.ArrayListUnmanaged(NodeRaw) = .{},
-    child_indexes: std.ArrayListUnmanaged(u32) = .{},
-    parse_stack: std.ArrayListUnmanaged(u32) = .{},
-
-    query_one_arena: ?std.heap.ArenaAllocator = null,
-    query_all_arena: ?std.heap.ArenaAllocator = null,
-    query_all_generation: u64 = 1,
-    // One-entry selector caches avoid recompiling hot repeated runtime selectors.
-    query_one_cached_selector: []const u8 = "",
-    query_one_cached_compiled: ?ast.Selector = null,
-    query_one_cache_valid: bool = false,
-    query_all_cached_selector: []const u8 = "",
-    query_all_cached_compiled: ?ast.Selector = null,
-    query_all_cache_valid: bool = false,
-
-    query_accel_budget_bytes: usize = 0,
-    query_accel_used_bytes: usize = 0,
-    query_accel_budget_exhausted: bool = false,
-    query_accel_id_built: bool = false,
-    query_accel_id_disabled: bool = false,
-    query_accel_tag_disabled: bool = false,
-    query_accel_id_map: std.AutoHashMapUnmanaged(u64, u32) = .{},
-    query_accel_tag_entries: std.ArrayListUnmanaged(TagIndexEntry) = .{},
-    query_accel_tag_nodes: std.ArrayListUnmanaged(u32) = .{},
-
-    pub fn init(allocator: std.mem.Allocator) Document {
-        return .{
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(noalias self: *Document) void {
-        self.nodes.deinit(self.allocator);
-        self.child_indexes.deinit(self.allocator);
-        self.parse_stack.deinit(self.allocator);
-        self.query_accel_id_map.deinit(self.allocator);
-        self.query_accel_tag_entries.deinit(self.allocator);
-        self.query_accel_tag_nodes.deinit(self.allocator);
-        if (self.query_one_arena) |*arena| arena.deinit();
-        if (self.query_all_arena) |*arena| arena.deinit();
-    }
-
-    pub fn clear(noalias self: *Document) void {
-        self.nodes.clearRetainingCapacity();
-        self.child_indexes.clearRetainingCapacity();
-        self.parse_stack.clearRetainingCapacity();
-        self.child_views_ready = false;
-        if (self.query_one_arena) |*arena| _ = arena.reset(.retain_capacity);
-        if (self.query_all_arena) |*arena| _ = arena.reset(.retain_capacity);
-        self.invalidateRuntimeSelectorCaches();
-        self.resetQueryAccel();
-        self.query_all_generation +%= 1;
-        if (self.query_all_generation == 0) self.query_all_generation = 1;
-    }
-
-    pub fn parse(noalias self: *Document, input: []u8, comptime opts: ParseOptions) !void {
-        self.clear();
-        self.source = input;
-        self.store_parent_pointers = opts.store_parent_pointers;
-        self.input_was_normalized = opts.normalize_input;
-        self.query_accel_budget_bytes = @max(input.len / QueryAccelBudgetDivisor, QueryAccelMinBudgetBytes);
-        try parser.parseInto(Document, self, input, opts);
-        if (opts.eager_child_views) {
-            try self.buildChildViews();
-        }
-    }
-
-    pub fn queryOne(self: *const Document, comptime selector: []const u8) ?Node {
-        const sel = comptime ast.Selector.compile(selector);
-        return self.queryOneCompiled(&sel);
-    }
-
-    pub fn queryOneCompiled(self: *const Document, sel: *const ast.Selector) ?Node {
-        const mut_self: *Document = @constCast(self);
-        mut_self.ensureQueryPrereqs(sel.*);
-        const idx = matcher.queryOneIndex(Document, self, sel.*, InvalidIndex) orelse return null;
-        return self.nodeAt(idx);
-    }
-
-    pub fn queryOneRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!?Node {
-        return self.queryOneRuntimeFrom(selector, InvalidIndex);
-    }
-
-    fn queryOneRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!?Node {
-        const mut_self: *Document = @constCast(self);
-        const sel = try mut_self.getOrCompileQueryOneSelector(selector);
-        mut_self.ensureQueryPrereqs(sel);
-        if (scope_root == InvalidIndex) return self.queryOneCompiled(&sel);
-        const idx = matcher.queryOneIndex(Document, self, sel, scope_root) orelse return null;
-        return self.nodeAt(idx);
-    }
-
-    pub fn queryAll(self: *const Document, comptime selector: []const u8) QueryIter {
-        const sel = comptime ast.Selector.compile(selector);
-        return self.queryAllCompiled(&sel);
-    }
-
-    pub fn queryAllCompiled(self: *const Document, sel: *const ast.Selector) QueryIter {
-        const mut_self: *Document = @constCast(self);
-        mut_self.ensureQueryPrereqs(sel.*);
-        return .{ .doc = @constCast(self), .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
-    }
-
-    pub fn queryAllRuntime(self: *const Document, selector: []const u8) runtime_selector.Error!QueryIter {
-        return self.queryAllRuntimeFrom(selector, InvalidIndex);
-    }
-
-    fn queryAllRuntimeFrom(self: *const Document, selector: []const u8, scope_root: u32) runtime_selector.Error!QueryIter {
-        const mut_self: *Document = @constCast(self);
-        // Runtime query-all iterators are invalidated when a newer runtime
-        // query-all is created, to avoid holding stale compiled selector state.
-        mut_self.query_all_generation +%= 1;
-        if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
-
-        const sel = try mut_self.getOrCompileQueryAllSelector(selector);
-        mut_self.ensureQueryPrereqs(sel);
-        var out = if (scope_root == InvalidIndex)
-            self.queryAllCompiled(&sel)
-        else
-            QueryIter{
-                .doc = @constCast(self),
-                .selector = sel,
-                .scope_root = scope_root,
-                .next_index = scope_root + 1,
-            };
-        out.runtime_generation = mut_self.query_all_generation;
-        return out;
-    }
-
-    fn ensureQueryPrereqs(noalias self: *Document, selector: ast.Selector) void {
-        if (selector.requires_parent and !self.store_parent_pointers) {
-            self.materializeParentPointers();
-        }
-    }
-
-    fn materializeParentPointers(noalias self: *Document) void {
-        if (self.store_parent_pointers) return;
-
-        var parent_idx: u32 = 0;
-        while (parent_idx < self.nodes.items.len) : (parent_idx += 1) {
-            var child = self.nodes.items[parent_idx].first_child;
-            while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
-                self.nodes.items[child].parent = parent_idx;
-            }
-        }
-
-        self.store_parent_pointers = true;
-    }
-
-    pub fn html(self: *const Document) ?Node {
-        return self.findFirstTag("html");
-    }
-
-    pub fn head(self: *const Document) ?Node {
-        return self.findFirstTag("head");
-    }
-
-    pub fn body(self: *const Document) ?Node {
-        return self.findFirstTag("body");
-    }
-
-    pub fn findFirstTag(self: *const Document, name: []const u8) ?Node {
-        var i: usize = 1;
-        while (i < self.nodes.items.len) : (i += 1) {
-            const n = &self.nodes.items[i];
-            if (n.kind != .element) continue;
-            if (self.input_was_normalized) {
-                if (std.mem.eql(u8, n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
-            } else if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
-        }
-        return null;
-    }
-
-    pub fn nodeAt(self: *const Document, idx: u32) ?Node {
-        if (idx == InvalidIndex or idx >= self.nodes.items.len) return null;
-        return .{
-            .doc = @constCast(self),
-            .index = idx,
-        };
-    }
-
-    fn invalidateRuntimeSelectorCaches(noalias self: *Document) void {
-        self.query_one_cache_valid = false;
-        self.query_one_cached_selector = "";
-        self.query_one_cached_compiled = null;
-        self.query_all_cache_valid = false;
-        self.query_all_cached_selector = "";
-        self.query_all_cached_compiled = null;
-    }
-
-    fn getOrCompileQueryOneSelector(noalias self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
-        if (self.query_one_cache_valid and std.mem.eql(u8, self.query_one_cached_selector, selector)) {
-            return self.query_one_cached_compiled.?;
-        }
-
-        const arena = self.ensureQueryOneArena();
-        _ = arena.reset(.retain_capacity);
-        const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
-        self.query_one_cached_selector = sel.source;
-        self.query_one_cached_compiled = sel;
-        self.query_one_cache_valid = true;
-        return sel;
-    }
-
-    fn getOrCompileQueryAllSelector(noalias self: *Document, selector: []const u8) runtime_selector.Error!ast.Selector {
-        if (self.query_all_cache_valid and std.mem.eql(u8, self.query_all_cached_selector, selector)) {
-            return self.query_all_cached_compiled.?;
-        }
-
-        const arena = self.ensureQueryAllArena();
-        _ = arena.reset(.retain_capacity);
-        const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
-        self.query_all_cached_selector = sel.source;
-        self.query_all_cached_compiled = sel;
-        self.query_all_cache_valid = true;
-        return sel;
-    }
-
-    fn ensureQueryOneArena(noalias self: *Document) *std.heap.ArenaAllocator {
-        if (self.query_one_arena == null) {
-            self.query_one_arena = std.heap.ArenaAllocator.init(self.allocator);
-        }
-        return &self.query_one_arena.?;
-    }
-
-    fn ensureQueryAllArena(noalias self: *Document) *std.heap.ArenaAllocator {
-        if (self.query_all_arena == null) {
-            self.query_all_arena = std.heap.ArenaAllocator.init(self.allocator);
-        }
-        return &self.query_all_arena.?;
-    }
-
-    fn resetQueryAccel(self: *Document) void {
-        self.query_accel_used_bytes = 0;
-        self.query_accel_budget_exhausted = false;
-        self.query_accel_id_built = false;
-        self.query_accel_id_disabled = false;
-        self.query_accel_tag_disabled = false;
-        self.query_accel_id_map.clearRetainingCapacity();
-        self.query_accel_tag_entries.clearRetainingCapacity();
-        self.query_accel_tag_nodes.clearRetainingCapacity();
-    }
-
-    fn queryAccelReserve(self: *Document, bytes: usize) bool {
-        if (self.query_accel_budget_exhausted) return false;
-        const remaining = self.query_accel_budget_bytes -| self.query_accel_used_bytes;
-        if (bytes > remaining) {
-            self.query_accel_budget_exhausted = true;
-            return false;
-        }
-        self.query_accel_used_bytes += bytes;
-        return true;
-    }
-
-    fn ensureIdIndex(self: *Document) bool {
-        if (self.query_accel_id_built) return true;
-        if (self.query_accel_id_disabled or self.query_accel_budget_exhausted) return false;
-
-        self.query_accel_id_map.clearRetainingCapacity();
-
-        var idx: u32 = 1;
-        while (idx < self.nodes.items.len) : (idx += 1) {
-            const node = &self.nodes.items[idx];
-            if (node.kind != .element) continue;
-
-            const id = attr_inline.getAttrValue(self, node, "id") orelse continue;
-            if (id.len == 0) continue;
-            const id_hash = hashIdValue(id);
-
-            const gop = self.query_accel_id_map.getOrPut(self.allocator, id_hash) catch {
-                self.query_accel_id_disabled = true;
-                self.query_accel_id_map.clearRetainingCapacity();
-                return false;
-            };
-
-            if (gop.found_existing) {
-                const existing_idx = gop.value_ptr.*;
-                const existing_node = &self.nodes.items[existing_idx];
-                const existing_id = attr_inline.getAttrValue(self, existing_node, "id") orelse "";
-                // Hash collision on different ids would break index correctness.
-                // Disable this accel path and fall back to exact scan semantics.
-                if (!std.mem.eql(u8, existing_id, id)) {
-                    self.query_accel_id_disabled = true;
-                    self.query_accel_id_map.clearRetainingCapacity();
-                    return false;
-                }
-                continue;
-            }
-
-            if (!self.queryAccelReserve(@sizeOf(u64) + @sizeOf(u32) + 16)) {
-                _ = self.query_accel_id_map.remove(id_hash);
-                self.query_accel_id_disabled = true;
-                self.query_accel_id_map.clearRetainingCapacity();
-                return false;
-            }
-
-            gop.value_ptr.* = idx;
-        }
-
-        self.query_accel_id_built = true;
-        return true;
-    }
-
-    fn ensureTagIndex(self: *Document, tag_hash: tags.TagHashValue) ?IndexSpan {
-        if (tag_hash == std.math.maxInt(tags.TagHashValue)) return null;
-        if (self.query_accel_tag_disabled or self.query_accel_budget_exhausted) return null;
-        for (self.query_accel_tag_entries.items) |entry| {
-            if (entry.tag_hash == tag_hash) return entry.span;
-        }
-
-        var count: usize = 0;
-        for (self.nodes.items[1..]) |node| {
-            if (node.kind == .element and node.tag_hash == tag_hash) count += 1;
-        }
-
-        const reserve_bytes = count * @sizeOf(u32) + @sizeOf(TagIndexEntry);
-        if (!self.queryAccelReserve(reserve_bytes)) {
-            self.query_accel_tag_disabled = true;
-            return null;
-        }
-
-        const start: usize = self.query_accel_tag_nodes.items.len;
-        self.query_accel_tag_nodes.ensureTotalCapacity(self.allocator, start + count) catch {
-            self.query_accel_tag_disabled = true;
-            return null;
-        };
-
-        var idx: u32 = 1;
-        while (idx < self.nodes.items.len) : (idx += 1) {
-            const node = &self.nodes.items[idx];
-            if (node.kind == .element and node.tag_hash == tag_hash) {
-                self.query_accel_tag_nodes.appendAssumeCapacity(idx);
-            }
-        }
-
-        const span: IndexSpan = .{
-            .start = @intCast(start),
-            .len = @intCast(self.query_accel_tag_nodes.items.len - start),
-        };
-        self.query_accel_tag_entries.append(self.allocator, .{
-            .tag_hash = tag_hash,
-            .span = span,
-        }) catch {
-            self.query_accel_tag_disabled = true;
-            return null;
-        };
-        return span;
-    }
-
-    pub fn queryAccelLookupId(self: *const Document, id: []const u8, used_index: *bool) ?u32 {
-        const mut_self: *Document = @constCast(self);
-        if (!mut_self.ensureIdIndex()) {
-            used_index.* = false;
-            return null;
-        }
-        const id_hash = hashIdValue(id);
-        const idx = mut_self.query_accel_id_map.get(id_hash) orelse {
-            used_index.* = true;
-            return null;
-        };
-        const node = &mut_self.nodes.items[idx];
-        const current_id = attr_inline.getAttrValue(mut_self, node, "id") orelse {
-            used_index.* = true;
-            return null;
-        };
-        if (std.mem.eql(u8, current_id, id)) {
-            used_index.* = true;
-            return idx;
-        }
-
-        // Collision or stale key materialization: permanently disable the id
-        // index for this document and let caller use the scan fallback.
-        mut_self.query_accel_id_disabled = true;
-        mut_self.query_accel_id_built = false;
-        mut_self.query_accel_id_map.clearRetainingCapacity();
-        used_index.* = false;
-        return null;
-    }
-
-    pub fn queryAccelLookupTag(self: *const Document, tag_hash: tags.TagHashValue, used_index: *bool) ?[]const u32 {
-        const mut_self: *Document = @constCast(self);
-        const span = mut_self.ensureTagIndex(tag_hash) orelse {
-            used_index.* = false;
-            return null;
-        };
-        used_index.* = true;
-        const start: usize = @intCast(span.start);
-        const end: usize = start + @as(usize, @intCast(span.len));
-        return mut_self.query_accel_tag_nodes.items[start..end];
-    }
-
-    pub fn ensureChildViewsBuilt(noalias self: *Document) void {
-        if (self.child_views_ready) return;
-        // Allocation failure here indicates an unrecoverable internal state for
-        // callers expecting non-fallible navigation APIs.
-        self.buildChildViews() catch @panic("out of memory building child views");
-    }
-
-    fn buildChildViews(noalias self: *Document) !void {
-        if (!EnableChildViewPrefixBuilder) {
-            const alloc = self.allocator;
-            self.child_indexes.clearRetainingCapacity();
-            const child_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
-            try self.child_indexes.ensureTotalCapacity(alloc, child_count);
-
-            var i_old: u32 = 0;
-            while (i_old < self.nodes.items.len) : (i_old += 1) {
-                var n_old = &self.nodes.items[i_old];
-                n_old.child_view_start = @intCast(self.child_indexes.items.len);
-                n_old.child_view_len = 0;
-
-                var child_old = n_old.first_child;
-                while (child_old != InvalidIndex) {
-                    self.child_indexes.appendAssumeCapacity(child_old);
-                    n_old.child_view_len += 1;
-                    child_old = self.nodes.items[child_old].next_sibling;
-                }
-            }
-
-            self.child_views_ready = true;
-            return;
-        }
-
-        const alloc = self.allocator;
-        self.child_indexes.clearRetainingCapacity();
-        const child_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
-        try self.child_indexes.ensureTotalCapacity(alloc, child_count);
-        self.child_indexes.items.len = child_count;
-
-        var i: u32 = 0;
-        while (i < self.nodes.items.len) : (i += 1) {
-            var count: u32 = 0;
-            var child = self.nodes.items[i].first_child;
-            while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
-                count += 1;
-            }
-            self.nodes.items[i].child_view_len = count;
-        }
-
-        var offset: u32 = 0;
-        i = 0;
-        while (i < self.nodes.items.len) : (i += 1) {
-            self.nodes.items[i].child_view_start = offset;
-            offset += self.nodes.items[i].child_view_len;
-        }
-
-        self.parse_stack.clearRetainingCapacity();
-        try self.parse_stack.ensureTotalCapacity(alloc, self.nodes.items.len);
-        self.parse_stack.items.len = self.nodes.items.len;
-
-        i = 0;
-        while (i < self.nodes.items.len) : (i += 1) {
-            self.parse_stack.items[i] = self.nodes.items[i].child_view_start;
-        }
-
-        i = 0;
-        while (i < self.nodes.items.len) : (i += 1) {
-            var child = self.nodes.items[i].first_child;
-            while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
-                const write_idx = self.parse_stack.items[i];
-                self.child_indexes.items[write_idx] = child;
-                self.parse_stack.items[i] = write_idx + 1;
-            }
-        }
-        self.parse_stack.clearRetainingCapacity();
-
-        self.child_views_ready = true;
-    }
-};
+const DefaultTypeOptions: ParseOptions = .{};
+const NodeRaw = DefaultTypeOptions.GetNodeRaw();
+const Node = DefaultTypeOptions.GetNode();
+const QueryIter = DefaultTypeOptions.QueryIter();
+const Document = DefaultTypeOptions.GetDocument();
 
 fn hashIdValue(id: []const u8) u64 {
     return std.hash.Wyhash.hash(0, id);
@@ -1014,26 +1070,7 @@ test "parse-time text normalization is off by default and query-time normalizati
     try std.testing.expectEqualStrings("alpha & beta", normalized);
 }
 
-test "parse-time text normalization option normalizes text nodes during parse" {
-    const alloc = std.testing.allocator;
-    var doc = Document.init(alloc);
-    defer doc.deinit();
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    defer arena.deinit();
-
-    var html = "<div id='x'>  alpha  &amp;   beta  </div>".*;
-    try doc.parse(&html, .{ .normalize_text_on_parse = true });
-
-    const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
-    const text_node = doc.nodes.items[node.index + 1];
-    try std.testing.expect(text_node.kind == .text);
-    try std.testing.expectEqualStrings("alpha & beta", text_node.text.slice(doc.source));
-
-    const raw = try node.innerTextWithOptions(arena.allocator(), .{ .normalize_whitespace = false });
-    try std.testing.expectEqualStrings("alpha & beta", raw);
-}
-
-test "inplace attribute parser rewrites explicit empty assignment to name-only" {
+test "inplace attribute parser treats explicit empty assignment as name-only" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -1257,13 +1294,13 @@ test "attr fast-path names are equivalent to generic lookup semantics" {
     try std.testing.expect(a.getAttributeValue("missing") == null);
 }
 
-test "normalize_input keeps mixed-case tags and attrs queryable via lowercase selectors" {
+test "mixed-case tags and attrs are queryable via lowercase selectors" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
 
     var html = "<DiV ID='x' ClAsS='A b' DaTa-K='v'><SpAn id='y'></SpAn></DiV>".*;
-    try doc.parse(&html, .{ .normalize_input = true });
+    try doc.parse(&html, .{});
 
     try std.testing.expect(doc.queryOne("div#x[data-k=v]") != null);
     try std.testing.expect((try doc.queryOneRuntime("div > span#y")) != null);
@@ -1359,7 +1396,7 @@ test "leading child combinator works in node-scoped queries" {
     try std.testing.expectEqual(@as(usize, 1), hsoob_count);
 }
 
-test "deferred attribute parsing preserves selector/query behavior for representative input" {
+test "attribute parsing preserves selector/query behavior for representative input" {
     const alloc = std.testing.allocator;
 
     var eager_doc = Document.init(alloc);
@@ -1379,8 +1416,6 @@ test "deferred attribute parsing preserves selector/query behavior for represent
     try eager_doc.parse(&eager_html, .{});
     try deferred_doc.parse(&deferred_html, .{
         .eager_child_views = false,
-        .eager_attr_empty_rewrite = false,
-        .defer_attribute_parsing = true,
     });
 
     const selectors = [_][]const u8{
@@ -1402,7 +1437,7 @@ test "deferred attribute parsing preserves selector/query behavior for represent
     try std.testing.expectEqualStrings(eager_empty, deferred_empty);
 }
 
-test "deferred-attr scanner handles quoted > and self-closing tails" {
+test "attribute scanner handles quoted > and self-closing tails" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -1410,8 +1445,6 @@ test "deferred-attr scanner handles quoted > and self-closing tails" {
     var html = "<div id='a' data-q='x>y' data-n=abc></div><img id='i' src='x' /><br id='b'>".*;
     try doc.parse(&html, .{
         .eager_child_views = false,
-        .eager_attr_empty_rewrite = false,
-        .defer_attribute_parsing = true,
     });
 
     try std.testing.expect(doc.queryOne("div#a[data-q='x>y']") != null);
@@ -1419,18 +1452,14 @@ test "deferred-attr scanner handles quoted > and self-closing tails" {
     try std.testing.expect(doc.queryOne("br#b") != null);
 }
 
-test "deferred attribute parsing still builds the DOM" {
+test "attribute parsing still builds the DOM" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
 
     var html = "<div id='x'><span id='y'></span></div>".*;
     try doc.parse(&html, .{
-        .store_parent_pointers = false,
-        .normalize_input = false,
         .eager_child_views = false,
-        .eager_attr_empty_rewrite = false,
-        .defer_attribute_parsing = true,
     });
 
     // Document node plus parsed element nodes must exist.

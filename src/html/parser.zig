@@ -76,7 +76,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             // Fastest-mode style parses benefit from larger upfront reserves to
             // avoid repeated growth checks in the hot append path.
-            if (opts.defer_attribute_parsing and opts.drop_whitespace_text_nodes and !opts.normalize_text_on_parse) {
+            if (opts.drop_whitespace_text_nodes) {
                 estimated_nodes = @max(@as(usize, 32), (input_len / 6) + 32);
                 estimated_stack = @max(@as(usize, 16), (input_len / 192) + 16);
             }
@@ -104,11 +104,6 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             const node_idx = try self.appendNode(.text, parent_idx);
             var node = &self.doc.nodes.items[node_idx];
             node.text = .{ .start = @intCast(start), .end = @intCast(self.i) };
-
-            if (opts.normalize_text_on_parse) {
-                normalizeTextNodeInPlace(self.input, &node.text);
-            }
-
             node.subtree_end = node_idx;
         }
 
@@ -117,18 +112,9 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             self.skipWs();
 
             const name_start = self.i;
-            var saw_upper = false;
             var tag_hash_acc = tags.TagHash.init();
-            if (opts.normalize_input) {
-                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                    const c = self.input[self.i];
-                    if (c >= 'A' and c <= 'Z') saw_upper = true;
-                    if (EnableIncrementalTagHash) tag_hash_acc.update(c);
-                }
-            } else {
-                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                    if (EnableIncrementalTagHash) tag_hash_acc.update(self.input[self.i]);
-                }
+            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                if (EnableIncrementalTagHash) tag_hash_acc.update(self.input[self.i]);
             }
             if (self.i == name_start) {
                 // malformed tag, consume one byte and move on
@@ -136,7 +122,6 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 return;
             }
 
-            if (opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
             const tag_name = self.input[name_start..self.i];
             const tag_name_hash = if (EnableIncrementalTagHash) tag_hash_acc.value() else tags.hashBytes(tag_name);
 
@@ -156,55 +141,23 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
 
-            if (opts.defer_attribute_parsing) {
-                // Fast paths for very common cases with no attributes.
-                if (self.i < self.input.len and self.input[self.i] == '>') {
-                    attr_bytes_end = self.i;
-                    self.i += 1;
-                } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
-                    explicit_self_close = true;
-                    attr_bytes_end = self.i;
-                    self.i += 2;
-                } else if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
-                    // Scan to tag end while honoring quotes so `>` inside
-                    // attribute values does not terminate the tag early.
-                    explicit_self_close = tag_end.self_close;
-                    attr_bytes_end = tag_end.attr_end;
-                    self.i = tag_end.gt_index + 1;
-                } else {
-                    attr_bytes_end = self.input.len;
-                    self.i = self.input.len;
-                }
+            // Fast paths for very common cases with no attributes.
+            if (self.i < self.input.len and self.input[self.i] == '>') {
+                attr_bytes_end = self.i;
+                self.i += 1;
+            } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
+                explicit_self_close = true;
+                attr_bytes_end = self.i;
+                self.i += 2;
+            } else if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
+                // Scan to tag end while honoring quotes so `>` inside
+                // attribute values does not terminate the tag early.
+                explicit_self_close = tag_end.self_close;
+                attr_bytes_end = tag_end.attr_end;
+                self.i = tag_end.gt_index + 1;
             } else {
-                if (self.i < self.input.len and self.input[self.i] == '>') {
-                    self.i += 1;
-                    attr_bytes_end = self.i - 1;
-                } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
-                    explicit_self_close = true;
-                    attr_bytes_end = self.i;
-                    self.i += 2;
-                } else {
-                    while (self.i < self.input.len) {
-                        self.skipWs();
-                        if (self.i >= self.input.len) break;
-
-                        const c = self.input[self.i];
-                        if (c == '>') {
-                            attr_bytes_end = self.i;
-                            self.i += 1;
-                            break;
-                        }
-
-                        if (c == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>') {
-                            explicit_self_close = true;
-                            attr_bytes_end = self.i;
-                            self.i += 2;
-                            break;
-                        }
-
-                        try self.parseAttribute();
-                    }
-                }
+                attr_bytes_end = self.input.len;
+                self.i = self.input.len;
             }
 
             if (self.i == self.input.len and attr_bytes_end < self.i) {
@@ -256,68 +209,16 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             try self.pushStack(node_idx);
         }
 
-        fn parseAttribute(noalias self: *Self) !void {
-            const name_start = self.i;
-            var saw_upper = false;
-            if (opts.normalize_input) {
-                while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {
-                    const c = self.input[self.i];
-                    if (c >= 'A' and c <= 'Z') saw_upper = true;
-                }
-            } else {
-                while (self.i < self.input.len and tables.IdentCharTable[self.input[self.i]]) : (self.i += 1) {}
-            }
-            if (self.i == name_start) {
-                self.i += 1;
-                return;
-            }
-
-            if (opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
-
-            if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
-            if (self.i < self.input.len and self.input[self.i] == '=') {
-                const eq_index: usize = self.i;
-                self.i += 1;
-                if (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) self.skipWs();
-
-                if (self.i >= self.input.len or self.input[self.i] == '>' or (self.input[self.i] == '/' and self.i + 1 < self.input.len and self.input[self.i + 1] == '>')) {
-                    // Canonical rewrite for explicit empty assignment: `a=` -> `a `.
-                    if (opts.eager_attr_empty_rewrite) self.input[eq_index] = ' ';
-                } else if (self.i < self.input.len and (self.input[self.i] == '\'' or self.input[self.i] == '"')) {
-                    const q = self.input[self.i];
-                    const q_start = self.i + 1;
-                    self.i = scanner.findByte(self.input, q_start, q) orelse self.input.len;
-                    if (self.i < self.input.len and self.input[self.i] == q) self.i += 1;
-                } else {
-                    while (self.i < self.input.len) {
-                        const c = self.input[self.i];
-                        if (c == '>' or c == '/' or tables.WhitespaceTable[c]) break;
-                        self.i += 1;
-                    }
-                }
-            }
-        }
-
         fn parseClosingTag(noalias self: *Self) void {
             self.i += 2; // </
             self.skipWs();
 
             const name_start = self.i;
-            var saw_upper = false;
             var close_hash_acc = tags.TagHash.init();
-            if (opts.normalize_input) {
-                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                    const c = self.input[self.i];
-                    if (c >= 'A' and c <= 'Z') saw_upper = true;
-                    if (EnableIncrementalTagHash) close_hash_acc.update(c);
-                }
-            } else {
-                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                    if (EnableIncrementalTagHash) close_hash_acc.update(self.input[self.i]);
-                }
+            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                if (EnableIncrementalTagHash) close_hash_acc.update(self.input[self.i]);
             }
             const name_end = self.i;
-            if (name_end > name_start and opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..name_end]);
             const close_name = self.input[name_start..name_end];
             const close_hash = if (EnableIncrementalTagHash) close_hash_acc.value() else tags.hashBytes(close_name);
 
@@ -332,10 +233,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 const hash_mismatch = top.tag_hash != close_hash;
                 if (!hash_mismatch) {
                     const top_name = top.name.slice(self.input);
-                    const matches_top = if (opts.normalize_input)
-                        std.mem.eql(u8, top_name, close_name)
-                    else
-                        std.mem.eql(u8, top_name, close_name) or tables.eqlIgnoreCaseAscii(top_name, close_name);
+                    const matches_top = std.mem.eql(u8, top_name, close_name) or tables.eqlIgnoreCaseAscii(top_name, close_name);
                     if (matches_top) {
                         _ = self.doc.parse_stack.pop();
                         var node = &self.doc.nodes.items[top_idx];
@@ -353,10 +251,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 const n = &self.doc.nodes.items[idx];
                 if (n.tag_hash != close_hash) continue;
                 const open_name = n.name.slice(self.input);
-                const matches = if (opts.normalize_input)
-                    std.mem.eql(u8, open_name, close_name)
-                else
-                    std.mem.eql(u8, open_name, close_name) or tables.eqlIgnoreCaseAscii(open_name, close_name);
+                const matches = std.mem.eql(u8, open_name, close_name) or tables.eqlIgnoreCaseAscii(open_name, close_name);
                 if (!matches) {
                     continue;
                 }
@@ -390,12 +285,10 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             const idx: u32 = @intCast(self.doc.nodes.items.len);
             const build_links = parent_idx != InvalidIndex and kind == .element;
 
-            var node: @TypeOf(self.doc.nodes.items[0]) = .{
+            const node: @TypeOf(self.doc.nodes.items[0]) = .{
                 .kind = kind,
                 .subtree_end = idx,
             };
-
-            if (parent_idx != InvalidIndex and self.doc.store_parent_pointers) node.parent = parent_idx;
 
             _ = try self.pushNode(node);
 
