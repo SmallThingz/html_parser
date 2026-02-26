@@ -1,5 +1,6 @@
 const std = @import("std");
 const tables = @import("tables.zig");
+const attr_inline = @import("attr_inline.zig");
 const runtime_selector = @import("../selector/runtime.zig");
 const ast = @import("../selector/ast.zig");
 const matcher = @import("../selector/matcher.zig");
@@ -8,6 +9,19 @@ const node_api = @import("node.zig");
 const tags = @import("tags.zig");
 
 pub const InvalidIndex: u32 = std.math.maxInt(u32);
+const QueryAccelMinBudgetBytes: usize = 4096;
+const QueryAccelBudgetDivisor: usize = 20; // 5%
+const EnableChildViewPrefixBuilder = false;
+
+const IndexSpan = struct {
+    start: u32 = 0,
+    len: u32 = 0,
+};
+
+const TagIndexEntry = struct {
+    tag_hash: tags.TagHashValue,
+    span: IndexSpan,
+};
 
 pub const ParseOptions = struct {
     // Enables `parentNode()` navigation; disabling it trims parse work and memory.
@@ -201,6 +215,16 @@ pub const Document = struct {
     query_all_cached_compiled: ?ast.Selector = null,
     query_all_cache_valid: bool = false,
 
+    query_accel_budget_bytes: usize = 0,
+    query_accel_used_bytes: usize = 0,
+    query_accel_budget_exhausted: bool = false,
+    query_accel_id_built: bool = false,
+    query_accel_id_disabled: bool = false,
+    query_accel_tag_disabled: bool = false,
+    query_accel_id_map: std.AutoHashMapUnmanaged(u64, u32) = .{},
+    query_accel_tag_entries: std.ArrayListUnmanaged(TagIndexEntry) = .{},
+    query_accel_tag_nodes: std.ArrayListUnmanaged(u32) = .{},
+
     pub fn init(allocator: std.mem.Allocator) Document {
         return .{
             .allocator = allocator,
@@ -213,6 +237,9 @@ pub const Document = struct {
         self.nodes.deinit(self.allocator);
         self.child_indexes.deinit(self.allocator);
         self.parse_stack.deinit(self.allocator);
+        self.query_accel_id_map.deinit(self.allocator);
+        self.query_accel_tag_entries.deinit(self.allocator);
+        self.query_accel_tag_nodes.deinit(self.allocator);
         self.query_one_arena.deinit();
         self.query_all_arena.deinit();
     }
@@ -225,6 +252,7 @@ pub const Document = struct {
         _ = self.query_one_arena.reset(.retain_capacity);
         _ = self.query_all_arena.reset(.retain_capacity);
         self.invalidateRuntimeSelectorCaches();
+        self.resetQueryAccel();
         self.query_all_generation +%= 1;
         if (self.query_all_generation == 0) self.query_all_generation = 1;
     }
@@ -234,6 +262,7 @@ pub const Document = struct {
         self.source = input;
         self.store_parent_pointers = opts.store_parent_pointers;
         self.input_was_normalized = opts.normalize_input;
+        self.query_accel_budget_bytes = @max(input.len / QueryAccelBudgetDivisor, QueryAccelMinBudgetBytes);
         try parser.parseInto(Document, self, input, opts);
         if (opts.eager_child_views) {
             try self.buildChildViews();
@@ -363,6 +392,165 @@ pub const Document = struct {
         return sel;
     }
 
+    fn resetQueryAccel(self: *Document) void {
+        self.query_accel_used_bytes = 0;
+        self.query_accel_budget_exhausted = false;
+        self.query_accel_id_built = false;
+        self.query_accel_id_disabled = false;
+        self.query_accel_tag_disabled = false;
+        self.query_accel_id_map.clearRetainingCapacity();
+        self.query_accel_tag_entries.clearRetainingCapacity();
+        self.query_accel_tag_nodes.clearRetainingCapacity();
+    }
+
+    fn queryAccelReserve(self: *Document, bytes: usize) bool {
+        if (self.query_accel_budget_exhausted) return false;
+        const remaining = self.query_accel_budget_bytes -| self.query_accel_used_bytes;
+        if (bytes > remaining) {
+            self.query_accel_budget_exhausted = true;
+            return false;
+        }
+        self.query_accel_used_bytes += bytes;
+        return true;
+    }
+
+    fn ensureIdIndex(self: *Document) bool {
+        if (self.query_accel_id_built) return true;
+        if (self.query_accel_id_disabled or self.query_accel_budget_exhausted) return false;
+
+        self.query_accel_id_map.clearRetainingCapacity();
+
+        var idx: u32 = 1;
+        while (idx < self.nodes.items.len) : (idx += 1) {
+            const node = &self.nodes.items[idx];
+            if (node.kind != .element) continue;
+
+            const id = attr_inline.getAttrValue(self, node, "id") orelse continue;
+            if (id.len == 0) continue;
+            const id_hash = hashIdValue(id);
+
+            const gop = self.query_accel_id_map.getOrPut(self.allocator, id_hash) catch {
+                self.query_accel_id_disabled = true;
+                self.query_accel_id_map.clearRetainingCapacity();
+                return false;
+            };
+
+            if (gop.found_existing) {
+                const existing_idx = gop.value_ptr.*;
+                const existing_node = &self.nodes.items[existing_idx];
+                const existing_id = attr_inline.getAttrValue(self, existing_node, "id") orelse "";
+                // Hash collision on different ids would break index correctness.
+                // Disable this accel path and fall back to exact scan semantics.
+                if (!std.mem.eql(u8, existing_id, id)) {
+                    self.query_accel_id_disabled = true;
+                    self.query_accel_id_map.clearRetainingCapacity();
+                    return false;
+                }
+                continue;
+            }
+
+            if (!self.queryAccelReserve(@sizeOf(u64) + @sizeOf(u32) + 16)) {
+                _ = self.query_accel_id_map.remove(id_hash);
+                self.query_accel_id_disabled = true;
+                self.query_accel_id_map.clearRetainingCapacity();
+                return false;
+            }
+
+            gop.value_ptr.* = idx;
+        }
+
+        self.query_accel_id_built = true;
+        return true;
+    }
+
+    fn ensureTagIndex(self: *Document, tag_hash: tags.TagHashValue) ?IndexSpan {
+        if (tag_hash == std.math.maxInt(tags.TagHashValue)) return null;
+        if (self.query_accel_tag_disabled or self.query_accel_budget_exhausted) return null;
+        for (self.query_accel_tag_entries.items) |entry| {
+            if (entry.tag_hash == tag_hash) return entry.span;
+        }
+
+        var count: usize = 0;
+        for (self.nodes.items[1..]) |node| {
+            if (node.kind == .element and node.tag_hash == tag_hash) count += 1;
+        }
+
+        const reserve_bytes = count * @sizeOf(u32) + @sizeOf(TagIndexEntry);
+        if (!self.queryAccelReserve(reserve_bytes)) {
+            self.query_accel_tag_disabled = true;
+            return null;
+        }
+
+        const start: usize = self.query_accel_tag_nodes.items.len;
+        self.query_accel_tag_nodes.ensureTotalCapacity(self.allocator, start + count) catch {
+            self.query_accel_tag_disabled = true;
+            return null;
+        };
+
+        var idx: u32 = 1;
+        while (idx < self.nodes.items.len) : (idx += 1) {
+            const node = &self.nodes.items[idx];
+            if (node.kind == .element and node.tag_hash == tag_hash) {
+                self.query_accel_tag_nodes.appendAssumeCapacity(idx);
+            }
+        }
+
+        const span: IndexSpan = .{
+            .start = @intCast(start),
+            .len = @intCast(self.query_accel_tag_nodes.items.len - start),
+        };
+        self.query_accel_tag_entries.append(self.allocator, .{
+            .tag_hash = tag_hash,
+            .span = span,
+        }) catch {
+            self.query_accel_tag_disabled = true;
+            return null;
+        };
+        return span;
+    }
+
+    pub fn queryAccelLookupId(self: *const Document, id: []const u8, used_index: *bool) ?u32 {
+        const mut_self: *Document = @constCast(self);
+        if (!mut_self.ensureIdIndex()) {
+            used_index.* = false;
+            return null;
+        }
+        const id_hash = hashIdValue(id);
+        const idx = mut_self.query_accel_id_map.get(id_hash) orelse {
+            used_index.* = true;
+            return null;
+        };
+        const node = &mut_self.nodes.items[idx];
+        const current_id = attr_inline.getAttrValue(mut_self, node, "id") orelse {
+            used_index.* = true;
+            return null;
+        };
+        if (std.mem.eql(u8, current_id, id)) {
+            used_index.* = true;
+            return idx;
+        }
+
+        // Collision or stale key materialization: permanently disable the id
+        // index for this document and let caller use the scan fallback.
+        mut_self.query_accel_id_disabled = true;
+        mut_self.query_accel_id_built = false;
+        mut_self.query_accel_id_map.clearRetainingCapacity();
+        used_index.* = false;
+        return null;
+    }
+
+    pub fn queryAccelLookupTag(self: *const Document, tag_hash: tags.TagHashValue, used_index: *bool) ?[]const u32 {
+        const mut_self: *Document = @constCast(self);
+        const span = mut_self.ensureTagIndex(tag_hash) orelse {
+            used_index.* = false;
+            return null;
+        };
+        used_index.* = true;
+        const start: usize = @intCast(span.start);
+        const end: usize = start + @as(usize, @intCast(span.len));
+        return mut_self.query_accel_tag_nodes.items[start..end];
+    }
+
     pub fn ensureChildViewsBuilt(noalias self: *Document) void {
         if (self.child_views_ready) return;
         // Allocation failure here indicates an unrecoverable internal state for
@@ -371,28 +559,80 @@ pub const Document = struct {
     }
 
     fn buildChildViews(noalias self: *Document) !void {
+        if (!EnableChildViewPrefixBuilder) {
+            const alloc = self.allocator;
+            self.child_indexes.clearRetainingCapacity();
+            const child_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
+            try self.child_indexes.ensureTotalCapacity(alloc, child_count);
+
+            var i_old: u32 = 0;
+            while (i_old < self.nodes.items.len) : (i_old += 1) {
+                var n_old = &self.nodes.items[i_old];
+                n_old.child_view_start = @intCast(self.child_indexes.items.len);
+                n_old.child_view_len = 0;
+
+                var child_old = n_old.first_child;
+                while (child_old != InvalidIndex) {
+                    self.child_indexes.appendAssumeCapacity(child_old);
+                    n_old.child_view_len += 1;
+                    child_old = self.nodes.items[child_old].next_sibling;
+                }
+            }
+
+            self.child_views_ready = true;
+            return;
+        }
+
         const alloc = self.allocator;
         self.child_indexes.clearRetainingCapacity();
         const child_count = if (self.nodes.items.len > 0) self.nodes.items.len - 1 else 0;
         try self.child_indexes.ensureTotalCapacity(alloc, child_count);
+        self.child_indexes.items.len = child_count;
 
         var i: u32 = 0;
         while (i < self.nodes.items.len) : (i += 1) {
-            var n = &self.nodes.items[i];
-            n.child_view_start = @intCast(self.child_indexes.items.len);
-            n.child_view_len = 0;
+            var count: u32 = 0;
+            var child = self.nodes.items[i].first_child;
+            while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
+                count += 1;
+            }
+            self.nodes.items[i].child_view_len = count;
+        }
 
-            var child = n.first_child;
-            while (child != InvalidIndex) {
-                self.child_indexes.appendAssumeCapacity(child);
-                n.child_view_len += 1;
-                child = self.nodes.items[child].next_sibling;
+        var offset: u32 = 0;
+        i = 0;
+        while (i < self.nodes.items.len) : (i += 1) {
+            self.nodes.items[i].child_view_start = offset;
+            offset += self.nodes.items[i].child_view_len;
+        }
+
+        self.parse_stack.clearRetainingCapacity();
+        try self.parse_stack.ensureTotalCapacity(alloc, self.nodes.items.len);
+        self.parse_stack.items.len = self.nodes.items.len;
+
+        i = 0;
+        while (i < self.nodes.items.len) : (i += 1) {
+            self.parse_stack.items[i] = self.nodes.items[i].child_view_start;
+        }
+
+        i = 0;
+        while (i < self.nodes.items.len) : (i += 1) {
+            var child = self.nodes.items[i].first_child;
+            while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
+                const write_idx = self.parse_stack.items[i];
+                self.child_indexes.items[write_idx] = child;
+                self.parse_stack.items[i] = write_idx + 1;
             }
         }
+        self.parse_stack.clearRetainingCapacity();
 
         self.child_views_ready = true;
     }
 };
+
+fn hashIdValue(id: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, id);
+}
 
 fn assertNodeTypeLayouts() void {
     _ = @sizeOf(NodeRaw);
@@ -1187,4 +1427,74 @@ test "moved document keeps node-scoped queries and navigation valid" {
     const b = a.queryOne("span#b") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("span", b.tagName());
     try std.testing.expectEqual(@as(u32, a.index), b.parentNode().?.index);
+}
+
+test "query accel id/tag indexes match selector results" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html =
+        "<div id='root'><a id='x' href='https://example' class='nav button'></a><span id='y'></span><a id='z' href='/local' class='nav'></a></div>".*;
+    try doc.parse(&html, .{});
+
+    const x = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(tags.hashBytes("a"), x.raw().tag_hash);
+
+    var used_id = false;
+    const id_idx = doc.queryAccelLookupId("x", &used_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(used_id);
+    try std.testing.expectEqual(x.index, id_idx);
+
+    var used_tag = false;
+    const a_hash = tags.hashBytes("a");
+    const tag_candidates = doc.queryAccelLookupTag(a_hash, &used_tag) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(used_tag);
+    try std.testing.expectEqual(@as(usize, 2), tag_candidates.len);
+    try std.testing.expectEqual(x.index, tag_candidates[0]);
+    try std.testing.expectEqualStrings("a", doc.nodes.items[tag_candidates[1]].name.slice(doc.source));
+
+    const sel_hit = doc.queryOne("a[href^=https][class*=button]") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(x.index, sel_hit.index);
+
+    const x_node = doc.nodeAt(id_idx) orelse return error.TestUnexpectedResult;
+    _ = x_node.getAttributeValue("class") orelse return error.TestUnexpectedResult;
+    used_id = false;
+    const id_idx_after = doc.queryAccelLookupId("x", &used_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(used_id);
+    try std.testing.expectEqual(id_idx, id_idx_after);
+}
+
+test "query accel state is invalidated by parse and clear" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html_a = "<div><a id='x'></a><a id='y'></a></div>".*;
+    try doc.parse(&html_a, .{});
+
+    var used_id = false;
+    _ = doc.queryAccelLookupId("x", &used_id);
+    try std.testing.expect(used_id);
+
+    var used_tag = false;
+    _ = doc.queryAccelLookupTag(tags.hashBytes("a"), &used_tag);
+    try std.testing.expect(used_tag);
+    try std.testing.expect(doc.query_accel_id_built);
+    try std.testing.expect(doc.query_accel_tag_nodes.items.len != 0);
+
+    var html_b = "<main><p id='z'></p></main>".*;
+    try doc.parse(&html_b, .{});
+    try std.testing.expect(!doc.query_accel_id_built);
+    try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_nodes.items.len);
+    try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_entries.items.len);
+
+    used_id = false;
+    try std.testing.expect(doc.queryAccelLookupId("x", &used_id) == null);
+    try std.testing.expect(used_id);
+
+    doc.clear();
+    try std.testing.expect(!doc.query_accel_id_built);
+    try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_nodes.items.len);
+    try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_entries.items.len);
 }

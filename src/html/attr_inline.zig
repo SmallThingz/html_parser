@@ -175,6 +175,102 @@ pub fn collectSelectedValues(noalias doc_ptr: anytype, node: anytype, selected_n
     }
 }
 
+pub fn collectSelectedValuesByHash(
+    noalias doc_ptr: anytype,
+    node: anytype,
+    selected_names: []const []const u8,
+    selected_hashes: []const u32,
+    out_values: []?[]const u8,
+    input_normalized: bool,
+) void {
+    const mut_doc = @constCast(doc_ptr);
+    const source: []u8 = mut_doc.source;
+    if (selected_names.len == 0) return;
+    if (selected_names.len != out_values.len or selected_names.len != selected_hashes.len) return;
+
+    var i: usize = node.attr_bytes.start;
+    const end: usize = node.attr_bytes.end;
+    var remaining: usize = 0;
+    for (out_values) |v| {
+        if (v == null) remaining += 1;
+    }
+    if (remaining == 0) return;
+
+    while (i < end) {
+        while (i < end and tables.WhitespaceTable[source[i]]) : (i += 1) {}
+        if (i >= end) break;
+
+        const c = source[i];
+        if (c == '>' or c == '/') break;
+
+        const name_start = i;
+        while (i < end and tables.IdentCharTable[source[i]]) : (i += 1) {}
+        if (i == name_start) {
+            i += 1;
+            continue;
+        }
+
+        const name_slice = source[name_start..i];
+        const name_hash = hashIgnoreCaseAscii(name_slice);
+        const selected_idx = firstUnresolvedMatchByHash(
+            selected_names,
+            selected_hashes,
+            out_values,
+            name_slice,
+            name_hash,
+            input_normalized,
+        );
+
+        if (i >= end) {
+            if (selected_idx) |idx| {
+                out_values[idx] = "";
+                remaining -= 1;
+            }
+            break;
+        }
+
+        const delim = source[i];
+        if (delim == '=') {
+            const eq_index = i;
+            const raw = parseRawValue(source, end, eq_index);
+            if (selected_idx) |idx| {
+                out_values[idx] = materializeRawValue(source, end, eq_index, raw);
+                const parsed = parseParsedValue(source, end, eq_index);
+                i = parsed.next_start;
+                remaining -= 1;
+                if (remaining == 0) return;
+            } else {
+                i = raw.next_start;
+            }
+            continue;
+        }
+
+        if (delim == 0) {
+            const parsed = parseParsedValue(source, end, i);
+            i = parsed.next_start;
+            if (selected_idx) |idx| {
+                out_values[idx] = parsed.value;
+                remaining -= 1;
+                if (remaining == 0) return;
+            }
+            continue;
+        }
+
+        if (selected_idx) |idx| {
+            out_values[idx] = "";
+            remaining -= 1;
+            if (remaining == 0) return;
+        }
+
+        if (delim == '>' or delim == '/') break;
+        if (tables.WhitespaceTable[delim]) {
+            i += 1;
+            continue;
+        }
+        i += 1;
+    }
+}
+
 const ParsedValue = struct {
     value: []const u8,
     next_start: usize,
@@ -353,6 +449,23 @@ fn firstUnresolvedMatch(selected_names: []const []const u8, out_values: []const 
     while (idx < selected_names.len) : (idx += 1) {
         if (out_values[idx] != null) continue;
         if (matchesLookupName(name, selected_names[idx], .generic, hashIgnoreCaseAscii(selected_names[idx]), false)) return idx;
+    }
+    return null;
+}
+
+fn firstUnresolvedMatchByHash(
+    selected_names: []const []const u8,
+    selected_hashes: []const u32,
+    out_values: []const ?[]const u8,
+    name: []const u8,
+    name_hash: u32,
+    input_normalized: bool,
+) ?usize {
+    var idx: usize = 0;
+    while (idx < selected_names.len) : (idx += 1) {
+        if (out_values[idx] != null) continue;
+        if (selected_hashes[idx] != name_hash) continue;
+        if (matchesLookupName(name, selected_names[idx], .generic, selected_hashes[idx], input_normalized)) return idx;
     }
     return null;
 }

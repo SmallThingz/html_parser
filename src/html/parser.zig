@@ -5,6 +5,8 @@ const entities = @import("entities.zig");
 const scanner = @import("scanner.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
+const EnableIncrementalTagHash = true;
+const EnableTextNormalizeFastPath = true;
 
 pub fn parseInto(comptime Doc: type, noalias doc: *Doc, input: []u8, comptime opts: anytype) !void {
     const OptType = @TypeOf(opts);
@@ -103,9 +105,11 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             const name_start = self.i;
             var saw_upper = false;
+            var tag_hash_acc = tags.TagHash.init();
             while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
                 const c = self.input[self.i];
                 if (c >= 'A' and c <= 'Z') saw_upper = true;
+                if (EnableIncrementalTagHash) tag_hash_acc.update(c);
             }
             if (self.i == name_start) {
                 // malformed tag, consume one byte and move on
@@ -115,7 +119,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             if (self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..self.i]);
             const tag_name = self.input[name_start..self.i];
-            const tag_name_hash = tags.hashBytes(tag_name);
+            const tag_name_hash = if (EnableIncrementalTagHash) tag_hash_acc.value() else tags.hashBytes(tag_name);
 
             if (tags.mayTriggerImplicitCloseHash(tag_name, tag_name_hash)) {
                 self.applyImplicitClosures(tag_name, tag_name_hash);
@@ -268,14 +272,16 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
             const name_start = self.i;
             var saw_upper = false;
+            var close_hash_acc = tags.TagHash.init();
             while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
                 const c = self.input[self.i];
                 if (c >= 'A' and c <= 'Z') saw_upper = true;
+                if (EnableIncrementalTagHash) close_hash_acc.update(c);
             }
             const name_end = self.i;
             if (name_end > name_start and self.opts.normalize_input and saw_upper) tables.toLowerInPlace(self.input[name_start..name_end]);
             const close_name = self.input[name_start..name_end];
-            const close_hash = tags.hashBytes(close_name);
+            const close_hash = if (EnableIncrementalTagHash) close_hash_acc.value() else tags.hashBytes(close_name);
 
             self.i = scanner.findByte(self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
@@ -462,6 +468,7 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
 
         fn normalizeTextNodeInPlace(input: []u8, text_span: anytype) void {
             const text_mut = text_span.sliceMut(input);
+            if (EnableTextNormalizeFastPath and !textNeedsNormalization(text_mut)) return;
             const decoded_len = entities.decodeInPlaceIfEntity(text_mut);
             text_span.end = text_span.start + @as(u32, @intCast(decoded_len));
 
@@ -494,6 +501,29 @@ fn Parser(comptime Doc: type, comptime OptType: type) type {
             }
 
             return w;
+        }
+
+        fn textNeedsNormalization(bytes: []const u8) bool {
+            if (bytes.len == 0) return false;
+
+            var prev_ws = false;
+            var i: usize = 0;
+            while (i < bytes.len) : (i += 1) {
+                const c = bytes[i];
+                if (c == '&') return true;
+
+                const ws = tables.WhitespaceTable[c];
+                if (!ws) {
+                    prev_ws = false;
+                    continue;
+                }
+
+                if (i == 0 or i + 1 == bytes.len) return true;
+                if (c != ' ') return true;
+                if (prev_ws) return true;
+                prev_ws = true;
+            }
+            return false;
         }
     };
 }

@@ -6,23 +6,20 @@ const attr_inline = @import("../html/attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 const MaxProbeEntries: usize = 24;
+const MaxCollectedAttrs: usize = 24;
 const HashId: u32 = hashIgnoreCaseAscii("id");
 const HashClass: u32 = hashIgnoreCaseAscii("class");
+const EnableQueryAccel = true;
+const EnableMultiAttrCollect = true;
 
 pub fn queryOneIndex(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, scope_root: u32) ?u32 {
-    const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
-    const end_excl: u32 = if (scope_root == InvalidIndex)
-        @as(u32, @intCast(doc.nodes.items.len))
-    else
-        doc.nodes.items[scope_root].subtree_end + 1;
-
-    var i = start;
-    while (i < end_excl and i < doc.nodes.items.len) : (i += 1) {
-        const node = &doc.nodes.items[i];
-        if (node.kind != .element) continue;
-        if (matchesSelectorAt(Doc, doc, selector, i, scope_root)) return i;
+    var best: ?u32 = null;
+    for (selector.groups) |group| {
+        if (group.compound_len == 0) continue;
+        const idx = firstMatchForGroup(Doc, doc, selector, group, scope_root) orelse continue;
+        if (best == null or idx < best.?) best = idx;
     }
-    return null;
+    return best;
 }
 
 pub fn matchesSelectorAt(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, node_index: u32, scope_root: u32) bool {
@@ -73,6 +70,64 @@ fn matchGroupFromRight(comptime Doc: type, noalias doc: *const Doc, selector: as
     }
 }
 
+fn firstMatchForGroup(comptime Doc: type, doc: *const Doc, selector: ast.Selector, group: ast.Group, scope_root: u32) ?u32 {
+    const rightmost = group.compound_len - 1;
+    const comp_abs: usize = @intCast(group.compound_start + rightmost);
+    const comp = selector.compounds[comp_abs];
+
+    if (EnableQueryAccel and @hasDecl(Doc, "queryAccelLookupId") and comp.has_id != 0) {
+        const id = comp.id.slice(selector.source);
+        var used = false;
+        if (doc.queryAccelLookupId(id, &used)) |idx| {
+            if (inScope(doc, idx, scope_root) and matchGroupFromRight(Doc, doc, selector, group, rightmost, idx, scope_root)) {
+                return idx;
+            }
+            return null;
+        }
+        if (used) return null;
+    }
+
+    if (EnableQueryAccel and @hasDecl(Doc, "queryAccelLookupTag") and comp.has_tag != 0 and comp.tag_hash != 0) {
+        var used = false;
+        if (doc.queryAccelLookupTag(@intCast(comp.tag_hash), &used)) |candidates| {
+            if (scope_root != InvalidIndex) {
+                const scope_end = doc.nodes.items[scope_root].subtree_end;
+                for (candidates) |idx| {
+                    if (idx <= scope_root) continue;
+                    if (idx > scope_end) break;
+                    if (matchGroupFromRight(Doc, doc, selector, group, rightmost, idx, scope_root)) return idx;
+                }
+                return null;
+            }
+            for (candidates) |idx| {
+                if (matchGroupFromRight(Doc, doc, selector, group, rightmost, idx, scope_root)) return idx;
+            }
+            return null;
+        }
+        if (used) return null;
+    }
+
+    const start: u32 = if (scope_root == InvalidIndex) 1 else scope_root + 1;
+    const end_excl: u32 = if (scope_root == InvalidIndex)
+        @as(u32, @intCast(doc.nodes.items.len))
+    else
+        doc.nodes.items[scope_root].subtree_end + 1;
+
+    var i = start;
+    while (i < end_excl and i < doc.nodes.items.len) : (i += 1) {
+        const node = &doc.nodes.items[i];
+        if (node.kind != .element) continue;
+        if (matchGroupFromRight(Doc, doc, selector, group, rightmost, i, scope_root)) return i;
+    }
+    return null;
+}
+
+fn inScope(doc: anytype, idx: u32, scope_root: u32) bool {
+    if (idx == InvalidIndex or idx >= doc.nodes.items.len) return false;
+    if (scope_root == InvalidIndex) return idx > 0;
+    return idx > scope_root and idx <= doc.nodes.items[scope_root].subtree_end;
+}
+
 fn matchesScopeAnchor(doc: anytype, combinator: ast.Combinator, node_index: u32, scope_root: u32) bool {
     if (combinator == .none) return true;
 
@@ -113,6 +168,9 @@ fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Se
     // This preserves selector-order short-circuiting while avoiding repeated
     // full attribute traversals for the same name.
     var attr_probe: AttrProbe = .{};
+    var collected_attrs: CollectedAttrs = .{};
+    const use_collected = EnableMultiAttrCollect and prepareCollectedAttrs(selector, comp, &collected_attrs);
+    const collected_ptr: ?*CollectedAttrs = if (use_collected) &collected_attrs else null;
 
     if (comp.has_tag != 0) {
         const tag = comp.tag.slice(selector.source);
@@ -125,19 +183,33 @@ fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Se
 
     if (comp.has_id != 0) {
         const id = comp.id.slice(selector.source);
-        const value = attrValueByHash(doc, node, &attr_probe, "id", HashId) orelse return false;
+        const value = attrValueByHashFrom(
+            doc,
+            node,
+            &attr_probe,
+            collected_ptr,
+            "id",
+            HashId,
+        ) orelse return false;
         if (!std.mem.eql(u8, value, id)) return false;
     }
 
     if (comp.class_len != 0) {
-        const class_attr = attrValueByHash(doc, node, &attr_probe, "class", HashClass) orelse return false;
+        const class_attr = attrValueByHashFrom(
+            doc,
+            node,
+            &attr_probe,
+            collected_ptr,
+            "class",
+            HashClass,
+        ) orelse return false;
         if (!hasAllClassesOnePass(selector, comp, class_attr)) return false;
     }
 
     var attr_i: u32 = 0;
     while (attr_i < comp.attr_len) : (attr_i += 1) {
         const attr_sel = selector.attrs[comp.attr_start + attr_i];
-        if (!matchesAttrSelector(doc, node, &attr_probe, selector.source, attr_sel)) return false;
+        if (!matchesAttrSelector(doc, node, &attr_probe, collected_ptr, selector.source, attr_sel)) return false;
     }
 
     var pseudo_i: u32 = 0;
@@ -149,13 +221,20 @@ fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Se
     var not_i: u32 = 0;
     while (not_i < comp.not_len) : (not_i += 1) {
         const item = selector.not_items[comp.not_start + not_i];
-        if (matchesNotSimple(doc, node, &attr_probe, selector.source, item)) return false;
+        if (matchesNotSimple(doc, node, &attr_probe, collected_ptr, selector.source, item)) return false;
     }
 
     return true;
 }
 
-fn matchesNotSimple(doc: anytype, node: anytype, noalias probe: *AttrProbe, selector_source: []const u8, item: ast.NotSimple) bool {
+fn matchesNotSimple(
+    doc: anytype,
+    node: anytype,
+    noalias probe: *AttrProbe,
+    collected: ?*CollectedAttrs,
+    selector_source: []const u8,
+    item: ast.NotSimple,
+) bool {
     return switch (item.kind) {
         .tag => blk: {
             const tag = item.text.slice(selector_source);
@@ -164,11 +243,11 @@ fn matchesNotSimple(doc: anytype, node: anytype, noalias probe: *AttrProbe, sele
         },
         .id => blk: {
             const id = item.text.slice(selector_source);
-            const v = attrValueByHash(doc, node, probe, "id", HashId) orelse break :blk false;
+            const v = attrValueByHashFrom(doc, node, probe, collected, "id", HashId) orelse break :blk false;
             break :blk std.mem.eql(u8, v, id);
         },
-        .class => hasClass(doc, node, probe, item.text.slice(selector_source)),
-        .attr => matchesAttrSelector(doc, node, probe, selector_source, item.attr),
+        .class => hasClass(doc, node, probe, collected, item.text.slice(selector_source)),
+        .attr => matchesAttrSelector(doc, node, probe, collected, selector_source, item.attr),
     };
 }
 
@@ -191,10 +270,17 @@ fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
     };
 }
 
-fn matchesAttrSelector(doc: anytype, node: anytype, noalias probe: *AttrProbe, selector_source: []const u8, sel: ast.AttrSelector) bool {
+fn matchesAttrSelector(
+    doc: anytype,
+    node: anytype,
+    noalias probe: *AttrProbe,
+    collected: ?*CollectedAttrs,
+    selector_source: []const u8,
+    sel: ast.AttrSelector,
+) bool {
     const name = sel.name.slice(selector_source);
     const name_hash = if (sel.name_hash != 0) sel.name_hash else hashIgnoreCaseAscii(name);
-    const raw = attrValueByHash(doc, node, probe, name, name_hash) orelse return false;
+    const raw = attrValueByHashFrom(doc, node, probe, collected, name, name_hash) orelse return false;
     const value = sel.value.slice(selector_source);
 
     return switch (sel.op) {
@@ -223,8 +309,8 @@ fn tokenIncludes(value: []const u8, token: []const u8) bool {
     return false;
 }
 
-fn hasClass(doc: anytype, node: anytype, noalias probe: *AttrProbe, class_name: []const u8) bool {
-    const class_attr = attrValueByHash(doc, node, probe, "class", HashClass) orelse return false;
+fn hasClass(doc: anytype, node: anytype, noalias probe: *AttrProbe, collected: ?*CollectedAttrs, class_name: []const u8) bool {
+    const class_attr = attrValueByHashFrom(doc, node, probe, collected, "class", HashClass) orelse return false;
     return tokenIncludes(class_attr, class_name);
 }
 
@@ -270,6 +356,43 @@ fn attrValue(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []con
     return attrValueByHash(doc, node, probe, name, hashIgnoreCaseAscii(name));
 }
 
+fn attrValueByHashFrom(
+    doc: anytype,
+    node: anytype,
+    noalias probe: *AttrProbe,
+    collected: ?*CollectedAttrs,
+    name: []const u8,
+    name_hash: u32,
+) ?[]const u8 {
+    if (collected) |c| {
+        if (findCollectedEntry(c, name, name_hash, doc.input_was_normalized)) |idx| {
+            if (c.materialized or c.looked[idx]) return c.values[idx];
+
+            if (c.request_count == 0) {
+                const value = attrValueByHash(doc, node, probe, name, name_hash);
+                c.values[idx] = value;
+                c.looked[idx] = true;
+                c.request_count = 1;
+                return value;
+            }
+
+            attr_inline.collectSelectedValuesByHash(
+                doc,
+                node,
+                c.names[0..c.count],
+                c.name_hashes[0..c.count],
+                c.values[0..c.count],
+                doc.input_was_normalized,
+            );
+            c.materialized = true;
+            var i: usize = 0;
+            while (i < c.count) : (i += 1) c.looked[i] = true;
+            return c.values[idx];
+        }
+    }
+    return attrValueByHash(doc, node, probe, name, name_hash);
+}
+
 fn attrValueByHash(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []const u8, name_hash: u32) ?[]const u8 {
     if (findProbeEntry(probe, name, name_hash, doc.input_was_normalized)) |idx| {
         return probe.entries[idx].value;
@@ -304,6 +427,71 @@ const AttrProbe = struct {
     overflow: bool = false,
     entries: [MaxProbeEntries]AttrProbeEntry = [_]AttrProbeEntry{.{}} ** MaxProbeEntries,
 };
+
+const CollectedAttrs = struct {
+    count: usize = 0,
+    request_count: u8 = 0,
+    materialized: bool = false,
+    names: [MaxCollectedAttrs][]const u8 = [_][]const u8{""} ** MaxCollectedAttrs,
+    name_hashes: [MaxCollectedAttrs]u32 = [_]u32{0} ** MaxCollectedAttrs,
+    values: [MaxCollectedAttrs]?[]const u8 = [_]?[]const u8{null} ** MaxCollectedAttrs,
+    looked: [MaxCollectedAttrs]bool = [_]bool{false} ** MaxCollectedAttrs,
+};
+
+fn prepareCollectedAttrs(selector: ast.Selector, comp: ast.Compound, out: *CollectedAttrs) bool {
+    out.* = .{};
+
+    if (comp.has_id != 0 and !pushCollectedName(out, "id", HashId)) return false;
+    if (comp.class_len != 0 and !pushCollectedName(out, "class", HashClass)) return false;
+
+    var attr_i: u32 = 0;
+    while (attr_i < comp.attr_len) : (attr_i += 1) {
+        const attr_sel = selector.attrs[comp.attr_start + attr_i];
+        const name = attr_sel.name.slice(selector.source);
+        const hash = if (attr_sel.name_hash != 0) attr_sel.name_hash else hashIgnoreCaseAscii(name);
+        if (!pushCollectedName(out, name, hash)) return false;
+    }
+
+    var not_i: u32 = 0;
+    while (not_i < comp.not_len) : (not_i += 1) {
+        const item = selector.not_items[comp.not_start + not_i];
+        switch (item.kind) {
+            .id => if (!pushCollectedName(out, "id", HashId)) return false,
+            .class => if (!pushCollectedName(out, "class", HashClass)) return false,
+            .attr => {
+                const name = item.attr.name.slice(selector.source);
+                const hash = if (item.attr.name_hash != 0) item.attr.name_hash else hashIgnoreCaseAscii(name);
+                if (!pushCollectedName(out, name, hash)) return false;
+            },
+            else => {},
+        }
+    }
+
+    return out.count >= 2;
+}
+
+fn pushCollectedName(out: *CollectedAttrs, name: []const u8, name_hash: u32) bool {
+    if (findCollectedEntry(out, name, name_hash, false) != null) return true;
+    if (out.count >= MaxCollectedAttrs) return false;
+    out.names[out.count] = name;
+    out.name_hashes[out.count] = name_hash;
+    out.values[out.count] = null;
+    out.count += 1;
+    return true;
+}
+
+fn findCollectedEntry(collected: *const CollectedAttrs, needle: []const u8, needle_hash: u32, input_was_normalized: bool) ?usize {
+    var i: usize = 0;
+    while (i < collected.count) : (i += 1) {
+        if (collected.name_hashes[i] != needle_hash) continue;
+        if (input_was_normalized) {
+            if (std.mem.eql(u8, collected.names[i], needle)) return i;
+            continue;
+        }
+        if (tables.eqlIgnoreCaseAscii(collected.names[i], needle)) return i;
+    }
+    return null;
+}
 
 fn findProbeEntry(noalias probe: *const AttrProbe, needle: []const u8, needle_hash: u32, input_was_normalized: bool) ?usize {
     var i: usize = 0;
