@@ -13,6 +13,9 @@ const SUITES_DIR = "/tmp/htmlparser-suites";
 const SUITE_RUNNER_BIN = "bench/build/bin/suite_runner";
 
 const repeats: usize = 5;
+const StableParseMinRatio: f64 = 0.99;
+const StableQueryMinRatio: f64 = 0.99;
+const RegressionConfirmRuns: usize = 3;
 
 const ParserCapability = struct {
     parser: []const u8,
@@ -1043,15 +1046,24 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
             for (profile.fixtures) |fx| {
                 const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
                 if (base_parse.get(fx.name)) |base| {
-                    if (current < base * 0.97) {
-                        const msg = try std.fmt.allocPrint(alloc, "stable strictest parse regression >3%: {s} {d:.2} < {d:.2}", .{ fx.name, current, base * 0.97 });
-                        try failures.append(alloc, msg);
+                    const min_expected = base * StableParseMinRatio;
+                    if (current < min_expected) {
+                        const confirmed = try confirmParseThroughput(alloc, "ours-strictest", fx.name, fx.iterations, RegressionConfirmRuns);
+                        if (confirmed < min_expected) {
+                            const msg = try std.fmt.allocPrint(alloc, "stable strictest parse regression >1%: {s} {d:.2} < {d:.2} (confirmed {d}x)", .{
+                                fx.name,
+                                current,
+                                min_expected,
+                                RegressionConfirmRuns,
+                            });
+                            try failures.append(alloc, msg);
+                        }
                     }
                 }
             }
-            try checkQuerySection(alloc, &failures, query_parse_results.items, "query-parse", base_qp, 0.98);
-            try checkQuerySection(alloc, &failures, query_match_results.items, "query-match", base_qm, 0.98);
-            try checkQuerySection(alloc, &failures, query_compiled_results.items, "query-compiled", base_qc, 0.98);
+            try checkQuerySection(alloc, &failures, query_parse_results.items, "query-parse", base_qp, StableQueryMinRatio);
+            try checkQuerySection(alloc, &failures, query_match_results.items, "query-match", base_qm, StableQueryMinRatio);
+            try checkQuerySection(alloc, &failures, query_compiled_results.items, "query-compiled", base_qc, StableQueryMinRatio);
         } else {
             for (profile.fixtures) |fx| {
                 const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
@@ -1108,16 +1120,74 @@ fn checkQuerySection(
         if (current.get(entry.key_ptr.*)) |cur| {
             const min_expected = entry.value_ptr.* * min_ratio;
             if (cur < min_expected) {
-                const msg = try std.fmt.allocPrint(alloc, "stable {s} regression >2%: {s} {d:.2} < {d:.2}", .{
-                    section_name,
-                    entry.key_ptr.*,
-                    cur,
-                    min_expected,
-                });
-                try failures.append(alloc, msg);
+                const row = findQueryRow(rows, "ours-strictest", entry.key_ptr.*) orelse continue;
+                const confirmed = try confirmQueryOps(alloc, section_name, row, RegressionConfirmRuns);
+                if (confirmed < min_expected) {
+                    const msg = try std.fmt.allocPrint(alloc, "stable {s} regression >1%: {s} {d:.2} < {d:.2} (confirmed {d}x)", .{
+                        section_name,
+                        entry.key_ptr.*,
+                        cur,
+                        min_expected,
+                        RegressionConfirmRuns,
+                    });
+                    try failures.append(alloc, msg);
+                }
             }
         }
     }
+}
+
+fn findQueryRow(rows: []const QueryResult, parser: []const u8, case_name: []const u8) ?QueryResult {
+    for (rows) |row| {
+        if (!std.mem.eql(u8, row.parser, parser)) continue;
+        if (std.mem.eql(u8, row.case, case_name)) return row;
+    }
+    return null;
+}
+
+fn medianF64(values: []f64) f64 {
+    std.mem.sort(f64, values, {}, struct {
+        fn lt(_: void, a: f64, b: f64) bool {
+            return a < b;
+        }
+    }.lt);
+    return values[values.len / 2];
+}
+
+fn confirmParseThroughput(
+    alloc: std.mem.Allocator,
+    parser_name: []const u8,
+    fixture_name: []const u8,
+    iterations: usize,
+    runs: usize,
+) !f64 {
+    var vals = try alloc.alloc(f64, runs);
+    defer alloc.free(vals);
+
+    for (0..runs) |i| {
+        const row = try benchParseOne(alloc, parser_name, fixture_name, iterations);
+        defer alloc.free(row.samples_ns);
+        vals[i] = row.throughput_mb_s;
+    }
+    return medianF64(vals);
+}
+
+fn confirmQueryOps(alloc: std.mem.Allocator, section_name: []const u8, row: QueryResult, runs: usize) !f64 {
+    var vals = try alloc.alloc(f64, runs);
+    defer alloc.free(vals);
+
+    for (0..runs) |i| {
+        const rerow = if (std.mem.eql(u8, section_name, "query-parse"))
+            try benchQueryParseOne(alloc, row.parser, row.mode, row.case, row.selector, row.iterations)
+        else if (std.mem.eql(u8, section_name, "query-match"))
+            try benchQueryExecOne(alloc, row.parser, row.mode, row.case, row.fixture.?, row.selector, row.iterations, false)
+        else
+            try benchQueryExecOne(alloc, row.parser, row.mode, row.case, row.fixture.?, row.selector, row.iterations, true);
+        defer alloc.free(rerow.samples_ns);
+        vals[i] = rerow.ops_s;
+    }
+
+    return medianF64(vals);
 }
 
 // ---------------------------- External suites ----------------------------
@@ -1791,6 +1861,31 @@ fn checkDocumentedBuildCommands(md_path: []const u8, content: []const u8, step_s
     }
 }
 
+fn checkChangelogCompatibilityLabels(content: []const u8, ok: *bool) void {
+    const header = "## [Unreleased]";
+    const start = std.mem.indexOf(u8, content, header) orelse {
+        std.debug.print("docs-check: CHANGELOG.md: missing '## [Unreleased]' section\n", .{});
+        ok.* = false;
+        return;
+    };
+
+    const after = content[start + header.len ..];
+    const end_rel = std.mem.indexOf(u8, after, "\n## [") orelse after.len;
+    const section = after[0..end_rel];
+
+    const required = [_][]const u8{
+        "Impact:",
+        "Migration:",
+        "Downstream scope:",
+    };
+    for (required) |needle| {
+        if (std.mem.indexOf(u8, section, needle) == null) {
+            std.debug.print("docs-check: CHANGELOG.md: Unreleased section missing compatibility label '{s}'\n", .{needle});
+            ok.* = false;
+        }
+    }
+}
+
 fn runDocsCheck(alloc: std.mem.Allocator) !void {
     const markdown_files = try collectMarkdownFiles(alloc);
     defer alloc.free(markdown_files);
@@ -1807,6 +1902,9 @@ fn runDocsCheck(alloc: std.mem.Allocator) !void {
         checkLocalAbsolutePaths(md_path, content, &ok);
         try checkMarkdownLinks(alloc, md_path, content, &ok);
         checkDocumentedBuildCommands(md_path, content, &step_set, &ok);
+        if (std.mem.eql(u8, md_path, "CHANGELOG.md")) {
+            checkChangelogCompatibilityLabels(content, &ok);
+        }
     }
 
     if (!ok) return error.DocsCheckFailed;

@@ -22,6 +22,8 @@ Query entrypoints:
 - `try doc.queryAllRuntime(selector)`
 - `doc.queryOneCompiled(&selector)`
 - `doc.queryAllCompiled(&selector)`
+- `doc.queryOneDebug(comptime selector, report)`
+- `try doc.queryOneRuntimeDebug(selector, report)`
 
 Helpers:
 
@@ -56,6 +58,8 @@ Scoped query entrypoints:
 - `try queryAllRuntime(selector)`
 - `queryOneCompiled(&selector)`
 - `queryAllCompiled(&selector)`
+- `queryOneDebug(comptime selector, report)`
+- `try queryOneRuntimeDebug(selector, report)`
 
 ## `Selector`
 
@@ -71,6 +75,16 @@ Scoped query entrypoints:
 ## `TextOptions`
 
 - `normalize_whitespace: bool = true`
+
+## Debug/Instrumentation Types
+
+- `QueryDebugReport` and related debug enums (`DebugFailureKind`, `NearMiss`)
+- Wrapper helpers:
+  - `parseWithHooks(doc, input, opts, hooks)`
+  - `queryOneRuntimeWithHooks(doc, selector, hooks)`
+  - `queryOneCompiledWithHooks(doc, selector, hooks)`
+  - `queryAllRuntimeWithHooks(doc, selector, hooks)`
+  - `queryAllCompiledWithHooks(doc, selector, hooks)`
 
 ## Lifetime and Safety Notes
 

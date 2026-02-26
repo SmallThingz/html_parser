@@ -4,6 +4,9 @@ const attr_inline = @import("attr_inline.zig");
 const runtime_selector = @import("../selector/runtime.zig");
 const ast = @import("../selector/ast.zig");
 const matcher = @import("../selector/matcher.zig");
+const matcher_debug = @import("../selector/matcher_debug.zig");
+const selector_debug = @import("../debug/selector_debug.zig");
+const instrumentation = @import("../debug/instrumentation.zig");
 const parser = @import("parser.zig");
 const node_api = @import("node.zig");
 const tags = @import("tags.zig");
@@ -116,8 +119,17 @@ pub const ParseOptions = struct {
                 return self.doc.queryOneCompiledFrom(sel.*, self.index);
             }
 
+            pub fn queryOneDebug(self: @This(), comptime selector: []const u8, report: *selector_debug.QueryDebugReport) ?@This() {
+                const sel = comptime ast.Selector.compile(selector);
+                return self.doc.queryOneCompiledDebugFrom(sel, self.index, report);
+            }
+
             pub fn queryOneRuntime(self: @This(), selector: []const u8) runtime_selector.Error!?@This() {
                 return self.doc.queryOneRuntimeFrom(selector, self.index);
+            }
+
+            pub fn queryOneRuntimeDebug(self: @This(), selector: []const u8, report: *selector_debug.QueryDebugReport) runtime_selector.Error!?@This() {
+                return self.doc.queryOneRuntimeDebugFrom(selector, self.index, report);
             }
 
             pub fn queryAll(self: @This(), comptime selector: []const u8) QueryIterType {
@@ -275,14 +287,33 @@ pub const ParseOptions = struct {
                 return self.queryOneCompiledFrom(sel.*, InvalidIndex);
             }
 
+            pub fn queryOneDebug(self: *const DocSelf, comptime selector: []const u8, report: *selector_debug.QueryDebugReport) ?NodeTypeWrapper {
+                const sel = comptime ast.Selector.compile(selector);
+                return self.queryOneCompiledDebugFrom(sel, InvalidIndex, report);
+            }
+
             pub fn queryOneRuntime(self: *const DocSelf, selector: []const u8) runtime_selector.Error!?NodeTypeWrapper {
                 return self.queryOneRuntimeFrom(selector, InvalidIndex);
+            }
+
+            pub fn queryOneRuntimeDebug(self: *const DocSelf, selector: []const u8, report: *selector_debug.QueryDebugReport) runtime_selector.Error!?NodeTypeWrapper {
+                return self.queryOneRuntimeDebugFrom(selector, InvalidIndex, report);
             }
 
             fn queryOneRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
                 const sel = try mut_self.getOrCompileQueryOneSelector(selector);
                 return self.queryOneCompiledFrom(sel, scope_root);
+            }
+
+            fn queryOneRuntimeDebugFrom(self: *const DocSelf, selector: []const u8, scope_root: u32, report: *selector_debug.QueryDebugReport) runtime_selector.Error!?NodeTypeWrapper {
+                const mut_self: *DocSelf = @constCast(self);
+                report.reset(selector, scope_root, 0);
+                const sel = mut_self.getOrCompileQueryOneSelector(selector) catch |err| {
+                    report.setRuntimeParseError();
+                    return err;
+                };
+                return self.queryOneCompiledDebugFrom(sel, scope_root, report);
             }
 
             fn queryOneCompiledFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32) ?NodeTypeWrapper {
@@ -309,6 +340,13 @@ pub const ParseOptions = struct {
                 mut_self.query_one_result_idx = idx;
 
                 if (idx == InvalidIndex) return null;
+                return self.nodeAt(idx);
+            }
+
+            fn queryOneCompiledDebugFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32, report: *selector_debug.QueryDebugReport) ?NodeTypeWrapper {
+                const mut_self: *DocSelf = @constCast(self);
+                mut_self.ensureQueryPrereqs(sel);
+                const idx = matcher_debug.explainFirstMatch(DocSelf, self, sel, scope_root, report) orelse return null;
                 return self.nodeAt(idx);
             }
 
@@ -1544,4 +1582,137 @@ test "query accel state is invalidated by parse and clear" {
     try std.testing.expect(!doc.query_accel_id_built);
     try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_nodes.items.len);
     try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_entries.items.len);
+}
+
+test "queryOneRuntimeDebug reports runtime selector parse errors" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x'></div>".*;
+    try doc.parse(&html, .{});
+
+    var report: selector_debug.QueryDebugReport = .{};
+    try std.testing.expectError(error.InvalidSelector, doc.queryOneRuntimeDebug("div[", &report));
+    try std.testing.expect(report.runtime_parse_error);
+    try std.testing.expectEqualStrings("div[", report.selector_source);
+}
+
+test "queryOneDebug reports near misses and matched index" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div><a id='x' class='k'></a><a id='y'></a></div>".*;
+    try doc.parse(&html, .{});
+
+    var miss_report: selector_debug.QueryDebugReport = .{};
+    const miss = doc.queryOneDebug("a[href^=https]", &miss_report);
+    try std.testing.expect(miss == null);
+    try std.testing.expect(miss_report.visited_elements > 0);
+    try std.testing.expect(miss_report.near_miss_len > 0);
+    try std.testing.expect(miss_report.near_misses[0].reason.kind != .none);
+
+    var hit_report: selector_debug.QueryDebugReport = .{};
+    const hit = doc.queryOneDebug("a#x", &hit_report) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(hit.index, hit_report.matched_index);
+    try std.testing.expectEqual(@as(u16, 0), hit_report.matched_group);
+}
+
+test "node-scoped runtime debug query reports scope/combinator failures" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<root><div><span id='inside'></span></div><span id='outside'></span></root>".*;
+    try doc.parse(&html, .{});
+
+    const root = doc.queryOne("root") orelse return error.TestUnexpectedResult;
+    var report: selector_debug.QueryDebugReport = .{};
+    const found = try root.queryOneRuntimeDebug("> span#inside", &report);
+    try std.testing.expect(found == null);
+    try std.testing.expect(report.scope_root == root.index);
+    try std.testing.expect(report.near_miss_len > 0);
+    try std.testing.expect(report.near_misses[0].reason.kind != .none);
+}
+
+const HookProbe = struct {
+    parse_start_calls: usize = 0,
+    parse_end_calls: usize = 0,
+    query_start_calls: usize = 0,
+    query_end_calls: usize = 0,
+    last_input_len: usize = 0,
+    last_query_kind: instrumentation.QueryInstrumentationKind = .one_runtime,
+    last_selector_len: usize = 0,
+    last_parse_stats: instrumentation.ParseInstrumentationStats = .{
+        .elapsed_ns = 0,
+        .input_len = 0,
+        .node_count = 0,
+    },
+    last_query_stats: instrumentation.QueryInstrumentationStats = .{
+        .elapsed_ns = 0,
+        .selector_len = 0,
+        .kind = .one_runtime,
+        .matched = null,
+    },
+
+    pub fn onParseStart(self: *@This(), input_len: usize) void {
+        self.parse_start_calls += 1;
+        self.last_input_len = input_len;
+    }
+
+    pub fn onParseEnd(self: *@This(), stats: instrumentation.ParseInstrumentationStats) void {
+        self.parse_end_calls += 1;
+        self.last_parse_stats = stats;
+    }
+
+    pub fn onQueryStart(self: *@This(), kind: instrumentation.QueryInstrumentationKind, selector_len: usize) void {
+        self.query_start_calls += 1;
+        self.last_query_kind = kind;
+        self.last_selector_len = selector_len;
+    }
+
+    pub fn onQueryEnd(self: *@This(), stats: instrumentation.QueryInstrumentationStats) void {
+        self.query_end_calls += 1;
+        self.last_query_stats = stats;
+    }
+};
+
+test "instrumentation wrappers invoke compile-time hooks and preserve results" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+    var hooks: HookProbe = .{};
+
+    var html = "<div><a id='x' href='https://example'></a></div>".*;
+    try instrumentation.parseWithHooks(&doc, &html, .{}, &hooks);
+    try std.testing.expectEqual(@as(usize, 1), hooks.parse_start_calls);
+    try std.testing.expectEqual(@as(usize, 1), hooks.parse_end_calls);
+    try std.testing.expect(hooks.last_parse_stats.elapsed_ns > 0);
+    try std.testing.expectEqual(html.len, hooks.last_input_len);
+    try std.testing.expect(hooks.last_parse_stats.node_count >= 2);
+
+    const runtime_one = try instrumentation.queryOneRuntimeWithHooks(&doc, "a#x", &hooks);
+    try std.testing.expect(runtime_one != null);
+    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.one_runtime, hooks.last_query_kind);
+    try std.testing.expectEqual(@as(?bool, true), hooks.last_query_stats.matched);
+
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const sel = try ast.Selector.compileRuntime(arena.allocator(), "a#x");
+
+    const compiled_one = instrumentation.queryOneCompiledWithHooks(&doc, &sel, &hooks);
+    try std.testing.expect(compiled_one != null);
+    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.one_compiled, hooks.last_query_kind);
+    try std.testing.expectEqual(@as(?bool, true), hooks.last_query_stats.matched);
+
+    _ = try instrumentation.queryAllRuntimeWithHooks(&doc, "a", &hooks);
+    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.all_runtime, hooks.last_query_kind);
+    try std.testing.expectEqual(@as(?bool, null), hooks.last_query_stats.matched);
+
+    _ = instrumentation.queryAllCompiledWithHooks(&doc, &sel, &hooks);
+    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.all_compiled, hooks.last_query_kind);
+    try std.testing.expectEqual(@as(?bool, null), hooks.last_query_stats.matched);
+    try std.testing.expect(hooks.query_start_calls >= 4);
+    try std.testing.expect(hooks.query_end_calls >= 4);
 }

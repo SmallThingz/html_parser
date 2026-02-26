@@ -3,6 +3,17 @@ const std = @import("std");
 pub const ParseOptions = @import("html/document.zig").ParseOptions;
 pub const TextOptions = @import("html/document.zig").TextOptions;
 pub const Selector = @import("selector/ast.zig").Selector;
+pub const QueryDebugReport = @import("debug/selector_debug.zig").QueryDebugReport;
+pub const DebugFailureKind = @import("debug/selector_debug.zig").DebugFailureKind;
+pub const NearMiss = @import("debug/selector_debug.zig").NearMiss;
+pub const ParseInstrumentationStats = @import("debug/instrumentation.zig").ParseInstrumentationStats;
+pub const QueryInstrumentationStats = @import("debug/instrumentation.zig").QueryInstrumentationStats;
+pub const QueryInstrumentationKind = @import("debug/instrumentation.zig").QueryInstrumentationKind;
+pub const parseWithHooks = @import("debug/instrumentation.zig").parseWithHooks;
+pub const queryOneRuntimeWithHooks = @import("debug/instrumentation.zig").queryOneRuntimeWithHooks;
+pub const queryOneCompiledWithHooks = @import("debug/instrumentation.zig").queryOneCompiledWithHooks;
+pub const queryAllRuntimeWithHooks = @import("debug/instrumentation.zig").queryAllRuntimeWithHooks;
+pub const queryAllCompiledWithHooks = @import("debug/instrumentation.zig").queryAllCompiledWithHooks;
 
 pub fn GetDocument(comptime options: ParseOptions) type {
     return options.GetDocument();

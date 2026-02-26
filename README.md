@@ -27,6 +27,8 @@ Typical HTML parsers optimize for browser-like behavior, strict correctness, or 
 - **Navigation:** `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children` (element-only).
 - **In-place attributes:** attribute values are materialized/decoded lazily and cached in-place.
 - **Configurable parse work:** eager/lazy child views and optional whitespace-text dropping.
+- **Opt-in diagnostics:** `queryOneDebug` / `queryOneRuntimeDebug` expose near-miss reasons without changing hot-path APIs.
+- **Opt-in instrumentation:** compile-time hook wrappers for parse/query timing and node-count stats.
 
 Target Zig version: `0.15.2`.
 
@@ -96,6 +98,16 @@ const sel = try html.Selector.compileRuntime(arena.allocator(), "a[href^=https]"
 const node = doc.queryOneCompiled(&sel);
 ```
 
+### Debug query diagnostics
+
+```zig
+var report: html.QueryDebugReport = .{};
+const node = try doc.queryOneRuntimeDebug("a[href^=https]", &report);
+if (node == null) {
+    // Inspect report.visited_elements and report.near_misses
+}
+```
+
 ## Parse Option Recipes
 
 Two bundles are used by the benchmark harness and conformance runner:
@@ -111,6 +123,8 @@ Two bundles are used by the benchmark harness and conformance runner:
 - drop whitespace-only text nodes during parse
 
 `children()` returns a borrowed `[]const u32` index slice into the document's node array.
+
+See `docs/malformed-html-guidance.md` for a mode matrix and fallback workflow on malformed pages.
 
 ## Selector Support (v1)
 
@@ -162,6 +176,13 @@ zig build conformance
 ```
 
 See `docs/conformance.md` for what’s covered and what’s intentionally out of scope.
+
+## Migration Notes
+
+- `CHANGELOG.md` now includes compatibility labels in `Unreleased`:
+  - `Impact: Breaking|Non-breaking`
+  - `Migration: Required|Not required`
+  - `Downstream scope: Small|Medium|Large`
 
 ## Documentation
 

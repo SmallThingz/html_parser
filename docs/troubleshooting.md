@@ -7,6 +7,7 @@ Checklist:
 - Verify selector syntax (`queryOneRuntime` can surface `error.InvalidSelector`).
 - Selectors are matched case-insensitively against tag/attribute names by default.
 - Confirm you are querying the expected scope (`Document` vs `Node` scoped queries).
+- For selector diagnosis details (visited count + near misses), use `queryOneRuntimeDebug(...)` and inspect `QueryDebugReport`.
 
 ## Missing or Unexpected `innerText`
 
@@ -24,6 +25,10 @@ Checklist:
 ## Input Buffer Looks Modified
 
 This is expected. Parsing and lazy attr/entity decode mutate the source buffer in place.
+
+## Malformed Page Behavior
+
+Use `docs/malformed-html-guidance.md` for mode selection (`strictest` vs `fastest`) and fallback workflow.
 
 ## Example Drift Policy
 

@@ -64,5 +64,5 @@ The benchmark output also includes a hard gate table:
 
 - `PASS/FAIL: ours-fastest > lol-html` per fixture
 - strict-mode regression checks against baseline:
-  - parse throughput not worse than -3% per fixture
-  - query parse/match/compiled not worse than -2%
+  - parse/query throughput not worse than -1%
+  - each failing case is automatically rerun 3 times and judged by rerun median
