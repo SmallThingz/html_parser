@@ -13,6 +13,8 @@ Checklist:
 
 - `innerText` normalizes whitespace by default.
 - Use `innerTextWithOptions(..., .{ .normalize_whitespace = false })` for raw spacing.
+- Use `innerTextOwned(...)` when you always need an allocated result and want to avoid in-place text decode.
+- Use `doc.isOwned(slice)` to tell whether a returned slice is borrowed from the document source.
 
 ## Runtime Query Iterator Stops Early
 

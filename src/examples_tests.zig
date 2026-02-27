@@ -87,6 +87,12 @@ test "example parity: innerText options" {
     defer arena_raw.deinit();
     const raw = try node.innerTextWithOptions(arena_raw.allocator(), .{ .normalize_whitespace = false });
     try std.testing.expect(std.mem.indexOfScalar(u8, raw, '\n') != null);
+
+    var arena_owned = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_owned.deinit();
+    const owned = try node.innerTextOwned(arena_owned.allocator());
+    try std.testing.expectEqualStrings("Hello world & team", owned);
+    try std.testing.expect(!doc.isOwned(owned));
 }
 
 test "example parity: strictest and fastest selectors agree" {

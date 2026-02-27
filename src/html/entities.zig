@@ -1,7 +1,7 @@
 const std = @import("std");
 const scanner = @import("scanner.zig");
 
-const Decoded = struct {
+pub const Decoded = struct {
     consumed: usize,
     bytes: [4]u8,
     len: usize,
@@ -15,6 +15,10 @@ pub fn decodeInPlaceIfEntity(slice: []u8) usize {
     // Fast reject to keep the no-entity path single-pass and branch-light.
     const first = scanner.findByte(slice, 0, '&') orelse return slice.len;
     return decodeInPlaceFrom(slice, first);
+}
+
+pub fn decodeEntityPrefix(rem: []const u8) ?Decoded {
+    return decodeEntity(rem);
 }
 
 fn decodeInPlaceFrom(slice: []u8, start_index: usize) usize {

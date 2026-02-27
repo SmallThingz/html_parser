@@ -26,6 +26,7 @@ Typical HTML parsers optimize for browser-like behavior, strict correctness, or 
   - precompiled runtime selectors: `queryOneCompiled`, `queryAllCompiled`
 - **Navigation:** `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children` (element-only).
 - **In-place attributes:** attribute values are materialized/decoded lazily and cached in-place.
+- **Text extraction modes:** `innerText` prefers borrowed/in-place paths; `innerTextOwned` always returns allocated output.
 - **Configurable parse work:** eager/lazy child views and optional whitespace-text dropping.
 - **Opt-in diagnostics:** `queryOneDebug` / `queryOneRuntimeDebug` expose near-miss reasons without changing hot-path APIs.
 - **Opt-in instrumentation:** compile-time hook wrappers for parse/query timing and node-count stats.
@@ -158,6 +159,8 @@ See `docs/selectors.md` for the exact grammar and constraints.
 - Node handles are valid while the owning `Document` is alive and not reparsed/cleared.
 - `queryAllRuntime` iterators are invalidated by newer `queryAllRuntime` calls on the same document.
 - `innerText` may allocate when concatenation is required.
+- `innerTextOwned` always allocates and does not decode text in-place.
+- `doc.isOwned(slice)` reports whether a slice points into the document source buffer.
 - Permissive parsing is a goal; strict browser parity is not.
 
 ## Build and Validation

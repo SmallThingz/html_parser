@@ -30,6 +30,7 @@ Helpers:
 - `doc.html()`
 - `doc.head()`
 - `doc.body()`
+- `doc.isOwned(slice)` (true when `slice` points into document source bytes)
 
 ## `Node`
 
@@ -48,6 +49,8 @@ Content/attributes:
 - `getAttributeValue(name)`
 - `innerText(arena_allocator)`
 - `innerTextWithOptions(arena_allocator, TextOptions)`
+- `innerTextOwned(arena_allocator)` (always allocates; never decodes in-place)
+- `innerTextOwnedWithOptions(arena_allocator, TextOptions)`
 - `children()` returns borrowed `[]const u32` child indexes
 
 Scoped query entrypoints:

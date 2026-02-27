@@ -82,6 +82,14 @@ pub const ParseOptions = struct {
                 return node_api.innerText(self, arena_alloc, opts);
             }
 
+            pub fn innerTextOwned(self: @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
+                return node_api.innerTextOwned(self, arena_alloc, .{});
+            }
+
+            pub fn innerTextOwnedWithOptions(self: @This(), arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
+                return node_api.innerTextOwned(self, arena_alloc, opts);
+            }
+
             pub fn getAttributeValue(self: @This(), name: []const u8) ?[]const u8 {
                 return node_api.getAttributeValue(self, name);
             }
@@ -421,6 +429,15 @@ pub const ParseOptions = struct {
 
             pub fn html(self: *const DocSelf) ?NodeTypeWrapper {
                 return self.findFirstTag("html");
+            }
+
+            pub fn isOwned(self: *const DocSelf, bytes: []const u8) bool {
+                if (self.source.len == 0 or bytes.len == 0) return false;
+                const src_start = @intFromPtr(self.source.ptr);
+                const src_end = src_start + self.source.len;
+                const bytes_start = @intFromPtr(bytes.ptr);
+                const bytes_end = bytes_start + bytes.len;
+                return bytes_start >= src_start and bytes_end <= src_end;
             }
 
             pub fn head(self: *const DocSelf) ?NodeTypeWrapper {
@@ -1080,6 +1097,51 @@ test "parse-time text normalization is off by default and query-time normalizati
 
     const normalized = try node.innerText(arena.allocator());
     try std.testing.expectEqualStrings("alpha & beta", normalized);
+}
+
+test "isOwned distinguishes borrowed single-text and allocated multi-text innerText" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+
+    var html = "<div id='x'>single</div><div id='y'>a<b></b>b</div>".*;
+    try doc.parse(&html, .{});
+
+    const x = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
+    const y = doc.queryOne("#y") orelse return error.TestUnexpectedResult;
+
+    const x_text = try x.innerText(arena.allocator());
+    try std.testing.expectEqualStrings("single", x_text);
+    try std.testing.expect(doc.isOwned(x_text));
+
+    const y_text = try y.innerText(arena.allocator());
+    try std.testing.expectEqualStrings("ab", y_text);
+    try std.testing.expect(!doc.isOwned(y_text));
+}
+
+test "innerTextOwned always returns allocated output and does not mutate source text bytes" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+
+    var html = "<div id='x'>a &amp; b</div>".*;
+    try doc.parse(&html, .{});
+
+    const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
+    const text_node_before = doc.nodes.items[node.index + 1];
+    try std.testing.expect(text_node_before.kind == .text);
+    try std.testing.expectEqualStrings("a &amp; b", text_node_before.text.slice(doc.source));
+
+    const owned = try node.innerTextOwned(arena.allocator());
+    try std.testing.expectEqualStrings("a & b", owned);
+    try std.testing.expect(!doc.isOwned(owned));
+
+    const text_node_after = doc.nodes.items[node.index + 1];
+    try std.testing.expectEqualStrings("a &amp; b", text_node_after.text.slice(doc.source));
 }
 
 test "inplace attribute parser treats explicit empty assignment as name-only" {

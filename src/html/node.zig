@@ -124,6 +124,44 @@ pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOption
     return try out.toOwnedSlice(arena_alloc);
 }
 
+pub fn innerTextOwned(self: anytype, alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
+    const doc = self.doc;
+    const raw = &doc.nodes.items[self.index];
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(alloc);
+
+    if (raw.kind == .text) {
+        const text = raw.text.slice(doc.source);
+        if (!opts.normalize_whitespace) {
+            try appendDecodedSegment(&out, alloc, text);
+        } else {
+            var state: WhitespaceNormState = .{};
+            try appendDecodedNormalizedSegment(&out, alloc, text, &state);
+        }
+        return try out.toOwnedSlice(alloc);
+    }
+
+    if (!opts.normalize_whitespace) {
+        var idx = self.index + 1;
+        while (idx <= raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
+            const node = &doc.nodes.items[idx];
+            if (node.kind != .text) continue;
+            try appendDecodedSegment(&out, alloc, node.text.slice(doc.source));
+        }
+        return try out.toOwnedSlice(alloc);
+    }
+
+    var state: WhitespaceNormState = .{};
+    var idx = self.index + 1;
+    while (idx <= raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
+        const node = &doc.nodes.items[idx];
+        if (node.kind != .text) continue;
+        try appendDecodedNormalizedSegment(&out, alloc, node.text.slice(doc.source), &state);
+    }
+    return try out.toOwnedSlice(alloc);
+}
+
 fn decodeTextNode(noalias node: anytype, doc: anytype) []const u8 {
     const text_mut = node.text.sliceMut(doc.source);
     const new_len = entities.decodeInPlaceIfEntity(text_mut);
@@ -182,5 +220,43 @@ fn appendNormalizedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Alloc
         try out.append(alloc, c);
         state.pending_space = false;
         state.wrote_any = true;
+    }
+}
+
+fn appendDecodedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Allocator, seg: []const u8) !void {
+    var idx: usize = 0;
+    while (idx < seg.len) {
+        const amp = std.mem.indexOfScalarPos(u8, seg, idx, '&') orelse {
+            try out.appendSlice(alloc, seg[idx..]);
+            break;
+        };
+
+        if (amp > idx) try out.appendSlice(alloc, seg[idx..amp]);
+        if (entities.decodeEntityPrefix(seg[amp..])) |decoded| {
+            try out.appendSlice(alloc, decoded.bytes[0..decoded.len]);
+            idx = amp + decoded.consumed;
+        } else {
+            try out.append(alloc, seg[amp]);
+            idx = amp + 1;
+        }
+    }
+}
+
+fn appendDecodedNormalizedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Allocator, seg: []const u8, noalias state: *WhitespaceNormState) !void {
+    var idx: usize = 0;
+    while (idx < seg.len) {
+        const amp = std.mem.indexOfScalarPos(u8, seg, idx, '&') orelse {
+            try appendNormalizedSegment(out, alloc, seg[idx..], state);
+            break;
+        };
+
+        if (amp > idx) try appendNormalizedSegment(out, alloc, seg[idx..amp], state);
+        if (entities.decodeEntityPrefix(seg[amp..])) |decoded| {
+            try appendNormalizedSegment(out, alloc, decoded.bytes[0..decoded.len], state);
+            idx = amp + decoded.consumed;
+        } else {
+            try appendNormalizedSegment(out, alloc, seg[amp .. amp + 1], state);
+            idx = amp + 1;
+        }
     }
 }
