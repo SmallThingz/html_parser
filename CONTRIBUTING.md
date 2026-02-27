@@ -34,7 +34,7 @@ zig fmt src/**/*.zig examples/*.zig build.zig
 
 ## Documentation and Snippet Policy
 
-- User-facing snippets in `README.md` and `docs/` must match canonical code in `examples/`.
+- User-facing snippets in `README.md` and `DOCUMENTATION.md` must match canonical code in `examples/`.
 - Every example file must contain executable tests.
 - Run `zig build examples-check` before merging doc/example changes.
 

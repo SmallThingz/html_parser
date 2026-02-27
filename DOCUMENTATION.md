@@ -1,6 +1,6 @@
-# htmlparser Manual
+# htmlparser Documentation
 
-This is the single source of truth for library usage, behavior contracts, performance workflow, and implementation notes.
+This is the canonical manual for usage, API, selector behavior, performance workflow, conformance expectations, and internals.
 
 ## Table of Contents
 
@@ -10,6 +10,7 @@ This is the single source of truth for library usage, behavior contracts, perfor
 - [Selector Support](#selector-support)
 - [Mode Guidance](#mode-guidance)
 - [Performance and Benchmarks](#performance-and-benchmarks)
+- [Latest Benchmark Snapshot](#latest-benchmark-snapshot)
 - [Conformance Status](#conformance-status)
 - [Architecture](#architecture)
 - [Troubleshooting](#troubleshooting)
@@ -39,7 +40,7 @@ test "basic parse + query" {
 }
 ```
 
-Canonical examples live in `examples/` and are verified by `zig build examples-check`
+Source example: `examples/basic_parse_query.zig` (verified by `zig build examples-check`)
 
 ## Core API
 
@@ -79,7 +80,7 @@ Canonical examples live in `examples/` and are verified by `zig build examples-c
   - `prevSibling()`
   - `children()` (borrowed `[]const u32` index view)
 - Text:
-  - `innerText(allocator)` (may return borrowed or allocated)
+  - `innerText(allocator)` (borrowed or allocated depending on shape)
   - `innerTextWithOptions(allocator, TextOptions)`
   - `innerTextOwned(allocator)` (always allocated)
   - `innerTextOwnedWithOptions(allocator, TextOptions)`
@@ -88,12 +89,12 @@ Canonical examples live in `examples/` and are verified by `zig build examples-c
 - Scoped queries:
   - same query family as `Document` (`queryOne/queryAll`, runtime, cached, debug)
 
-### Additional helpers
+### Helpers
 
 - `doc.html()`, `doc.head()`, `doc.body()`
-- `doc.isOwned(slice)` to check whether a returned slice points into document source bytes
+- `doc.isOwned(slice)` to check whether a slice points into document source bytes
 
-### Options
+### Parse/Text options
 
 - `ParseOptions`
   - `eager_child_views: bool = true`
@@ -136,18 +137,18 @@ Compilation modes:
 
 ## Mode Guidance
 
-`htmlparser` is permissive by design. Choose parse options per site behavior:
+`htmlparser` is permissive by design. Choose parse options by workload:
 
 | Mode | Parse Options | Best For | Tradeoffs |
 |---|---|---|---|
-| `strictest` | `.eager_child_views = true`, `.drop_whitespace_text_nodes = false` | Maximum traversal predictability and text fidelity | More parse-time work |
-| `fastest` | `.eager_child_views = false`, `.drop_whitespace_text_nodes = true` | Throughput-first scraping | Whitespace-only text nodes dropped; child views built lazily |
+| `strictest` | `.eager_child_views = true`, `.drop_whitespace_text_nodes = false` | traversal predictability and text fidelity | higher parse-time work |
+| `fastest` | `.eager_child_views = false`, `.drop_whitespace_text_nodes = true` | throughput-first scraping | whitespace-only text nodes dropped; child views built lazily |
 
 Fallback playbook:
 
 1. Start with `fastest` for bulk workloads.
-2. Switch problematic domains to `strictest` if text/navigation assumptions fail.
-3. Use `queryOneRuntimeDebug` and inspect `QueryDebugReport` before changing selectors.
+2. Move unstable domains to `strictest`.
+3. Use `queryOneRuntimeDebug` and `QueryDebugReport` before changing selectors.
 
 ## Performance and Benchmarks
 
@@ -164,11 +165,56 @@ Artifacts:
 - `bench/results/latest.md`
 - `bench/results/latest.json`
 
-Notes:
+Benchmark policy:
 
 - parse comparisons include `strlen`, `lexbor`, and parse-only `lol-html`
 - query parse/match/cached sections benchmark `htmlparser`
 - repeated runtime selector workloads should use cached selectors
+
+## Latest Benchmark Snapshot
+
+Warning: throughput numbers are not conformance claims. This parser is permissive by design; see [Conformance Status](#conformance-status).
+
+<!-- BENCHMARK_SNAPSHOT:START -->
+
+Source: `bench/results/latest.json` (`stable` profile).
+
+#### Parse Throughput Comparison (MB/s)
+
+| Fixture | ours-fastest | ours-strictest | lol-html | lexbor |
+|---|---:|---:|---:|---:|
+| `rust-lang.html` | 1657.11 | 1880.99 | 1472.30 | 339.06 |
+| `wiki-html.html` | 1269.14 | 1076.93 | 905.54 | 256.92 |
+| `mdn-html.html` | 1966.96 | 1904.34 | 1757.21 | 315.31 |
+| `w3-html52.html` | 902.64 | 825.04 | 735.91 | 182.75 |
+| `hn.html` | 1355.63 | 1252.24 | 858.87 | 220.22 |
+
+#### Query Match Throughput (ours)
+
+| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
+|---|---:|---:|---:|---:|
+| `attr-heavy-button` | 140088984.52 | 7.14 | 146858189.33 | 6.81 |
+| `attr-heavy-nav` | 135268575.76 | 7.39 | 143792203.01 | 6.95 |
+
+#### Cached Query Throughput (ours)
+
+| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
+|---|---:|---:|---:|---:|
+| `attr-heavy-button` | 210881929.32 | 4.74 | 210389894.55 | 4.75 |
+| `attr-heavy-nav` | 169021702.39 | 5.92 | 197867776.84 | 5.05 |
+
+#### Query Parse Throughput (ours)
+
+| Selector case | Ops/s | ns/op |
+|---|---:|---:|
+| `simple` | 20005017.26 | 49.99 |
+| `complex` | 6688312.83 | 149.51 |
+| `grouped` | 7306593.87 | 136.86 |
+
+For full per-parser, per-fixture tables and gate output:
+- `bench/results/latest.md`
+- `bench/results/latest.json`
+<!-- BENCHMARK_SNAPSHOT:END -->
 
 ## Conformance Status
 
@@ -180,7 +226,7 @@ zig build conformance
 zig build tools -- run-external-suites --mode both
 ```
 
-Report artifact: `bench/results/external_suite_report.json`
+Artifact: `bench/results/external_suite_report.json`
 
 Tracked suites:
 
@@ -203,21 +249,21 @@ Data model highlights:
 
 - `Document` owns source bytes and node/index storage
 - nodes are contiguous and linked by indexes for traversal
-- attributes are traversed directly from source spans (no heap attr objects)
+- attributes are traversed directly from source spans (no heap attribute objects)
 
 ## Troubleshooting
 
 ### Query returns nothing
 
-- validate selector syntax (`queryOneRuntime` returns `error.InvalidSelector`)
-- check query scope (`Document` vs scoped `Node`)
-- use `queryOneRuntimeDebug` + `QueryDebugReport` for near-miss reasons
+- validate selector syntax (`queryOneRuntime` can return `error.InvalidSelector`)
+- check scope (`Document` vs scoped `Node`)
+- use `queryOneRuntimeDebug` and inspect `QueryDebugReport`
 
 ### Unexpected `innerText`
 
 - default `innerText` normalizes whitespace
 - use `innerTextWithOptions(..., .{ .normalize_whitespace = false })` for raw spacing
-- use `innerTextOwned(...)` when you always require allocated output
+- use `innerTextOwned(...)` when output must always be allocated
 - use `doc.isOwned(slice)` to check borrowed vs allocated
 
 ### Runtime iterator invalidation
@@ -226,4 +272,4 @@ Data model highlights:
 
 ### Input buffer changed
 
-Expected behavior: parsing and lazy decode paths mutate source bytes in place.
+Expected: parse and lazy decode paths mutate source bytes in place.

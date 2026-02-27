@@ -3,64 +3,20 @@
 High-throughput, destructive HTML parser + CSS selector engine for Zig.
 
 [![zig](https://img.shields.io/badge/zig-0.15.2-orange)](https://ziglang.org/)
-[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![mode](https://img.shields.io/badge/parse-mutable%20input%20%28destructive%29-critical)](#design-contract)
+[![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![mode](https://img.shields.io/badge/parse-mutable%20input%20%28destructive%29-critical)](./DOCUMENTATION.md#mode-guidance)
 
-`htmlparser` is built for pipelines where the HTML input is mutable (`[]u8`), throughput matters, and “best-effort DOM” is acceptable.
+## Performance
 
-## Why This Exists
+Warning: performance numbers are not conformance claims. This parser is intentionally permissive; see [Conformance Status](./DOCUMENTATION.md#conformance-status).
 
-Typical HTML parsers optimize for browser-like behavior, strict correctness, or safety-by-copy. This library optimizes for:
+- Benchmark workflow: [Performance and Benchmarks](./DOCUMENTATION.md#performance-and-benchmarks)
+- Latest snapshot: [Latest Benchmark Snapshot](./DOCUMENTATION.md#latest-benchmark-snapshot)
+- Raw benchmark outputs:
+  - `bench/results/latest.md`
+  - `bench/results/latest.json`
 
-- minimal overhead when you can reuse and mutate the input buffer
-- high query throughput (selectors + navigation)
-- permissive recovery on imperfect HTML
-
-## Highlights
-
-- **Destructive parse:** parses from mutable input (`[]u8`) and may rewrite bytes in-place.
-- **DOM + selectors:** parse once, then query fast with selector APIs and node navigation.
-- **Selector flavors:**
-  - compile-time selectors: `queryOne`, `queryAll`
-  - runtime selectors: `queryOneRuntime`, `queryAllRuntime`
-  - cached runtime selectors: `queryOneCached`, `queryAllCached`
-- **Navigation:** `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children` (element-only).
-- **In-place attributes:** attribute values are materialized/decoded lazily and cached in-place.
-- **Text extraction modes:** `innerText` prefers borrowed/in-place paths; `innerTextOwned` always returns allocated output.
-- **Configurable parse work:** eager/lazy child views and optional whitespace-text dropping.
-- **Opt-in diagnostics:** `queryOneDebug` / `queryOneRuntimeDebug` expose near-miss reasons without changing hot-path APIs.
-- **Opt-in instrumentation:** compile-time hook wrappers for parse/query timing and node-count stats.
-
-Target Zig version: `0.15.2`.
-
-## Installation
-
-As a local dependency (path-based):
-
-```bash
-zig fetch --save path:.
-```
-
-Then import in Zig code:
-
-```zig
-const html = @import("htmlparser");
-```
-
-## Documentation
-
-The full manual now lives in one file:
-
-- [`docs/README.md`](docs/README.md)
-- Core API: [`docs/README.md#core-api`](docs/README.md#core-api)
-- Selector grammar: [`docs/README.md#selector-support`](docs/README.md#selector-support)
-- Parse mode guidance: [`docs/README.md#mode-guidance`](docs/README.md#mode-guidance)
-- Performance workflow: [`docs/README.md#performance-and-benchmarks`](docs/README.md#performance-and-benchmarks)
-- Conformance notes: [`docs/README.md#conformance-status`](docs/README.md#conformance-status)
-
-## Quick Start (Test-Backed)
-
-This snippet matches `examples/basic_parse_query.zig`.
+## Quick Start
 
 ```zig
 const std = @import("std");
@@ -80,99 +36,30 @@ test "basic parse + query" {
 }
 ```
 
-## Query APIs
+## API Surface
 
-### Compile-time selectors
+- compile-time selectors: `queryOne`, `queryAll`
+- runtime selectors: `queryOneRuntime`, `queryAllRuntime`
+- cached runtime selectors: `queryOneCached`, `queryAllCached`
+- diagnostics: `queryOneDebug`, `queryOneRuntimeDebug`
+- instrumentation wrappers:
+  - `parseWithHooks`
+  - `queryOneRuntimeWithHooks`, `queryAllRuntimeWithHooks`
+  - `queryOneCachedWithHooks`, `queryAllCachedWithHooks`
+- text extraction:
+  - `innerText`, `innerTextWithOptions`
+  - `innerTextOwned`, `innerTextOwnedWithOptions`
+  - ownership check: `doc.isOwned(slice)`
 
-Compile the selector at comptime, match at runtime:
+## Documentation
 
-```zig
-const node = doc.queryOne("div#app > a.nav") orelse return error.TestUnexpectedResult;
-```
-
-### Runtime selectors
-
-Parse the selector at runtime (useful for user input):
-
-```zig
-const node = (try doc.queryOneRuntime("a[href^=https]")) orelse return;
-```
-
-### Cached runtime selectors
-
-Compile once (runtime), run many queries:
-
-```zig
-var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-defer arena.deinit();
-
-const sel = try html.Selector.compileRuntime(arena.allocator(), "a[href^=https]");
-const node = doc.queryOneCached(&sel);
-```
-
-### Debug query diagnostics
-
-```zig
-var report: html.QueryDebugReport = .{};
-const node = try doc.queryOneRuntimeDebug("a[href^=https]", &report);
-if (node == null) {
-    // Inspect report.visited_elements and report.near_misses
-}
-```
-
-### Instrumentation hooks
-
-```zig
-var hooks = Hooks{};
-try html.parseWithHooks(&doc, &input, .{}, &hooks);
-_ = try html.queryOneRuntimeWithHooks(&doc, "a.primary", &hooks);
-```
-
-Reference examples:
-- `examples/debug_query_report.zig`
-- `examples/instrumentation_hooks.zig`
-
-## Parse Option Recipes
-
-Two bundles are used by the benchmark harness and conformance runner:
-
-### Strictest (does the most work)
-
-- eager child views on
-- keep whitespace-only text nodes
-
-### Fastest (does the least work)
-
-- eager child views off (child views are built lazily if `children()` is called)
-- drop whitespace-only text nodes during parse
-
-`children()` returns a borrowed `[]const u32` index slice into the document's node array.
-
-See `docs/README.md#mode-guidance` for the mode matrix and fallback workflow on malformed pages.
-
-## Selector Support (v1)
-
-Supported (intentionally limited scope):
-
-- element/tag selectors, universal (`*`)
-- `#id`, `.class`
-- attribute selectors: `[a] [a=v] [a^=v] [a$=v] [a*=v] [a~=v] [a|=v]`
-- combinators: descendant, child (`>`), adjacent (`+`), sibling (`~`)
-- grouping: comma-separated selectors
-- pseudo-classes: `:first-child`, `:last-child`, `:nth-child(An+B)` (includes `odd`/`even`)
-- `:not(...)` (simple selectors only)
-
-See `docs/README.md#selector-support` for the exact selector grammar and constraints.
-
-## Design Contract
-
-- Input is mutable and destructively parsed (the buffer may be rewritten during parse and lazy decode).
-- Node handles are valid while the owning `Document` is alive and not reparsed/cleared.
-- `queryAllRuntime` iterators are invalidated by newer `queryAllRuntime` calls on the same document.
-- `innerText` may allocate when concatenation is required.
-- `innerTextOwned` always allocates and does not decode text in-place.
-- `doc.isOwned(slice)` reports whether a slice points into the document source buffer.
-- Permissive parsing is a goal; strict browser parity is not.
+- Full manual: [Documentation](./DOCUMENTATION.md)
+- API details: [Documentation#core-api](./DOCUMENTATION.md#core-api)
+- Selector grammar: [Documentation#selector-support](./DOCUMENTATION.md#selector-support)
+- Parse mode guidance: [Documentation#mode-guidance](./DOCUMENTATION.md#mode-guidance)
+- Conformance: [Documentation#conformance-status](./DOCUMENTATION.md#conformance-status)
+- Architecture: [Documentation#architecture](./DOCUMENTATION.md#architecture)
+- Troubleshooting: [Documentation#troubleshooting](./DOCUMENTATION.md#troubleshooting)
 
 ## Build and Validation
 
@@ -183,82 +70,6 @@ zig build examples-check
 zig build ship-check
 ```
 
-## Benchmarking
-
-Runs the benchmark suite and produces Markdown/JSON output in `bench/results/`:
-
-```bash
-zig build bench-compare
-```
-
-`run-benchmarks` now auto-refreshes the snapshot block below from `bench/results/latest.json`.
-
-The benchmark harness includes a “fastest vs lol-html” parse-throughput gate in the `stable` profile. See `bench/README.md` for details.
-
-### Latest Benchmark Snapshot
-
-<!-- BENCHMARK_SNAPSHOT:START -->
-
-Source: `bench/results/latest.json` (`stable` profile).
-
-#### Parse Throughput Comparison (MB/s)
-
-| Fixture | ours-fastest | ours-strictest | lol-html | lexbor |
-|---|---:|---:|---:|---:|
-| `rust-lang.html` | 1657.11 | 1880.99 | 1472.30 | 339.06 |
-| `wiki-html.html` | 1269.14 | 1076.93 | 905.54 | 256.92 |
-| `mdn-html.html` | 1966.96 | 1904.34 | 1757.21 | 315.31 |
-| `w3-html52.html` | 902.64 | 825.04 | 735.91 | 182.75 |
-| `hn.html` | 1355.63 | 1252.24 | 858.87 | 220.22 |
-
-#### Query Match Throughput (ours)
-
-| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
-|---|---:|---:|---:|---:|
-| `attr-heavy-button` | 140088984.52 | 7.14 | 146858189.33 | 6.81 |
-| `attr-heavy-nav` | 135268575.76 | 7.39 | 143792203.01 | 6.95 |
-
-#### Cached Query Throughput (ours)
-
-| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
-|---|---:|---:|---:|---:|
-| `attr-heavy-button` | 210881929.32 | 4.74 | 210389894.55 | 4.75 |
-| `attr-heavy-nav` | 169021702.39 | 5.92 | 197867776.84 | 5.05 |
-
-#### Query Parse Throughput (ours)
-
-| Selector case | Ops/s | ns/op |
-|---|---:|---:|
-| `simple` | 20005017.26 | 49.99 |
-| `complex` | 6688312.83 | 149.51 |
-| `grouped` | 7306593.87 | 136.86 |
-
-For full per-parser, per-fixture tables and gate output:
-- `bench/results/latest.md`
-- `bench/results/latest.json`
-<!-- BENCHMARK_SNAPSHOT:END -->
-
-## Conformance
-
-Runs known-good external selector and parser suites (both `strictest` and `fastest` modes):
-
-```bash
-zig build conformance
-```
-
-See `docs/README.md#conformance-status` for what’s covered and what’s intentionally out of scope.
-
-## Migration Notes
-
-- `CHANGELOG.md` now includes compatibility labels in `Unreleased`:
-  - `Impact: Breaking|Non-breaking`
-  - `Migration: Required|Not required`
-  - `Downstream scope: Small|Medium|Large`
-
-## Documentation
-
-See `docs/README.md` for the full manual.
-
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](./LICENSE).

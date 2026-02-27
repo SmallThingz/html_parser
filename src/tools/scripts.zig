@@ -13,8 +13,8 @@ const SUITES_DIR = "/tmp/htmlparser-suites";
 const SUITE_RUNNER_BIN = "bench/build/bin/suite_runner";
 
 const repeats: usize = 5;
-const ReadmeBenchmarkStartMarker = "<!-- BENCHMARK_SNAPSHOT:START -->";
-const ReadmeBenchmarkEndMarker = "<!-- BENCHMARK_SNAPSHOT:END -->";
+const DocumentationBenchmarkStartMarker = "<!-- BENCHMARK_SNAPSHOT:START -->";
+const DocumentationBenchmarkEndMarker = "<!-- BENCHMARK_SNAPSHOT:END -->";
 
 const ParserCapability = struct {
     parser: []const u8,
@@ -528,7 +528,7 @@ fn writeMaybeF64(w: anytype, value: ?f64) !void {
     }
 }
 
-fn renderReadmeBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBenchSnapshot) ![]u8 {
+fn renderDocumentationBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBenchSnapshot) ![]u8 {
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(alloc);
     const w = out.writer(alloc);
@@ -623,7 +623,7 @@ fn renderReadmeBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBenchSnaps
     return out.toOwnedSlice(alloc);
 }
 
-fn updateReadmeBenchmarkSnapshot(alloc: std.mem.Allocator) !void {
+fn updateDocumentationBenchmarkSnapshot(alloc: std.mem.Allocator) !void {
     const latest_json = try common.readFileAlloc(alloc, "bench/results/latest.json");
     defer alloc.free(latest_json);
 
@@ -632,34 +632,34 @@ fn updateReadmeBenchmarkSnapshot(alloc: std.mem.Allocator) !void {
     });
     defer parsed.deinit();
 
-    const replacement = try renderReadmeBenchmarkSection(alloc, parsed.value);
+    const replacement = try renderDocumentationBenchmarkSection(alloc, parsed.value);
     defer alloc.free(replacement);
 
-    const readme = try common.readFileAlloc(alloc, "README.md");
-    defer alloc.free(readme);
+    const documentation = try common.readFileAlloc(alloc, "DOCUMENTATION.md");
+    defer alloc.free(documentation);
 
-    const start = std.mem.indexOf(u8, readme, ReadmeBenchmarkStartMarker) orelse return error.ReadmeBenchMarkersMissing;
-    const after_start = start + ReadmeBenchmarkStartMarker.len;
-    const end = std.mem.indexOfPos(u8, readme, after_start, ReadmeBenchmarkEndMarker) orelse return error.ReadmeBenchMarkersMissing;
+    const start = std.mem.indexOf(u8, documentation, DocumentationBenchmarkStartMarker) orelse return error.ReadmeBenchMarkersMissing;
+    const after_start = start + DocumentationBenchmarkStartMarker.len;
+    const end = std.mem.indexOfPos(u8, documentation, after_start, DocumentationBenchmarkEndMarker) orelse return error.ReadmeBenchMarkersMissing;
 
     var out = std.ArrayList(u8).empty;
     defer out.deinit(alloc);
-    try out.appendSlice(alloc, readme[0..after_start]);
+    try out.appendSlice(alloc, documentation[0..after_start]);
     try out.appendSlice(alloc, "\n\n");
     try out.appendSlice(alloc, replacement);
     if (replacement.len == 0 or replacement[replacement.len - 1] != '\n') {
         try out.append(alloc, '\n');
     }
-    if (readme[end - 1] != '\n') {
+    if (documentation[end - 1] != '\n') {
         try out.append(alloc, '\n');
     }
-    try out.appendSlice(alloc, readme[end..]);
+    try out.appendSlice(alloc, documentation[end..]);
 
-    if (!std.mem.eql(u8, out.items, readme)) {
-        try common.writeFile("README.md", out.items);
-        std.debug.print("wrote README.md benchmark snapshot\n", .{});
+    if (!std.mem.eql(u8, out.items, documentation)) {
+        try common.writeFile("DOCUMENTATION.md", out.items);
+        std.debug.print("wrote DOCUMENTATION.md benchmark snapshot\n", .{});
     } else {
-        std.debug.print("README.md benchmark snapshot already up-to-date\n", .{});
+        std.debug.print("DOCUMENTATION.md benchmark snapshot already up-to-date\n", .{});
     }
 }
 
@@ -1147,7 +1147,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     const md = try writeMarkdown(alloc, profile.name, parse_results.items, query_parse_results.items, query_match_results.items, query_cached_results.items, gate_rows);
     defer alloc.free(md);
     try common.writeFile("bench/results/latest.md", md);
-    try updateReadmeBenchmarkSnapshot(alloc);
+    try updateDocumentationBenchmarkSnapshot(alloc);
 
     // Optional baseline behavior.
     const baseline_default = try std.fmt.allocPrint(alloc, "bench/results/baseline_{s}.json", .{profile.name});
@@ -1644,6 +1644,7 @@ fn collectMarkdownFiles(alloc: std.mem.Allocator) ![][]const u8 {
 
     const root_docs = [_][]const u8{
         "README.md",
+        "DOCUMENTATION.md",
         "CONTRIBUTING.md",
         "SECURITY.md",
         "CHANGELOG.md",
@@ -1655,15 +1656,17 @@ fn collectMarkdownFiles(alloc: std.mem.Allocator) ![][]const u8 {
         }
     }
 
-    var docs_dir = try std.fs.cwd().openDir("docs", .{ .iterate = true });
-    defer docs_dir.close();
-    var walker = try docs_dir.walk(alloc);
-    defer walker.deinit();
-    while (try walker.next()) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.path, ".md")) continue;
-        const joined = try std.fs.path.join(alloc, &[_][]const u8{ "docs", entry.path });
-        try files.append(alloc, joined);
+    if (common.fileExists("docs")) {
+        var docs_dir = try std.fs.cwd().openDir("docs", .{ .iterate = true });
+        defer docs_dir.close();
+        var walker = try docs_dir.walk(alloc);
+        defer walker.deinit();
+        while (try walker.next()) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.path, ".md")) continue;
+            const joined = try std.fs.path.join(alloc, &[_][]const u8{ "docs", entry.path });
+            try files.append(alloc, joined);
+        }
     }
 
     std.mem.sort([]const u8, files.items, {}, cmpStringSlice);
@@ -1929,7 +1932,7 @@ fn usage() void {
         \\  htmlparser-tools setup-parsers
         \\  htmlparser-tools setup-fixtures [--refresh]
         \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--write-baseline]
-        \\  htmlparser-tools sync-readme-bench
+        \\  htmlparser-tools sync-docs-bench
         \\  htmlparser-tools run-external-suites [--mode strictest|fastest|both] [--max-html5lib-cases N] [--json-out path]
         \\  htmlparser-tools docs-check
         \\  htmlparser-tools examples-check
@@ -1969,9 +1972,9 @@ pub fn main() !void {
         try runBenchmarks(alloc, rest);
         return;
     }
-    if (std.mem.eql(u8, cmd, "sync-readme-bench")) {
+    if (std.mem.eql(u8, cmd, "sync-docs-bench")) {
         if (rest.len != 0) return error.InvalidArgument;
-        try updateReadmeBenchmarkSnapshot(alloc);
+        try updateDocumentationBenchmarkSnapshot(alloc);
         return;
     }
     if (std.mem.eql(u8, cmd, "run-external-suites")) {
