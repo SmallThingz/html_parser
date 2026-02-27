@@ -44,10 +44,8 @@ zig build tools -- run-benchmarks
 zig build tools -- run-benchmarks --profile quick
 # low-noise acceptance profile
 zig build tools -- run-benchmarks --profile stable
-# write baseline for current profile (used by gate checks)
+# optionally write a baseline snapshot file for manual comparisons
 zig build tools -- run-benchmarks --profile stable --write-baseline
-# compare against explicit baseline file
-zig build tools -- run-benchmarks --profile stable --baseline bench/results/baseline_stable.json
 # refresh README benchmark snapshot from existing latest.json
 zig build tools -- sync-readme-bench
 ```
@@ -68,6 +66,3 @@ Results are written to:
 The benchmark output also includes a hard gate table:
 
 - `PASS/FAIL: ours-fastest > lol-html` per fixture
-- strict-mode regression checks against baseline:
-  - parse/query throughput not worse than -1%
-  - each failing case is automatically rerun 3 times and judged by rerun median

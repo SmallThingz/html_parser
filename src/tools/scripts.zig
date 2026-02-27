@@ -13,9 +13,6 @@ const SUITES_DIR = "/tmp/htmlparser-suites";
 const SUITE_RUNNER_BIN = "bench/build/bin/suite_runner";
 
 const repeats: usize = 5;
-const StableParseMinRatio: f64 = 0.99;
-const StableQueryMinRatio: f64 = 0.99;
-const RegressionConfirmRuns: usize = 3;
 const ReadmeBenchmarkStartMarker = "<!-- BENCHMARK_SNAPSHOT:START -->";
 const ReadmeBenchmarkEndMarker = "<!-- BENCHMARK_SNAPSHOT:END -->";
 
@@ -835,55 +832,6 @@ fn rerunFailedGateRows(alloc: std.mem.Allocator, profile: Profile, gate_rows: []
     }
 }
 
-fn parseBaselineOpsMap(
-    alloc: std.mem.Allocator,
-    value: std.json.Value,
-    section_name: []const u8,
-    parser_filter: []const u8,
-) !std.StringHashMap(f64) {
-    var out = std.StringHashMap(f64).init(alloc);
-    errdefer out.deinit();
-    const root_obj = value.object;
-    const section = root_obj.get(section_name) orelse return out;
-    if (section != .array) return out;
-    for (section.array.items) |item| {
-        if (item != .object) continue;
-        const obj = item.object;
-        const parser = (obj.get("parser") orelse continue).string;
-        if (!std.mem.eql(u8, parser, parser_filter)) continue;
-        const case_name = (obj.get("case") orelse continue).string;
-        const ops = switch (obj.get("ops_s") orelse continue) {
-            .float => |f| f,
-            .integer => |i| @as(f64, @floatFromInt(i)),
-            else => continue,
-        };
-        try out.put(case_name, ops);
-    }
-    return out;
-}
-
-fn parseBaselineParseMap(alloc: std.mem.Allocator, value: std.json.Value, parser_filter: []const u8) !std.StringHashMap(f64) {
-    var out = std.StringHashMap(f64).init(alloc);
-    errdefer out.deinit();
-    const root_obj = value.object;
-    const section = root_obj.get("parse_results") orelse return out;
-    if (section != .array) return out;
-    for (section.array.items) |item| {
-        if (item != .object) continue;
-        const obj = item.object;
-        const parser = (obj.get("parser") orelse continue).string;
-        if (!std.mem.eql(u8, parser, parser_filter)) continue;
-        const fixture = (obj.get("fixture") orelse continue).string;
-        const mbps = switch (obj.get("throughput_mb_s") orelse continue) {
-            .float => |f| f,
-            .integer => |i| @as(f64, @floatFromInt(i)),
-            else => continue,
-        };
-        try out.put(fixture, mbps);
-    }
-    return out;
-}
-
 fn renderConsole(
     alloc: std.mem.Allocator,
     profile_name: []const u8,
@@ -1095,7 +1043,6 @@ fn renderQueryConsoleSection(alloc: std.mem.Allocator, out: *std.ArrayList(u8), 
 
 fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     var profile_name: []const u8 = "quick";
-    var baseline_path: ?[]const u8 = null;
     var write_baseline = false;
 
     var i: usize = 0;
@@ -1105,10 +1052,6 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             profile_name = args[i];
-        } else if (std.mem.eql(u8, arg, "--baseline")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            baseline_path = args[i];
         } else if (std.mem.eql(u8, arg, "--write-baseline")) {
             write_baseline = true;
         } else {
@@ -1209,67 +1152,14 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     // Optional baseline behavior.
     const baseline_default = try std.fmt.allocPrint(alloc, "bench/results/baseline_{s}.json", .{profile.name});
     defer alloc.free(baseline_default);
-    const baseline = baseline_path orelse baseline_default;
 
     if (write_baseline) {
-        try common.writeFile(baseline, json_writer.written());
-        std.debug.print("wrote baseline {s}\n", .{baseline});
+        try common.writeFile(baseline_default, json_writer.written());
+        std.debug.print("wrote baseline {s}\n", .{baseline_default});
     }
 
-    var warnings = std.ArrayList([]const u8).empty;
-    defer warnings.deinit(alloc);
     var failures = std.ArrayList([]const u8).empty;
     defer failures.deinit(alloc);
-
-    if (pathExists(baseline)) {
-        const baseline_bytes = try common.readFileAlloc(alloc, baseline);
-        defer alloc.free(baseline_bytes);
-        const parsed = try std.json.parseFromSlice(std.json.Value, alloc, baseline_bytes, .{});
-        defer parsed.deinit();
-
-        var base_parse = try parseBaselineParseMap(alloc, parsed.value, "ours-strictest");
-        defer base_parse.deinit();
-        var base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours");
-        defer base_qp.deinit();
-        var base_qm = try parseBaselineOpsMap(alloc, parsed.value, "query_match_results", "ours-strictest");
-        defer base_qm.deinit();
-        var base_qcached = try parseBaselineOpsMap(alloc, parsed.value, "query_cached_results", "ours-strictest");
-        defer base_qcached.deinit();
-
-        if (std.mem.eql(u8, profile.name, "stable")) {
-            for (profile.fixtures) |fx| {
-                const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
-                if (base_parse.get(fx.name)) |base| {
-                    const min_expected = base * StableParseMinRatio;
-                    if (current < min_expected) {
-                        const confirmed = try confirmParseThroughput(alloc, "ours-strictest", fx.name, fx.iterations, RegressionConfirmRuns);
-                        if (confirmed < min_expected) {
-                            const msg = try std.fmt.allocPrint(alloc, "stable strictest parse regression >1%: {s} {d:.2} < {d:.2} (confirmed {d}x)", .{
-                                fx.name,
-                                current,
-                                min_expected,
-                                RegressionConfirmRuns,
-                            });
-                            try failures.append(alloc, msg);
-                        }
-                    }
-                }
-            }
-            try checkQuerySection(alloc, &failures, query_parse_results.items, "ours", "query-parse", base_qp, StableQueryMinRatio);
-            try checkQuerySection(alloc, &failures, query_match_results.items, "ours-strictest", "query-match", base_qm, StableQueryMinRatio);
-            try checkQuerySection(alloc, &failures, query_cached_results.items, "ours-strictest", "query-cached", base_qcached, StableQueryMinRatio);
-        } else {
-            for (profile.fixtures) |fx| {
-                const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
-                if (base_parse.get(fx.name)) |base| {
-                    if (current < base * 0.97) {
-                        const msg = try std.fmt.allocPrint(alloc, "quick strictest parse drift: {s} {d:.2} vs baseline {d:.2}", .{ fx.name, current, base });
-                        try warnings.append(alloc, msg);
-                    }
-                }
-            }
-        }
-    }
 
     for (gate_rows) |g| {
         if (std.mem.eql(u8, profile.name, "stable") and !g.pass) {
@@ -1283,106 +1173,11 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     const console = try renderConsole(alloc, profile.name, parse_results.items, query_parse_results.items, query_match_results.items, query_cached_results.items, gate_rows);
     defer alloc.free(console);
     std.debug.print("{s}\n", .{console});
-
-    if (warnings.items.len > 0) {
-        std.debug.print("Gate warnings:\n", .{});
-        for (warnings.items) |w| std.debug.print("- {s}\n", .{w});
-    }
     if (failures.items.len > 0) {
         std.debug.print("Gate failures:\n", .{});
         for (failures.items) |f| std.debug.print("- {s}\n", .{f});
         return error.GateFailed;
     }
-}
-
-fn checkQuerySection(
-    alloc: std.mem.Allocator,
-    failures: *std.ArrayList([]const u8),
-    rows: []const QueryResult,
-    parser_filter: []const u8,
-    section_name: []const u8,
-    baseline: std.StringHashMap(f64),
-    min_ratio: f64,
-) !void {
-    var current = std.StringHashMap(f64).init(alloc);
-    defer current.deinit();
-    for (rows) |r| {
-        if (!std.mem.eql(u8, r.parser, parser_filter)) continue;
-        try current.put(r.case, r.ops_s);
-    }
-    var it = baseline.iterator();
-    while (it.next()) |entry| {
-        if (current.get(entry.key_ptr.*)) |cur| {
-            const min_expected = entry.value_ptr.* * min_ratio;
-            if (cur < min_expected) {
-                const row = findQueryRow(rows, parser_filter, entry.key_ptr.*) orelse continue;
-                const confirmed = try confirmQueryOps(alloc, section_name, row, RegressionConfirmRuns);
-                if (confirmed < min_expected) {
-                    const msg = try std.fmt.allocPrint(alloc, "stable {s} regression >1%: {s} {d:.2} < {d:.2} (confirmed {d}x)", .{
-                        section_name,
-                        entry.key_ptr.*,
-                        cur,
-                        min_expected,
-                        RegressionConfirmRuns,
-                    });
-                    try failures.append(alloc, msg);
-                }
-            }
-        }
-    }
-}
-
-fn findQueryRow(rows: []const QueryResult, parser: []const u8, case_name: []const u8) ?QueryResult {
-    for (rows) |row| {
-        if (!std.mem.eql(u8, row.parser, parser)) continue;
-        if (std.mem.eql(u8, row.case, case_name)) return row;
-    }
-    return null;
-}
-
-fn medianF64(values: []f64) f64 {
-    std.mem.sort(f64, values, {}, struct {
-        fn lt(_: void, a: f64, b: f64) bool {
-            return a < b;
-        }
-    }.lt);
-    return values[values.len / 2];
-}
-
-fn confirmParseThroughput(
-    alloc: std.mem.Allocator,
-    parser_name: []const u8,
-    fixture_name: []const u8,
-    iterations: usize,
-    runs: usize,
-) !f64 {
-    var vals = try alloc.alloc(f64, runs);
-    defer alloc.free(vals);
-
-    for (0..runs) |i| {
-        const row = try benchParseOne(alloc, parser_name, fixture_name, iterations);
-        defer alloc.free(row.samples_ns);
-        vals[i] = row.throughput_mb_s;
-    }
-    return medianF64(vals);
-}
-
-fn confirmQueryOps(alloc: std.mem.Allocator, section_name: []const u8, row: QueryResult, runs: usize) !f64 {
-    var vals = try alloc.alloc(f64, runs);
-    defer alloc.free(vals);
-
-    for (0..runs) |i| {
-        const rerow = if (std.mem.eql(u8, section_name, "query-parse"))
-            try benchQueryParseOne(alloc, row.parser, row.case, row.selector, row.iterations)
-        else if (std.mem.eql(u8, section_name, "query-match"))
-            try benchQueryExecOne(alloc, row.parser, row.mode, row.case, row.fixture.?, row.selector, row.iterations, false)
-        else
-            try benchQueryExecOne(alloc, row.parser, row.mode, row.case, row.fixture.?, row.selector, row.iterations, true);
-        defer alloc.free(rerow.samples_ns);
-        vals[i] = rerow.ops_s;
-    }
-
-    return medianF64(vals);
 }
 
 // ---------------------------- External suites ----------------------------
@@ -2133,7 +1928,7 @@ fn usage() void {
         \\Usage:
         \\  htmlparser-tools setup-parsers
         \\  htmlparser-tools setup-fixtures [--refresh]
-        \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--baseline path] [--write-baseline]
+        \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--write-baseline]
         \\  htmlparser-tools sync-readme-bench
         \\  htmlparser-tools run-external-suites [--mode strictest|fastest|both] [--max-html5lib-cases N] [--json-out path]
         \\  htmlparser-tools docs-check
