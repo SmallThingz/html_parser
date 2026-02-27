@@ -1,4 +1,4 @@
-# htmlparser
+# 🚀 htmlparser
 
 High-throughput, destructive HTML parser + CSS selector engine for Zig.
 
@@ -6,15 +6,15 @@ High-throughput, destructive HTML parser + CSS selector engine for Zig.
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 [![mode](https://img.shields.io/badge/parse-mutable%20input%20%28destructive%29-critical)](./DOCUMENTATION.md#mode-guidance)
 
-## Performance
+## ⚠️ Conformance Warning
 
-Warning: performance numbers are not conformance claims. This parser is intentionally permissive; see [Conformance Status](./DOCUMENTATION.md#conformance-status).
+Performance numbers are **not** conformance claims. The parser is intentionally permissive and currently does not fully match browser-grade tree-construction behavior.
 
-- Benchmark workflow: [Performance and Benchmarks](./DOCUMENTATION.md#performance-and-benchmarks)
-- Latest snapshot: [Latest Benchmark Snapshot](./DOCUMENTATION.md#latest-benchmark-snapshot)
-- Raw benchmark outputs:
-  - `bench/results/latest.md`
-  - `bench/results/latest.json`
+- Conformance details: [Documentation#conformance-status](./DOCUMENTATION.md#conformance-status)
+- Benchmark methodology: [Documentation#performance-and-benchmarks](./DOCUMENTATION.md#performance-and-benchmarks)
+- Raw outputs: `bench/results/latest.md`, `bench/results/latest.json`
+
+## 🏁 Performance
 
 <!-- README_AUTO_SUMMARY:START -->
 
@@ -22,12 +22,12 @@ Source: `bench/results/latest.json` (`stable` profile).
 
 ### Parse Throughput (Average Across Fixtures)
 
-| Parser | Avg Throughput (MB/s) | % of leader | Relative chart |
-|---|---:|---:|---|
-| `ours-fastest` | 1430.30 | 100.00% | `####################` |
-| `ours-strictest` | 1387.91 | 97.04% | `###################` |
-| `lol-html` | 1145.97 | 80.12% | `################` |
-| `lexbor` | 262.85 | 18.38% | `####` |
+```text
+ours-fastest   │████████████████████│ 1430.30 MB/s (100.00%)
+ours-strictest │███████████████████░│ 1387.91 MB/s (97.04%)
+lol-html       │████████████████░░░░│ 1145.97 MB/s (80.12%)
+lexbor         │████░░░░░░░░░░░░░░░░│ 262.85 MB/s (18.38%)
+```
 
 ### Conformance Snapshot
 
@@ -38,7 +38,15 @@ Source: `bench/results/latest.json` (`stable` profile).
 Source: `bench/results/external_suite_report.json`
 <!-- README_AUTO_SUMMARY:END -->
 
-## Quick Start
+## ⚡ Features
+
+- 🔎 CSS selector queries: comptime, runtime, and cached runtime selectors.
+- 🧭 DOM navigation: parent, siblings, first/last child, and children iteration.
+- 🧪 Debug tooling: selector mismatch diagnostics and instrumentation wrappers.
+- 🧰 Parse profiles: `strictest` and `fastest` option bundles for benchmarks/workloads.
+- 🧵 Mutable-input parser model optimized for throughput.
+
+## 🚀 Quick Start
 
 ```zig
 const std = @import("std");
@@ -58,22 +66,7 @@ test "basic parse + query" {
 }
 ```
 
-## API Surface
-
-- compile-time selectors: `queryOne`, `queryAll`
-- runtime selectors: `queryOneRuntime`, `queryAllRuntime`
-- cached runtime selectors: `queryOneCached`, `queryAllCached`
-- diagnostics: `queryOneDebug`, `queryOneRuntimeDebug`
-- instrumentation wrappers:
-  - `parseWithHooks`
-  - `queryOneRuntimeWithHooks`, `queryAllRuntimeWithHooks`
-  - `queryOneCachedWithHooks`, `queryAllCachedWithHooks`
-- text extraction:
-  - `innerText`, `innerTextWithOptions`
-  - `innerTextOwned`, `innerTextOwnedWithOptions`
-  - ownership check: `doc.isOwned(slice)`
-
-## Documentation
+## 📚 Documentation
 
 - Full manual: [Documentation](./DOCUMENTATION.md)
 - API details: [Documentation#core-api](./DOCUMENTATION.md#core-api)
@@ -83,7 +76,7 @@ test "basic parse + query" {
 - Architecture: [Documentation#architecture](./DOCUMENTATION.md#architecture)
 - Troubleshooting: [Documentation#troubleshooting](./DOCUMENTATION.md#troubleshooting)
 
-## Build and Validation
+## 🧪 Build and Validation
 
 ```bash
 zig build test
@@ -92,6 +85,6 @@ zig build examples-check
 zig build ship-check
 ```
 
-## License
+## 📜 License
 
 MIT. See [LICENSE](./LICENSE).

@@ -695,6 +695,14 @@ fn cmpParseAverageDesc(_: void, a: ParseAverageRow, b: ParseAverageRow) bool {
     return a.avg_mb_s > b.avg_mb_s;
 }
 
+fn writeSpaces(w: anytype, count: usize) !void {
+    for (0..count) |_| try w.writeAll(" ");
+}
+
+fn writeRepeatGlyph(w: anytype, glyph: []const u8, count: usize) !void {
+    for (0..count) |_| try w.writeAll(glyph);
+}
+
 fn parseAverageRows(alloc: std.mem.Allocator, snap: ReadmeBenchSnapshot) ![]ParseAverageRow {
     const parser_names = [_][]const u8{ "ours-fastest", "ours-strictest", "lol-html", "lexbor" };
     var rows = std.ArrayList(ParseAverageRow).empty;
@@ -772,11 +780,13 @@ fn renderReadmeAutoSummary(alloc: std.mem.Allocator) ![]u8 {
 
         try w.print("Source: `bench/results/latest.json` (`{s}` profile).\n\n", .{snap.profile});
         try w.writeAll("### Parse Throughput (Average Across Fixtures)\n\n");
-        try w.writeAll("| Parser | Avg Throughput (MB/s) | % of leader | Relative chart |\n");
-        try w.writeAll("|---|---:|---:|---|\n");
+        try w.writeAll("```text\n");
 
         var leader: f64 = 0.0;
         for (avg_rows) |r| leader = @max(leader, r.avg_mb_s);
+
+        var max_name_len: usize = 0;
+        for (avg_rows) |r| max_name_len = @max(max_name_len, r.parser.len);
 
         for (avg_rows) |r| {
             const pct = if (leader > 0.0) (r.avg_mb_s / leader) * 100.0 else 0.0;
@@ -785,16 +795,14 @@ fn renderReadmeAutoSummary(alloc: std.mem.Allocator) ![]u8 {
                 @min(width, @max(@as(usize, @intFromFloat(@round((r.avg_mb_s / leader) * @as(f64, @floatFromInt(width))))), @as(usize, 1)))
             else
                 @as(usize, 0);
-            const bar = try alloc.alloc(u8, filled);
-            defer alloc.free(bar);
-            @memset(bar, '#');
-            try w.print("| `{s}` | {d:.2} | {d:.2}% | `{s}` |\n", .{
-                r.parser,
-                r.avg_mb_s,
-                pct,
-                bar,
-            });
+            try w.writeAll(r.parser);
+            try writeSpaces(w, max_name_len - r.parser.len);
+            try w.writeAll(" │");
+            try writeRepeatGlyph(w, "█", filled);
+            try writeRepeatGlyph(w, "░", width - filled);
+            try w.print("│ {d:.2} MB/s ({d:.2}%)\n", .{ r.avg_mb_s, pct });
         }
+        try w.writeAll("```\n");
     } else {
         try w.writeAll("Run `zig build bench-compare` to generate parse performance summary.\n");
     }
