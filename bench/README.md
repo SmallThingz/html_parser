@@ -46,7 +46,7 @@ zig build tools -- run-benchmarks --profile quick
 zig build tools -- run-benchmarks --profile stable
 # optionally write a baseline snapshot file for manual comparisons
 zig build tools -- run-benchmarks --profile stable --write-baseline
-# refresh DOCUMENTATION benchmark snapshot from existing latest.json
+# refresh DOCUMENTATION + README benchmark summary from existing latest.json/report files
 zig build tools -- sync-docs-bench
 ```
 
@@ -61,7 +61,9 @@ Results are written to:
 - `bench/results/latest.json`
 - `bench/results/latest.md`
 
-`run-benchmarks` also updates the `DOCUMENTATION.md` benchmark snapshot block from `bench/results/latest.json`.
+`run-benchmarks` also updates:
+- `DOCUMENTATION.md` benchmark snapshot block from `bench/results/latest.json`
+- `README.md` auto-summary block from `bench/results/latest.json` and `bench/results/external_suite_report.json` (if present)
 
 The benchmark output also includes a hard gate table:
 

@@ -15,6 +15,8 @@ const SUITE_RUNNER_BIN = "bench/build/bin/suite_runner";
 const repeats: usize = 5;
 const DocumentationBenchmarkStartMarker = "<!-- BENCHMARK_SNAPSHOT:START -->";
 const DocumentationBenchmarkEndMarker = "<!-- BENCHMARK_SNAPSHOT:END -->";
+const ReadmeSummaryStartMarker = "<!-- README_AUTO_SUMMARY:START -->";
+const ReadmeSummaryEndMarker = "<!-- README_AUTO_SUMMARY:END -->";
 
 const ParserCapability = struct {
     parser: []const u8,
@@ -306,6 +308,27 @@ const ReadmeBenchSnapshot = struct {
     query_parse_results: []const ReadmeQueryResult,
     query_match_results: []const ReadmeQueryResult,
     query_cached_results: []const ReadmeQueryResult,
+};
+
+const ExternalSuiteCounts = struct {
+    total: usize,
+    passed: usize,
+    failed: usize,
+};
+
+const ExternalSuiteMode = struct {
+    selector_suites: struct {
+        nwmatcher: ExternalSuiteCounts,
+        qwery_contextual: ExternalSuiteCounts,
+    },
+    parser_suite: ExternalSuiteCounts,
+};
+
+const ExternalSuiteReport = struct {
+    modes: struct {
+        strictest: ?ExternalSuiteMode = null,
+        fastest: ?ExternalSuiteMode = null,
+    },
 };
 
 fn runnerCmdParse(alloc: std.mem.Allocator, parser_name: []const u8, fixture: []const u8, iterations: usize) ![]const []const u8 {
@@ -660,6 +683,182 @@ fn updateDocumentationBenchmarkSnapshot(alloc: std.mem.Allocator) !void {
         std.debug.print("wrote DOCUMENTATION.md benchmark snapshot\n", .{});
     } else {
         std.debug.print("DOCUMENTATION.md benchmark snapshot already up-to-date\n", .{});
+    }
+}
+
+const ParseAverageRow = struct {
+    parser: []const u8,
+    avg_mb_s: f64,
+};
+
+fn cmpParseAverageDesc(_: void, a: ParseAverageRow, b: ParseAverageRow) bool {
+    return a.avg_mb_s > b.avg_mb_s;
+}
+
+fn parseAverageRows(alloc: std.mem.Allocator, snap: ReadmeBenchSnapshot) ![]ParseAverageRow {
+    const parser_names = [_][]const u8{ "ours-fastest", "ours-strictest", "lol-html", "lexbor" };
+    var rows = std.ArrayList(ParseAverageRow).empty;
+    errdefer rows.deinit(alloc);
+
+    for (parser_names) |parser_name| {
+        var sum: f64 = 0.0;
+        var count: usize = 0;
+        for (snap.parse_results) |r| {
+            if (!std.mem.eql(u8, r.parser, parser_name)) continue;
+            sum += r.throughput_mb_s;
+            count += 1;
+        }
+        if (count == 0) continue;
+        try rows.append(alloc, .{
+            .parser = parser_name,
+            .avg_mb_s = sum / @as(f64, @floatFromInt(count)),
+        });
+    }
+
+    std.mem.sort(ParseAverageRow, rows.items, {}, cmpParseAverageDesc);
+    return rows.toOwnedSlice(alloc);
+}
+
+fn writeConformanceRow(
+    w: anytype,
+    profile: []const u8,
+    nw: ExternalSuiteCounts,
+    qw: ExternalSuiteCounts,
+    parser: ExternalSuiteCounts,
+) !void {
+    try w.print("| `{s}` | {d}/{d} ({d} failed) | {d}/{d} ({d} failed) | {d}/{d} ({d} failed) |\n", .{
+        profile,
+        nw.passed,
+        nw.total,
+        nw.failed,
+        qw.passed,
+        qw.total,
+        qw.failed,
+        parser.passed,
+        parser.total,
+        parser.failed,
+    });
+}
+
+fn sameExternalMode(a: ExternalSuiteMode, b: ExternalSuiteMode) bool {
+    return a.selector_suites.nwmatcher.total == b.selector_suites.nwmatcher.total and
+        a.selector_suites.nwmatcher.passed == b.selector_suites.nwmatcher.passed and
+        a.selector_suites.nwmatcher.failed == b.selector_suites.nwmatcher.failed and
+        a.selector_suites.qwery_contextual.total == b.selector_suites.qwery_contextual.total and
+        a.selector_suites.qwery_contextual.passed == b.selector_suites.qwery_contextual.passed and
+        a.selector_suites.qwery_contextual.failed == b.selector_suites.qwery_contextual.failed and
+        a.parser_suite.total == b.parser_suite.total and
+        a.parser_suite.passed == b.parser_suite.passed and
+        a.parser_suite.failed == b.parser_suite.failed;
+}
+
+fn renderReadmeAutoSummary(alloc: std.mem.Allocator) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    errdefer out.deinit(alloc);
+    const w = out.writer(alloc);
+
+    const latest_exists = common.fileExists("bench/results/latest.json");
+    if (latest_exists) {
+        const latest_json = try common.readFileAlloc(alloc, "bench/results/latest.json");
+        defer alloc.free(latest_json);
+        const parsed = try std.json.parseFromSlice(ReadmeBenchSnapshot, alloc, latest_json, .{
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const snap = parsed.value;
+
+        const avg_rows = try parseAverageRows(alloc, snap);
+        defer alloc.free(avg_rows);
+
+        try w.print("Source: `bench/results/latest.json` (`{s}` profile).\n\n", .{snap.profile});
+        try w.writeAll("### Parse Throughput (Average Across Fixtures)\n\n");
+        try w.writeAll("| Parser | Avg Throughput (MB/s) | % of leader | Relative chart |\n");
+        try w.writeAll("|---|---:|---:|---|\n");
+
+        var leader: f64 = 0.0;
+        for (avg_rows) |r| leader = @max(leader, r.avg_mb_s);
+
+        for (avg_rows) |r| {
+            const pct = if (leader > 0.0) (r.avg_mb_s / leader) * 100.0 else 0.0;
+            const width: usize = 20;
+            const filled = if (leader > 0.0)
+                @min(width, @max(@as(usize, @intFromFloat(@round((r.avg_mb_s / leader) * @as(f64, @floatFromInt(width))))), @as(usize, 1)))
+            else
+                @as(usize, 0);
+            const bar = try alloc.alloc(u8, filled);
+            defer alloc.free(bar);
+            @memset(bar, '#');
+            try w.print("| `{s}` | {d:.2} | {d:.2}% | `{s}` |\n", .{
+                r.parser,
+                r.avg_mb_s,
+                pct,
+                bar,
+            });
+        }
+    } else {
+        try w.writeAll("Run `zig build bench-compare` to generate parse performance summary.\n");
+    }
+
+    try w.writeAll("\n### Conformance Snapshot\n\n");
+    if (common.fileExists("bench/results/external_suite_report.json")) {
+        const ext_json = try common.readFileAlloc(alloc, "bench/results/external_suite_report.json");
+        defer alloc.free(ext_json);
+        const parsed_ext = try std.json.parseFromSlice(ExternalSuiteReport, alloc, ext_json, .{
+            .ignore_unknown_fields = true,
+        });
+        defer parsed_ext.deinit();
+        const modes = parsed_ext.value.modes;
+
+        try w.writeAll("| Profile | nwmatcher | qwery_contextual | html5lib subset |\n");
+        try w.writeAll("|---|---:|---:|---:|\n");
+        if (modes.strictest != null and modes.fastest != null and sameExternalMode(modes.strictest.?, modes.fastest.?)) {
+            const m = modes.strictest.?;
+            try writeConformanceRow(w, "strictest/fastest", m.selector_suites.nwmatcher, m.selector_suites.qwery_contextual, m.parser_suite);
+        } else {
+            if (modes.strictest) |m| {
+                try writeConformanceRow(w, "strictest", m.selector_suites.nwmatcher, m.selector_suites.qwery_contextual, m.parser_suite);
+            }
+            if (modes.fastest) |m| {
+                try writeConformanceRow(w, "fastest", m.selector_suites.nwmatcher, m.selector_suites.qwery_contextual, m.parser_suite);
+            }
+        }
+        try w.writeAll("\nSource: `bench/results/external_suite_report.json`\n");
+    } else {
+        try w.writeAll("Run `zig build conformance` to generate conformance summary.\n");
+    }
+
+    return out.toOwnedSlice(alloc);
+}
+
+fn updateReadmeAutoSummary(alloc: std.mem.Allocator) !void {
+    const replacement = try renderReadmeAutoSummary(alloc);
+    defer alloc.free(replacement);
+
+    const readme = try common.readFileAlloc(alloc, "README.md");
+    defer alloc.free(readme);
+
+    const start = std.mem.indexOf(u8, readme, ReadmeSummaryStartMarker) orelse return error.ReadmeBenchMarkersMissing;
+    const after_start = start + ReadmeSummaryStartMarker.len;
+    const end = std.mem.indexOfPos(u8, readme, after_start, ReadmeSummaryEndMarker) orelse return error.ReadmeBenchMarkersMissing;
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(alloc);
+    try out.appendSlice(alloc, readme[0..after_start]);
+    try out.appendSlice(alloc, "\n\n");
+    try out.appendSlice(alloc, replacement);
+    if (replacement.len == 0 or replacement[replacement.len - 1] != '\n') {
+        try out.append(alloc, '\n');
+    }
+    if (readme[end - 1] != '\n') {
+        try out.append(alloc, '\n');
+    }
+    try out.appendSlice(alloc, readme[end..]);
+
+    if (!std.mem.eql(u8, out.items, readme)) {
+        try common.writeFile("README.md", out.items);
+        std.debug.print("wrote README.md auto summary\n", .{});
+    } else {
+        std.debug.print("README.md auto summary already up-to-date\n", .{});
     }
 }
 
@@ -1148,6 +1347,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     defer alloc.free(md);
     try common.writeFile("bench/results/latest.md", md);
     try updateDocumentationBenchmarkSnapshot(alloc);
+    try updateReadmeAutoSummary(alloc);
 
     // Optional baseline behavior.
     const baseline_default = try std.fmt.allocPrint(alloc, "bench/results/baseline_{s}.json", .{profile.name});
@@ -1632,6 +1832,9 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
     try jw.writeAll("}}");
     try common.writeFile(json_out, json_buf.items);
     std.debug.print("Wrote report: {s}\n", .{json_out});
+    if (std.mem.eql(u8, json_out, "bench/results/external_suite_report.json")) {
+        try updateReadmeAutoSummary(alloc);
+    }
 }
 
 fn cmpStringSlice(_: void, a: []const u8, b: []const u8) bool {
@@ -1975,6 +2178,7 @@ pub fn main() !void {
     if (std.mem.eql(u8, cmd, "sync-docs-bench")) {
         if (rest.len != 0) return error.InvalidArgument;
         try updateDocumentationBenchmarkSnapshot(alloc);
+        try updateReadmeAutoSummary(alloc);
         return;
     }
     if (std.mem.eql(u8, cmd, "run-external-suites")) {

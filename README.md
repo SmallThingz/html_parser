@@ -16,6 +16,28 @@ Warning: performance numbers are not conformance claims. This parser is intentio
   - `bench/results/latest.md`
   - `bench/results/latest.json`
 
+<!-- README_AUTO_SUMMARY:START -->
+
+Source: `bench/results/latest.json` (`stable` profile).
+
+### Parse Throughput (Average Across Fixtures)
+
+| Parser | Avg Throughput (MB/s) | % of leader | Relative chart |
+|---|---:|---:|---|
+| `ours-fastest` | 1430.30 | 100.00% | `####################` |
+| `ours-strictest` | 1387.91 | 97.04% | `###################` |
+| `lol-html` | 1145.97 | 80.12% | `################` |
+| `lexbor` | 262.85 | 18.38% | `####` |
+
+### Conformance Snapshot
+
+| Profile | nwmatcher | qwery_contextual | html5lib subset |
+|---|---:|---:|---:|
+| `strictest/fastest` | 20/20 (0 failed) | 54/54 (0 failed) | 539/600 (61 failed) |
+
+Source: `bench/results/external_suite_report.json`
+<!-- README_AUTO_SUMMARY:END -->
+
 ## Quick Start
 
 ```zig
