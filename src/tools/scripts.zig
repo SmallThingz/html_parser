@@ -72,7 +72,7 @@ const Profile = struct {
     fixtures: []const FixtureCase,
     query_parse_cases: []const QueryCase,
     query_match_cases: []const QueryExecCase,
-    query_compiled_cases: []const QueryExecCase,
+    query_cached_cases: []const QueryExecCase,
 };
 
 const quick_fixtures = [_]FixtureCase{
@@ -120,7 +120,7 @@ fn getProfile(name: []const u8) !Profile {
             .fixtures = &quick_fixtures,
             .query_parse_cases = &quick_query_parse,
             .query_match_cases = &quick_query_exec,
-            .query_compiled_cases = &quick_query_exec,
+            .query_cached_cases = &quick_query_exec,
         };
     }
     if (std.mem.eql(u8, name, "stable")) {
@@ -129,7 +129,7 @@ fn getProfile(name: []const u8) !Profile {
             .fixtures = &stable_fixtures,
             .query_parse_cases = &stable_query_parse,
             .query_match_cases = &stable_query_exec,
-            .query_compiled_cases = &stable_query_exec,
+            .query_cached_cases = &stable_query_exec,
         };
     }
     return error.InvalidProfile;
@@ -308,7 +308,7 @@ const ReadmeBenchSnapshot = struct {
     parse_results: []const ReadmeParseResult,
     query_parse_results: []const ReadmeQueryResult,
     query_match_results: []const ReadmeQueryResult,
-    query_compiled_results: []const ReadmeQueryResult,
+    query_cached_results: []const ReadmeQueryResult,
 };
 
 fn runnerCmdParse(alloc: std.mem.Allocator, parser_name: []const u8, fixture: []const u8, iterations: usize) ![]const []const u8 {
@@ -449,12 +449,12 @@ fn benchQueryParseOne(alloc: std.mem.Allocator, parser_name: []const u8, case_na
     };
 }
 
-fn benchQueryExecOne(alloc: std.mem.Allocator, parser_name: []const u8, mode: []const u8, case_name: []const u8, fixture_name: []const u8, selector: []const u8, iterations: usize, compiled: bool) !QueryResult {
+fn benchQueryExecOne(alloc: std.mem.Allocator, parser_name: []const u8, mode: []const u8, case_name: []const u8, fixture_name: []const u8, selector: []const u8, iterations: usize, cached: bool) !QueryResult {
     const fixture = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ FIXTURES_DIR, fixture_name });
     defer alloc.free(fixture);
     const iter_s = try std.fmt.allocPrint(alloc, "{d}", .{iterations});
     defer alloc.free(iter_s);
-    const sub = if (compiled) "query-compiled" else "query-match";
+    const sub = if (cached) "query-cached" else "query-match";
 
     {
         const warm = [_][]const u8{ "zig-out/bin/htmlparser-bench", sub, mode, fixture, selector, "1" };
@@ -592,8 +592,8 @@ fn renderReadmeBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBenchSnaps
     try w.writeAll("| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |\n");
     try w.writeAll("|---|---:|---:|---:|---:|\n");
     for (query_match_cases.items) |case_name| {
-        const strictest = findReadmeQuery(snap.query_compiled_results, "ours-strictest", case_name);
-        const fastest = findReadmeQuery(snap.query_compiled_results, "ours-fastest", case_name);
+        const strictest = findReadmeQuery(snap.query_cached_results, "ours-strictest", case_name);
+        const fastest = findReadmeQuery(snap.query_cached_results, "ours-fastest", case_name);
         try w.print("| `{s}` | ", .{case_name});
         try writeMaybeF64(w, if (strictest) |s| s.ops_s else null);
         try w.writeAll(" | ");
@@ -672,7 +672,7 @@ fn writeMarkdown(
     parse_results: []const ParseResult,
     query_parse_results: []const QueryResult,
     query_match_results: []const QueryResult,
-    query_compiled_results: []const QueryResult,
+    query_cached_results: []const QueryResult,
     gate_rows: []const GateRow,
 ) ![]u8 {
     var out = std.ArrayList(u8).empty;
@@ -730,7 +730,7 @@ fn writeMarkdown(
 
     try writeQuerySection(alloc, &out, "## Query Parse Throughput", query_parse_results);
     try writeQuerySection(alloc, &out, "## Query Match Throughput", query_match_results);
-    try writeQuerySection(alloc, &out, "## Query Compiled Throughput", query_compiled_results);
+    try writeQuerySection(alloc, &out, "## Query Cached Throughput", query_cached_results);
 
     if (gate_rows.len > 0) {
         try w.writeAll("## Fastest vs lol-html Gate\n\n");
@@ -890,7 +890,7 @@ fn renderConsole(
     parse_results: []const ParseResult,
     query_parse_results: []const QueryResult,
     query_match_results: []const QueryResult,
-    query_compiled_results: []const QueryResult,
+    query_cached_results: []const QueryResult,
     gate_rows: []const GateRow,
 ) ![]u8 {
     var out = std.ArrayList(u8).empty;
@@ -970,7 +970,7 @@ fn renderConsole(
 
     try renderQueryConsoleSection(alloc, &out, "Query Parse Throughput", query_parse_results);
     try renderQueryConsoleSection(alloc, &out, "Query Match Throughput", query_match_results);
-    try renderQueryConsoleSection(alloc, &out, "Query Compiled Throughput", query_compiled_results);
+    try renderQueryConsoleSection(alloc, &out, "Query Cached Throughput", query_cached_results);
 
     if (gate_rows.len > 0) {
         try w.writeAll("Fastest vs lol-html Gate\n\n");
@@ -1154,13 +1154,13 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
         }
     }
 
-    var query_compiled_results = std.ArrayList(QueryResult).empty;
-    defer query_compiled_results.deinit(alloc);
+    var query_cached_results = std.ArrayList(QueryResult).empty;
+    defer query_cached_results.deinit(alloc);
     for (query_modes) |qm| {
-        for (profile.query_compiled_cases) |qc| {
-            std.debug.print("benchmarking query-compiled {s} on {s} ({d} iters)\n", .{ qm.parser, qc.name, qc.iterations });
+        for (profile.query_cached_cases) |qc| {
+            std.debug.print("benchmarking query-cached {s} on {s} ({d} iters)\n", .{ qm.parser, qc.name, qc.iterations });
             const row = try benchQueryExecOne(alloc, qm.parser, qm.mode, qc.name, qc.fixture, qc.selector, qc.iterations, true);
-            try query_compiled_results.append(alloc, row);
+            try query_cached_results.append(alloc, row);
         }
     }
 
@@ -1177,7 +1177,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
         parse_results: []const ParseResult,
         query_parse_results: []const QueryResult,
         query_match_results: []const QueryResult,
-        query_compiled_results: []const QueryResult,
+        query_cached_results: []const QueryResult,
         gate_summary: []const GateRow,
     }{
         .generated_unix = common.nowUnix(),
@@ -1188,7 +1188,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
         .parse_results = parse_results.items,
         .query_parse_results = query_parse_results.items,
         .query_match_results = query_match_results.items,
-        .query_compiled_results = query_compiled_results.items,
+        .query_cached_results = query_cached_results.items,
         .gate_summary = gate_rows,
     };
 
@@ -1201,7 +1201,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
     try json_stream.write(json_out);
     try common.writeFile("bench/results/latest.json", json_writer.written());
 
-    const md = try writeMarkdown(alloc, profile.name, parse_results.items, query_parse_results.items, query_match_results.items, query_compiled_results.items, gate_rows);
+    const md = try writeMarkdown(alloc, profile.name, parse_results.items, query_parse_results.items, query_match_results.items, query_cached_results.items, gate_rows);
     defer alloc.free(md);
     try common.writeFile("bench/results/latest.md", md);
     try updateReadmeBenchmarkSnapshot(alloc);
@@ -1230,15 +1230,11 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
         var base_parse = try parseBaselineParseMap(alloc, parsed.value, "ours-strictest");
         defer base_parse.deinit();
         var base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours");
-        if (base_qp.count() == 0) {
-            base_qp.deinit();
-            base_qp = try parseBaselineOpsMap(alloc, parsed.value, "query_parse_results", "ours-strictest");
-        }
         defer base_qp.deinit();
         var base_qm = try parseBaselineOpsMap(alloc, parsed.value, "query_match_results", "ours-strictest");
         defer base_qm.deinit();
-        var base_qc = try parseBaselineOpsMap(alloc, parsed.value, "query_compiled_results", "ours-strictest");
-        defer base_qc.deinit();
+        var base_qcached = try parseBaselineOpsMap(alloc, parsed.value, "query_cached_results", "ours-strictest");
+        defer base_qcached.deinit();
 
         if (std.mem.eql(u8, profile.name, "stable")) {
             for (profile.fixtures) |fx| {
@@ -1261,7 +1257,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
             }
             try checkQuerySection(alloc, &failures, query_parse_results.items, "ours", "query-parse", base_qp, StableQueryMinRatio);
             try checkQuerySection(alloc, &failures, query_match_results.items, "ours-strictest", "query-match", base_qm, StableQueryMinRatio);
-            try checkQuerySection(alloc, &failures, query_compiled_results.items, "ours-strictest", "query-compiled", base_qc, StableQueryMinRatio);
+            try checkQuerySection(alloc, &failures, query_cached_results.items, "ours-strictest", "query-cached", base_qcached, StableQueryMinRatio);
         } else {
             for (profile.fixtures) |fx| {
                 const current = findParseThroughput(parse_results.items, "ours-strictest", fx.name) orelse continue;
@@ -1284,7 +1280,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
 
     std.debug.print("wrote bench/results/latest.json\n", .{});
     std.debug.print("wrote bench/results/latest.md\n\n", .{});
-    const console = try renderConsole(alloc, profile.name, parse_results.items, query_parse_results.items, query_match_results.items, query_compiled_results.items, gate_rows);
+    const console = try renderConsole(alloc, profile.name, parse_results.items, query_parse_results.items, query_match_results.items, query_cached_results.items, gate_rows);
     defer alloc.free(console);
     std.debug.print("{s}\n", .{console});
 

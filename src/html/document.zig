@@ -120,16 +120,16 @@ pub const ParseOptions = struct {
 
             pub fn queryOne(self: @This(), comptime selector: []const u8) ?@This() {
                 const sel = comptime ast.Selector.compile(selector);
-                return self.queryOneCompiled(&sel);
+                return self.queryOneCached(&sel);
             }
 
-            pub fn queryOneCompiled(self: @This(), sel: *const ast.Selector) ?@This() {
-                return self.doc.queryOneCompiledFrom(sel.*, self.index);
+            pub fn queryOneCached(self: @This(), sel: *const ast.Selector) ?@This() {
+                return self.doc.queryOneCachedFrom(sel.*, self.index);
             }
 
             pub fn queryOneDebug(self: @This(), comptime selector: []const u8, report: *selector_debug.QueryDebugReport) ?@This() {
                 const sel = comptime ast.Selector.compile(selector);
-                return self.doc.queryOneCompiledDebugFrom(sel, self.index, report);
+                return self.doc.queryOneCachedDebugFrom(sel, self.index, report);
             }
 
             pub fn queryOneRuntime(self: @This(), selector: []const u8) runtime_selector.Error!?@This() {
@@ -142,10 +142,10 @@ pub const ParseOptions = struct {
 
             pub fn queryAll(self: @This(), comptime selector: []const u8) QueryIterType {
                 const sel = comptime ast.Selector.compile(selector);
-                return self.queryAllCompiled(&sel);
+                return self.queryAllCached(&sel);
             }
 
-            pub fn queryAllCompiled(self: @This(), sel: *const ast.Selector) QueryIterType {
+            pub fn queryAllCached(self: @This(), sel: *const ast.Selector) QueryIterType {
                 self.doc.ensureQueryPrereqs(sel.*);
                 return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
             }
@@ -217,10 +217,10 @@ pub const ParseOptions = struct {
             query_all_generation: u64 = 1,
             // One-entry selector caches avoid recompiling hot repeated runtime selectors.
             query_one_cached_selector: []const u8 = "",
-            query_one_cached_compiled: ?ast.Selector = null,
+            query_one_cached_selector_ast: ?ast.Selector = null,
             query_one_cache_valid: bool = false,
             query_all_cached_selector: []const u8 = "",
-            query_all_cached_compiled: ?ast.Selector = null,
+            query_all_cached_selector_ast: ?ast.Selector = null,
             query_all_cache_valid: bool = false,
             // One-entry queryOne result cache (source + scope -> first-match idx).
             query_one_result_cache_valid: bool = false,
@@ -288,16 +288,16 @@ pub const ParseOptions = struct {
 
             pub fn queryOne(self: *const DocSelf, comptime selector: []const u8) ?NodeTypeWrapper {
                 const sel = comptime ast.Selector.compile(selector);
-                return self.queryOneCompiled(&sel);
+                return self.queryOneCached(&sel);
             }
 
-            pub fn queryOneCompiled(self: *const DocSelf, sel: *const ast.Selector) ?NodeTypeWrapper {
-                return self.queryOneCompiledFrom(sel.*, InvalidIndex);
+            pub fn queryOneCached(self: *const DocSelf, sel: *const ast.Selector) ?NodeTypeWrapper {
+                return self.queryOneCachedFrom(sel.*, InvalidIndex);
             }
 
             pub fn queryOneDebug(self: *const DocSelf, comptime selector: []const u8, report: *selector_debug.QueryDebugReport) ?NodeTypeWrapper {
                 const sel = comptime ast.Selector.compile(selector);
-                return self.queryOneCompiledDebugFrom(sel, InvalidIndex, report);
+                return self.queryOneCachedDebugFrom(sel, InvalidIndex, report);
             }
 
             pub fn queryOneRuntime(self: *const DocSelf, selector: []const u8) runtime_selector.Error!?NodeTypeWrapper {
@@ -311,7 +311,7 @@ pub const ParseOptions = struct {
             fn queryOneRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
                 const sel = try mut_self.getOrCompileQueryOneSelector(selector);
-                return self.queryOneCompiledFrom(sel, scope_root);
+                return self.queryOneCachedFrom(sel, scope_root);
             }
 
             fn queryOneRuntimeDebugFrom(self: *const DocSelf, selector: []const u8, scope_root: u32, report: *selector_debug.QueryDebugReport) runtime_selector.Error!?NodeTypeWrapper {
@@ -321,10 +321,10 @@ pub const ParseOptions = struct {
                     report.setRuntimeParseError();
                     return err;
                 };
-                return self.queryOneCompiledDebugFrom(sel, scope_root, report);
+                return self.queryOneCachedDebugFrom(sel, scope_root, report);
             }
 
-            fn queryOneCompiledFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32) ?NodeTypeWrapper {
+            fn queryOneCachedFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32) ?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
                 mut_self.ensureQueryPrereqs(sel);
                 const sel_hash = hashSelectorSource(sel.source);
@@ -351,7 +351,7 @@ pub const ParseOptions = struct {
                 return self.nodeAt(idx);
             }
 
-            fn queryOneCompiledDebugFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32, report: *selector_debug.QueryDebugReport) ?NodeTypeWrapper {
+            fn queryOneCachedDebugFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32, report: *selector_debug.QueryDebugReport) ?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
                 mut_self.ensureQueryPrereqs(sel);
                 const idx = matcher_debug.explainFirstMatch(DocSelf, self, sel, scope_root, report) orelse return null;
@@ -360,10 +360,10 @@ pub const ParseOptions = struct {
 
             pub fn queryAll(self: *const DocSelf, comptime selector: []const u8) QueryIterType {
                 const sel = comptime ast.Selector.compile(selector);
-                return self.queryAllCompiled(&sel);
+                return self.queryAllCached(&sel);
             }
 
-            pub fn queryAllCompiled(self: *const DocSelf, sel: *const ast.Selector) QueryIterType {
+            pub fn queryAllCached(self: *const DocSelf, sel: *const ast.Selector) QueryIterType {
                 const mut_self: *DocSelf = @constCast(self);
                 mut_self.ensureQueryPrereqs(sel.*);
                 return .{ .doc = @constCast(self), .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
@@ -376,14 +376,14 @@ pub const ParseOptions = struct {
             fn queryAllRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!QueryIterType {
                 const mut_self: *DocSelf = @constCast(self);
                 // Runtime query-all iterators are invalidated when a newer runtime
-                // query-all is created, to avoid holding stale compiled selector state.
+                // query-all is created, to avoid holding stale cached selector state.
                 mut_self.query_all_generation +%= 1;
                 if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
 
                 const sel = try mut_self.getOrCompileQueryAllSelector(selector);
                 mut_self.ensureQueryPrereqs(sel);
                 var out = if (scope_root == InvalidIndex)
-                    self.queryAllCompiled(&sel)
+                    self.queryAllCached(&sel)
                 else
                     QueryIterType{
                         .doc = @constCast(self),
@@ -469,10 +469,10 @@ pub const ParseOptions = struct {
             fn invalidateRuntimeSelectorCaches(noalias self: *DocSelf) void {
                 self.query_one_cache_valid = false;
                 self.query_one_cached_selector = "";
-                self.query_one_cached_compiled = null;
+                self.query_one_cached_selector_ast = null;
                 self.query_all_cache_valid = false;
                 self.query_all_cached_selector = "";
-                self.query_all_cached_compiled = null;
+                self.query_all_cached_selector_ast = null;
                 self.query_one_result_cache_valid = false;
                 self.query_one_result_selector_len = 0;
                 self.query_one_result_selector_hash = 0;
@@ -482,28 +482,28 @@ pub const ParseOptions = struct {
 
             fn getOrCompileQueryOneSelector(noalias self: *DocSelf, selector: []const u8) runtime_selector.Error!ast.Selector {
                 if (self.query_one_cache_valid and std.mem.eql(u8, self.query_one_cached_selector, selector)) {
-                    return self.query_one_cached_compiled.?;
+                    return self.query_one_cached_selector_ast.?;
                 }
 
                 const arena = self.ensureQueryOneArena();
                 _ = arena.reset(.retain_capacity);
                 const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
                 self.query_one_cached_selector = sel.source;
-                self.query_one_cached_compiled = sel;
+                self.query_one_cached_selector_ast = sel;
                 self.query_one_cache_valid = true;
                 return sel;
             }
 
             fn getOrCompileQueryAllSelector(noalias self: *DocSelf, selector: []const u8) runtime_selector.Error!ast.Selector {
                 if (self.query_all_cache_valid and std.mem.eql(u8, self.query_all_cached_selector, selector)) {
-                    return self.query_all_cached_compiled.?;
+                    return self.query_all_cached_selector_ast.?;
                 }
 
                 const arena = self.ensureQueryAllArena();
                 _ = arena.reset(.retain_capacity);
                 const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
                 self.query_all_cached_selector = sel.source;
-                self.query_all_cached_compiled = sel;
+                self.query_all_cached_selector_ast = sel;
                 self.query_all_cache_valid = true;
                 return sel;
             }
@@ -1025,9 +1025,9 @@ test "node-scoped queries return complete descendants only" {
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const sel = try ast.Selector.compileRuntime(arena.allocator(), "a.link");
-    var it = sibs.queryAllCompiled(&sel);
+    var it = sibs.queryAllCached(&sel);
     try expectIterIds(&it, &.{ "a1", "a2", "a3" });
-    const first = sibs.queryOneCompiled(&sel) orelse return error.TestUnexpectedResult;
+    const first = sibs.queryOneCached(&sel) orelse return error.TestUnexpectedResult;
     const id = first.getAttributeValue("id") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("a1", id);
 }
@@ -1205,7 +1205,7 @@ test "attribute matching short-circuits and does not parse later attrs on early 
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
     const sel = try ast.Selector.compileRuntime(arena.allocator(), "div[href^=https][class*=button]");
-    try std.testing.expect(doc.queryOneCompiled(&sel) == null);
+    try std.testing.expect(doc.queryOneCached(&sel) == null);
     try std.testing.expect((try doc.queryOneRuntime("div[href^=https][class*=button]")) == null);
 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
@@ -1244,7 +1244,7 @@ test "inplace extended skip metadata preserves traversal for following attribute
     try std.testing.expectEqualStrings("ok", b);
 }
 
-test "compiled selector APIs are equivalent to runtime string wrappers" {
+test "cached selector APIs are equivalent to runtime string wrappers" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -1269,9 +1269,9 @@ test "compiled selector APIs are equivalent to runtime string wrappers" {
         const sel = try ast.Selector.compileRuntime(arena.allocator(), case.selector);
         try expectDocQueryRuntime(&doc, case.selector, case.expected);
 
-        var it = doc.queryAllCompiled(&sel);
+        var it = doc.queryAllCached(&sel);
         try expectIterIds(&it, case.expected);
-        const first = doc.queryOneCompiled(&sel);
+        const first = doc.queryOneCached(&sel);
         if (case.expected.len == 0) {
             try std.testing.expect(first == null);
         } else {
@@ -1763,17 +1763,17 @@ test "instrumentation wrappers invoke compile-time hooks and preserve results" {
     defer arena.deinit();
     const sel = try ast.Selector.compileRuntime(arena.allocator(), "a#x");
 
-    const compiled_one = instrumentation.queryOneCompiledWithHooks(&doc, &sel, &hooks);
-    try std.testing.expect(compiled_one != null);
-    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.one_compiled, hooks.last_query_kind);
+    const cached_one = instrumentation.queryOneCachedWithHooks(&doc, &sel, &hooks);
+    try std.testing.expect(cached_one != null);
+    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.one_cached, hooks.last_query_kind);
     try std.testing.expectEqual(@as(?bool, true), hooks.last_query_stats.matched);
 
     _ = try instrumentation.queryAllRuntimeWithHooks(&doc, "a", &hooks);
     try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.all_runtime, hooks.last_query_kind);
     try std.testing.expectEqual(@as(?bool, null), hooks.last_query_stats.matched);
 
-    _ = instrumentation.queryAllCompiledWithHooks(&doc, &sel, &hooks);
-    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.all_compiled, hooks.last_query_kind);
+    _ = instrumentation.queryAllCachedWithHooks(&doc, &sel, &hooks);
+    try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.all_cached, hooks.last_query_kind);
     try std.testing.expectEqual(@as(?bool, null), hooks.last_query_stats.matched);
     try std.testing.expect(hooks.query_start_calls >= 4);
     try std.testing.expect(hooks.query_end_calls >= 4);

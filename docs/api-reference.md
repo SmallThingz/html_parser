@@ -20,8 +20,8 @@ Query entrypoints:
 - `doc.queryAll(comptime selector)`
 - `try doc.queryOneRuntime(selector)`
 - `try doc.queryAllRuntime(selector)`
-- `doc.queryOneCompiled(&selector)`
-- `doc.queryAllCompiled(&selector)`
+- `doc.queryOneCached(&selector)`
+- `doc.queryAllCached(&selector)`
 - `doc.queryOneDebug(comptime selector, report)`
 - `try doc.queryOneRuntimeDebug(selector, report)`
 
@@ -59,8 +59,8 @@ Scoped query entrypoints:
 - `queryAll(comptime selector)`
 - `try queryOneRuntime(selector)`
 - `try queryAllRuntime(selector)`
-- `queryOneCompiled(&selector)`
-- `queryAllCompiled(&selector)`
+- `queryOneCached(&selector)`
+- `queryAllCached(&selector)`
 - `queryOneDebug(comptime selector, report)`
 - `try queryOneRuntimeDebug(selector, report)`
 
@@ -85,9 +85,9 @@ Scoped query entrypoints:
 - Wrapper helpers:
   - `parseWithHooks(doc, input, opts, hooks)`
   - `queryOneRuntimeWithHooks(doc, selector, hooks)`
-  - `queryOneCompiledWithHooks(doc, selector, hooks)`
+  - `queryOneCachedWithHooks(doc, selector, hooks)`
   - `queryAllRuntimeWithHooks(doc, selector, hooks)`
-  - `queryAllCompiledWithHooks(doc, selector, hooks)`
+  - `queryAllCachedWithHooks(doc, selector, hooks)`
 
 ## Lifetime and Safety Notes
 

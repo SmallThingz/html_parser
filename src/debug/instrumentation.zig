@@ -4,9 +4,9 @@ const ParseOptions = @import("../html/document.zig").ParseOptions;
 
 pub const QueryInstrumentationKind = enum(u8) {
     one_runtime,
-    one_compiled,
+    one_cached,
     all_runtime,
-    all_compiled,
+    all_cached,
 };
 
 pub const ParseInstrumentationStats = struct {
@@ -89,18 +89,18 @@ pub fn queryOneRuntimeWithHooks(doc: anytype, selector: []const u8, hooks: anyty
     }
 }
 
-pub fn queryOneCompiledWithHooks(doc: anytype, sel: *const ast.Selector, hooks: anytype) @TypeOf(doc.queryOneCompiled(sel)) {
+pub fn queryOneCachedWithHooks(doc: anytype, sel: *const ast.Selector, hooks: anytype) @TypeOf(doc.queryOneCached(sel)) {
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryStart")) {
-        hooks.onQueryStart(.one_compiled, sel.source.len);
+        hooks.onQueryStart(.one_cached, sel.source.len);
     }
 
     const start = std.time.nanoTimestamp();
-    const value = doc.queryOneCompiled(sel);
+    const value = doc.queryOneCached(sel);
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryEnd")) {
         hooks.onQueryEnd(QueryInstrumentationStats{
             .elapsed_ns = elapsedNs(start, std.time.nanoTimestamp()),
             .selector_len = sel.source.len,
-            .kind = .one_compiled,
+            .kind = .one_cached,
             .matched = matchedFromValue(value),
         });
     }
@@ -137,18 +137,18 @@ pub fn queryAllRuntimeWithHooks(doc: anytype, selector: []const u8, hooks: anyty
     }
 }
 
-pub fn queryAllCompiledWithHooks(doc: anytype, sel: *const ast.Selector, hooks: anytype) @TypeOf(doc.queryAllCompiled(sel)) {
+pub fn queryAllCachedWithHooks(doc: anytype, sel: *const ast.Selector, hooks: anytype) @TypeOf(doc.queryAllCached(sel)) {
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryStart")) {
-        hooks.onQueryStart(.all_compiled, sel.source.len);
+        hooks.onQueryStart(.all_cached, sel.source.len);
     }
 
     const start = std.time.nanoTimestamp();
-    const iter = doc.queryAllCompiled(sel);
+    const iter = doc.queryAllCached(sel);
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryEnd")) {
         hooks.onQueryEnd(QueryInstrumentationStats{
             .elapsed_ns = elapsedNs(start, std.time.nanoTimestamp()),
             .selector_len = sel.source.len,
-            .kind = .all_compiled,
+            .kind = .all_cached,
             .matched = null,
         });
     }

@@ -23,7 +23,7 @@ Typical HTML parsers optimize for browser-like behavior, strict correctness, or 
 - **Selector flavors:**
   - compile-time selectors: `queryOne`, `queryAll`
   - runtime selectors: `queryOneRuntime`, `queryAllRuntime`
-  - precompiled runtime selectors: `queryOneCompiled`, `queryAllCompiled`
+  - cached runtime selectors: `queryOneCached`, `queryAllCached`
 - **Navigation:** `parentNode`, `firstChild`, `lastChild`, `nextSibling`, `prevSibling`, `children` (element-only).
 - **In-place attributes:** attribute values are materialized/decoded lazily and cached in-place.
 - **Text extraction modes:** `innerText` prefers borrowed/in-place paths; `innerTextOwned` always returns allocated output.
@@ -87,7 +87,7 @@ Parse the selector at runtime (useful for user input):
 const node = (try doc.queryOneRuntime("a[href^=https]")) orelse return;
 ```
 
-### Precompiled runtime selectors
+### Cached runtime selectors
 
 Compile once (runtime), run many queries:
 
@@ -96,7 +96,7 @@ var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
 defer arena.deinit();
 
 const sel = try html.Selector.compileRuntime(arena.allocator(), "a[href^=https]");
-const node = doc.queryOneCompiled(&sel);
+const node = doc.queryOneCached(&sel);
 ```
 
 ### Debug query diagnostics
@@ -194,33 +194,33 @@ Source: `bench/results/latest.json` (`stable` profile).
 
 | Fixture | ours-fastest | ours-strictest | lol-html | lexbor |
 |---|---:|---:|---:|---:|
-| `rust-lang.html` | 2082.45 | 1982.18 | 1496.85 | 340.35 |
-| `wiki-html.html` | 1289.89 | 1120.64 | 1216.45 | 273.68 |
-| `mdn-html.html` | 2676.82 | 2528.35 | 1853.95 | 410.77 |
-| `w3-html52.html` | 973.60 | 884.27 | 747.58 | 199.74 |
-| `hn.html` | 1429.47 | 1280.50 | 864.01 | 225.05 |
+| `rust-lang.html` | 1657.11 | 1880.99 | 1472.30 | 339.06 |
+| `wiki-html.html` | 1269.14 | 1076.93 | 905.54 | 256.92 |
+| `mdn-html.html` | 1966.96 | 1904.34 | 1757.21 | 315.31 |
+| `w3-html52.html` | 902.64 | 825.04 | 735.91 | 182.75 |
+| `hn.html` | 1355.63 | 1252.24 | 858.87 | 220.22 |
 
 #### Query Match Throughput (ours)
 
 | Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
 |---|---:|---:|---:|---:|
-| `attr-heavy-button` | 145652845.18 | 6.87 | 145812129.82 | 6.86 |
-| `attr-heavy-nav` | 143301582.48 | 6.98 | 144100316.88 | 6.94 |
+| `attr-heavy-button` | 140088984.52 | 7.14 | 146858189.33 | 6.81 |
+| `attr-heavy-nav` | 135268575.76 | 7.39 | 143792203.01 | 6.95 |
 
 #### Cached Query Throughput (ours)
 
 | Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
 |---|---:|---:|---:|---:|
-| `attr-heavy-button` | 214695936.88 | 4.66 | 212517267.03 | 4.71 |
-| `attr-heavy-nav` | 211891791.10 | 4.72 | 203910597.44 | 4.90 |
+| `attr-heavy-button` | 210881929.32 | 4.74 | 210389894.55 | 4.75 |
+| `attr-heavy-nav` | 169021702.39 | 5.92 | 197867776.84 | 5.05 |
 
 #### Query Parse Throughput (ours)
 
 | Selector case | Ops/s | ns/op |
 |---|---:|---:|
-| `simple` | 19273218.49 | 51.89 |
-| `complex` | 6549192.38 | 152.69 |
-| `grouped` | 7544814.12 | 132.54 |
+| `simple` | 20005017.26 | 49.99 |
+| `complex` | 6688312.83 | 149.51 |
+| `grouped` | 7306593.87 | 136.86 |
 
 For full per-parser, per-fixture tables and gate output:
 - `bench/results/latest.md`

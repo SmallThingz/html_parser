@@ -31,7 +31,7 @@ Output artifacts:
 
 - Parse throughput is benchmarked against `strlen`, `lexbor`, and parse-only `lol-html`.
 - Query parse/match sections are measured on `htmlparser` only.
-- For repeated runtime selector workloads, prefer `Selector.compileRuntime` + `query*Compiled` APIs.
+- For repeated runtime selector workloads, prefer `Selector.compileRuntime` + `query*Cached` APIs.
 - For malformed pages and fallback strategy guidance, see `docs/malformed-html-guidance.md`.
 
 ## Methodology

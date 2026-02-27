@@ -135,7 +135,7 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, 
     return @intCast(end - start);
 }
 
-pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
+pub fn runQueryCached(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
@@ -158,7 +158,7 @@ pub fn runQueryCompiled(path: []const u8, selector: []const u8, iterations: usiz
     const start = std.time.nanoTimestamp();
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
-        _ = doc.queryOneCompiled(&sel);
+        _ = doc.queryOneCached(&sel);
     }
     const end = std.time.nanoTimestamp();
 
@@ -200,17 +200,17 @@ pub fn main() !void {
         return;
     }
 
-    if (args.len == 5 and std.mem.eql(u8, args[1], "query-compiled")) {
+    if (args.len == 5 and std.mem.eql(u8, args[1], "query-cached")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryCompiled(args[2], args[3], iterations, .fastest);
+        const total_ns = try runQueryCached(args[2], args[3], iterations, .fastest);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
 
-    if (args.len == 6 and std.mem.eql(u8, args[1], "query-compiled")) {
+    if (args.len == 6 and std.mem.eql(u8, args[1], "query-cached")) {
         const mode = try parseMode(args[2]);
         const iterations = try std.fmt.parseInt(usize, args[5], 10);
-        const total_ns = try runQueryCompiled(args[3], args[4], iterations, mode);
+        const total_ns = try runQueryCached(args[3], args[4], iterations, mode);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -225,7 +225,7 @@ pub fn main() !void {
 
     if (args.len != 3) {
         std.debug.print(
-            "usage:\n  {s} <html-file> <iterations>\n  {s} parse <strictest|fastest> <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-match <strictest|fastest> <html-file> <selector> <iterations>\n  {s} query-compiled <html-file> <selector> <iterations>\n  {s} query-compiled <strictest|fastest> <html-file> <selector> <iterations>\n",
+            "usage:\n  {s} <html-file> <iterations>\n  {s} parse <strictest|fastest> <html-file> <iterations>\n  {s} query-parse <selector> <iterations>\n  {s} query-match <html-file> <selector> <iterations>\n  {s} query-match <strictest|fastest> <html-file> <selector> <iterations>\n  {s} query-cached <html-file> <selector> <iterations>\n  {s} query-cached <strictest|fastest> <html-file> <selector> <iterations>\n",
             .{ args[0], args[0], args[0], args[0], args[0], args[0], args[0] },
         );
         std.process.exit(2);

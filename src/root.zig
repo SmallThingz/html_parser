@@ -11,9 +11,9 @@ pub const QueryInstrumentationStats = @import("debug/instrumentation.zig").Query
 pub const QueryInstrumentationKind = @import("debug/instrumentation.zig").QueryInstrumentationKind;
 pub const parseWithHooks = @import("debug/instrumentation.zig").parseWithHooks;
 pub const queryOneRuntimeWithHooks = @import("debug/instrumentation.zig").queryOneRuntimeWithHooks;
-pub const queryOneCompiledWithHooks = @import("debug/instrumentation.zig").queryOneCompiledWithHooks;
+pub const queryOneCachedWithHooks = @import("debug/instrumentation.zig").queryOneCachedWithHooks;
 pub const queryAllRuntimeWithHooks = @import("debug/instrumentation.zig").queryAllRuntimeWithHooks;
-pub const queryAllCompiledWithHooks = @import("debug/instrumentation.zig").queryAllCompiledWithHooks;
+pub const queryAllCachedWithHooks = @import("debug/instrumentation.zig").queryAllCachedWithHooks;
 
 pub fn GetDocument(comptime options: ParseOptions) type {
     return options.GetDocument();
