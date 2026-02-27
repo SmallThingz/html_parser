@@ -47,6 +47,17 @@ Then import in Zig code:
 const html = @import("htmlparser");
 ```
 
+## Documentation
+
+The full manual now lives in one file:
+
+- [`docs/README.md`](docs/README.md)
+- Core API: [`docs/README.md#core-api`](docs/README.md#core-api)
+- Selector grammar: [`docs/README.md#selector-support`](docs/README.md#selector-support)
+- Parse mode guidance: [`docs/README.md#mode-guidance`](docs/README.md#mode-guidance)
+- Performance workflow: [`docs/README.md#performance-and-benchmarks`](docs/README.md#performance-and-benchmarks)
+- Conformance notes: [`docs/README.md#conformance-status`](docs/README.md#conformance-status)
+
 ## Quick Start (Test-Backed)
 
 This snippet matches `examples/basic_parse_query.zig`.
@@ -137,7 +148,7 @@ Two bundles are used by the benchmark harness and conformance runner:
 
 `children()` returns a borrowed `[]const u32` index slice into the document's node array.
 
-See `docs/malformed-html-guidance.md` for a mode matrix and fallback workflow on malformed pages.
+See `docs/README.md#mode-guidance` for the mode matrix and fallback workflow on malformed pages.
 
 ## Selector Support (v1)
 
@@ -151,7 +162,7 @@ Supported (intentionally limited scope):
 - pseudo-classes: `:first-child`, `:last-child`, `:nth-child(An+B)` (includes `odd`/`even`)
 - `:not(...)` (simple selectors only)
 
-See `docs/selectors.md` for the exact grammar and constraints.
+See `docs/README.md#selector-support` for the exact selector grammar and constraints.
 
 ## Design Contract
 
@@ -235,7 +246,7 @@ Runs known-good external selector and parser suites (both `strictest` and `faste
 zig build conformance
 ```
 
-See `docs/conformance.md` for what’s covered and what’s intentionally out of scope.
+See `docs/README.md#conformance-status` for what’s covered and what’s intentionally out of scope.
 
 ## Migration Notes
 
@@ -246,7 +257,7 @@ See `docs/conformance.md` for what’s covered and what’s intentionally out of
 
 ## Documentation
 
-See `docs/README.md`.
+See `docs/README.md` for the full manual.
 
 ## License
 
