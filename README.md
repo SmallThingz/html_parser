@@ -23,10 +23,10 @@ Source: `bench/results/latest.json` (`stable` profile).
 ### Parse Throughput (Average Across Fixtures)
 
 ```text
-ours-fastest   │████████████████████│ 1520.04 MB/s (100.00%)
-ours-strictest │████████████████████│ 1484.65 MB/s (97.67%)
-lol-html       │████████████████░░░░│ 1212.77 MB/s (79.79%)
-lexbor         │████░░░░░░░░░░░░░░░░│ 277.63 MB/s (18.26%)
+ours-fastest   │████████████████████│ 1509.75 MB/s (100.00%)
+ours-strictest │███████████████████░│ 1410.22 MB/s (93.41%)
+lol-html       │███████████████░░░░░│ 1106.67 MB/s (73.30%)
+lexbor         │████░░░░░░░░░░░░░░░░│ 265.35 MB/s (17.58%)
 ```
 
 ### Conformance Snapshot
@@ -42,6 +42,7 @@ Source: `bench/results/external_suite_report.json`
 
 - 🔎 CSS selector queries: comptime, runtime, and cached runtime selectors.
 - 🧭 DOM navigation: parent, siblings, first/last child, and children iteration.
+- 💤 Lazy decode/normalize path: attribute/entity decode and text normalization happen on query-time APIs.
 - 🧪 Debug tooling: selector mismatch diagnostics and instrumentation wrappers.
 - 🧰 Parse profiles: `strictest` and `fastest` option bundles for benchmarks/workloads.
 - 🧵 Mutable-input parser model optimized for throughput.
@@ -84,6 +85,14 @@ zig build docs-check
 zig build examples-check
 zig build ship-check
 ```
+
+## 📎 Examples
+
+- `examples/basic_parse_query.zig`
+- `examples/runtime_selector.zig`
+- `examples/cached_selector.zig`
+- `examples/query_time_decode.zig`
+- `examples/inner_text_options.zig`
 
 ## 📜 License
 

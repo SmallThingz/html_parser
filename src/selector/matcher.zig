@@ -184,9 +184,11 @@ fn firstMatchForGroup(comptime Doc: type, doc: *const Doc, selector: ast.Selecto
             if (inScope(doc, idx, scope_root) and matchGroupFromRight(Doc, doc, selector, group, rightmost, idx, scope_root)) {
                 return idx;
             }
+            // Duplicate ids are common in real HTML. If the accelerated hit does not
+            // satisfy scope/other predicates, fall back to full scan semantics.
+        } else if (used) {
             return null;
         }
-        if (used) return null;
     }
 
     if (EnableQueryAccel and @hasDecl(Doc, "queryAccelLookupTag") and comp.has_tag != 0 and comp.tag_hash != 0) {
@@ -385,29 +387,14 @@ fn matchesAttrSelector(
         .prefix => std.mem.startsWith(u8, raw, value),
         .suffix => std.mem.endsWith(u8, raw, value),
         .contains => std.mem.indexOf(u8, raw, value) != null,
-        .includes => tokenIncludes(raw, value),
+        .includes => tables.tokenIncludesAsciiWhitespace(raw, value),
         .dash_match => std.mem.eql(u8, raw, value) or (raw.len > value.len and std.mem.startsWith(u8, raw, value) and raw[value.len] == '-'),
     };
 }
 
-fn tokenIncludes(value: []const u8, token: []const u8) bool {
-    if (token.len == 0) return false;
-
-    var i: usize = 0;
-    while (i < value.len) {
-        while (i < value.len and value[i] == ' ') : (i += 1) {}
-        if (i >= value.len) return false;
-
-        const start = i;
-        while (i < value.len and value[i] != ' ') : (i += 1) {}
-        if (std.mem.eql(u8, value[start..i], token)) return true;
-    }
-    return false;
-}
-
 fn hasClass(doc: anytype, node: anytype, noalias probe: *AttrProbe, collected: ?*CollectedAttrs, class_name: []const u8) bool {
     const class_attr = attrValueByHashFrom(doc, node, probe, collected, "class", HashClass) orelse return false;
-    return tokenIncludes(class_attr, class_name);
+    return tables.tokenIncludesAsciiWhitespace(class_attr, class_name);
 }
 
 fn hasAllClassesOnePass(selector: ast.Selector, comp: ast.Compound, class_attr: []const u8) bool {
@@ -417,7 +404,7 @@ fn hasAllClassesOnePass(selector: ast.Selector, comp: ast.Compound, class_attr: 
         var i: u32 = 0;
         while (i < class_count) : (i += 1) {
             const cls = selector.classes[comp.class_start + i].slice(selector.source);
-            if (!tokenIncludes(class_attr, cls)) return false;
+            if (!tables.tokenIncludesAsciiWhitespace(class_attr, cls)) return false;
         }
         return true;
     }
@@ -426,10 +413,10 @@ fn hasAllClassesOnePass(selector: ast.Selector, comp: ast.Compound, class_attr: 
     var found_mask: u64 = 0;
     var i: usize = 0;
     while (i < class_attr.len) {
-        while (i < class_attr.len and class_attr[i] == ' ') : (i += 1) {}
+        while (i < class_attr.len and tables.WhitespaceTable[class_attr[i]]) : (i += 1) {}
         if (i >= class_attr.len) break;
         const tok_start = i;
-        while (i < class_attr.len and class_attr[i] != ' ') : (i += 1) {}
+        while (i < class_attr.len and !tables.WhitespaceTable[class_attr[i]]) : (i += 1) {}
         const tok = class_attr[tok_start..i];
 
         var j: u32 = 0;
@@ -446,10 +433,6 @@ fn hasAllClassesOnePass(selector: ast.Selector, comp: ast.Compound, class_attr: 
         }
     }
     return found_mask == target_mask;
-}
-
-fn attrValue(doc: anytype, node: anytype, noalias probe: *AttrProbe, name: []const u8) ?[]const u8 {
-    return attrValueByHash(doc, node, probe, name, hashIgnoreCaseAscii(name));
 }
 
 fn attrValueByHashFrom(

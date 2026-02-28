@@ -86,6 +86,22 @@ pub fn trimAsciiWhitespace(slice: []const u8) []const u8 {
     return slice[start..end];
 }
 
+/// Returns true when `token` appears in `value` as an ASCII-whitespace-separated token.
+pub fn tokenIncludesAsciiWhitespace(value: []const u8, token: []const u8) bool {
+    if (token.len == 0) return false;
+
+    var i: usize = 0;
+    while (i < value.len) {
+        while (i < value.len and WhitespaceTable[value[i]]) : (i += 1) {}
+        if (i >= value.len) return false;
+
+        const start = i;
+        while (i < value.len and !WhitespaceTable[value[i]]) : (i += 1) {}
+        if (std.mem.eql(u8, value[start..i], token)) return true;
+    }
+    return false;
+}
+
 test "lower table" {
     try std.testing.expect(lower('A') == 'a');
     try std.testing.expect(lower('z') == 'z');

@@ -183,6 +183,7 @@ const Parser = struct {
             switch (c) {
                 '#' => {
                     self.i += 1;
+                    if (out.has_id != 0) return error.InvalidSelector;
                     out.has_id = 1;
                     out.id = self.parseIdent() orelse return error.InvalidSelector;
                     consumed = true;
@@ -613,6 +614,7 @@ test "runtime selector parser rejects invalid selectors" {
         "div +",
         "div ~",
         "div,",
+        "#a#b",
         "div:not()",
         "div:not(.a,.b)",
         "div:nth-child()",

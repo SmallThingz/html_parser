@@ -1479,6 +1479,49 @@ test "multiple class predicates in one compound match correctly" {
     try expectDocQueryRuntime(&doc, "div.alpha.beta.delta", &.{});
 }
 
+test "class token matching treats all ascii whitespace as separators" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='t' class='a\tb\nc\rd\x0ce'></div>".*;
+    try doc.parse(&html, .{});
+
+    try std.testing.expect(doc.queryOne("#t.a") != null);
+    try std.testing.expect(doc.queryOne("#t.b") != null);
+    try std.testing.expect(doc.queryOne("#t.c") != null);
+    try std.testing.expect(doc.queryOne("#t.d") != null);
+    try std.testing.expect(doc.queryOne("#t.e") != null);
+    try std.testing.expect((try doc.queryOneRuntime("#t[class~=d]")) != null);
+    try std.testing.expect((try doc.queryOneRuntime("#t[class~=e]")) != null);
+}
+
+test "scoped query falls back from id index when first id hit fails extra predicates" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='outside'><span id='dup' class='x'></span></div><div id='scope'><span id='dup' class='y'></span></div>".*;
+    try doc.parse(&html, .{});
+
+    const scope = doc.queryOne("#scope") orelse return error.TestUnexpectedResult;
+    const found_ct = scope.queryOne("#dup.y") orelse return error.TestUnexpectedResult;
+    const found_rt = (try scope.queryOneRuntime("#dup.y")) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(found_ct.index, found_rt.index);
+    const parent = found_ct.parentNode() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("scope", parent.getAttributeValue("id").?);
+}
+
+test "runtime selector rejects multiple ids in one compound" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+    var html = "<div id='a'></div>".*;
+    try doc.parse(&html, .{});
+
+    try std.testing.expectError(error.InvalidSelector, doc.queryOneRuntime("#a#a"));
+}
+
 test "runtime selector supports nth-child shorthand variants" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);

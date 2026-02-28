@@ -327,8 +327,6 @@ const ExternalSuiteMode = struct {
         whatwg_html_parsing: ExternalSuiteCounts,
         wpt_html_parsing: ExternalSuiteCounts,
     } = null,
-    // Backward-compat with older report schema.
-    parser_suite: ?ExternalSuiteCounts = null,
 };
 
 const ExternalSuiteReport = struct {
@@ -765,7 +763,7 @@ fn writeConformanceRow(
 
 fn parserHtml5libCounts(mode: ExternalSuiteMode) ExternalSuiteCounts {
     if (mode.parser_suites) |s| return s.html5lib_subset;
-    return mode.parser_suite orelse .{ .total = 0, .passed = 0, .failed = 0 };
+    return .{ .total = 0, .passed = 0, .failed = 0 };
 }
 
 fn parserWhatwgCounts(mode: ExternalSuiteMode) ExternalSuiteCounts {
@@ -2055,7 +2053,7 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
         std.debug.print("    nwmatcher: {d}/{d} passed ({d} failed)\n", .{ sel.nw.passed, sel.nw.total, sel.nw.failed });
         std.debug.print("    qwery_contextual: {d}/{d} passed ({d} failed)\n", .{ sel.qw.passed, sel.qw.total, sel.qw.failed });
         std.debug.print("  Parser suites:\n", .{});
-        std.debug.print("    html5lib tree-construction (compat subset): {d}/{d} passed ({d} failed)\n", .{
+        std.debug.print("    html5lib tree-construction subset: {d}/{d} passed ({d} failed)\n", .{
             parser_html5lib.passed,
             parser_html5lib.total,
             parser_html5lib.failed,

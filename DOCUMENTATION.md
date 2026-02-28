@@ -40,7 +40,12 @@ test "basic parse + query" {
 }
 ```
 
-Source example: `examples/basic_parse_query.zig` (verified by `zig build examples-check`)
+Source examples:
+
+- `examples/basic_parse_query.zig`
+- `examples/query_time_decode.zig`
+
+All examples are verified by running `zig build examples-check`
 
 ## Core API
 
@@ -101,6 +106,9 @@ Source example: `examples/basic_parse_query.zig` (verified by `zig build example
   - `drop_whitespace_text_nodes: bool = false`
 - `TextOptions`
   - `normalize_whitespace: bool = true`
+- parse/query work split:
+  - parse keeps raw text and attribute spans in-place
+  - entity decode and whitespace normalization are applied by query-time APIs (`getAttributeValue`, `innerText*`, selector attribute predicates)
 
 ### Instrumentation wrappers
 
@@ -129,6 +137,8 @@ Supported selectors:
   - `:last-child`
   - `:nth-child(An+B)` with `odd/even` and forms like `3n+1`, `+3n-2`, `-n+6`
   - `:not(...)` (simple selector payload)
+- parser guardrails:
+  - multiple `#id` predicates in one compound (for example `#a#b`) are rejected as invalid
 
 Compilation modes:
 
@@ -183,33 +193,33 @@ Source: `bench/results/latest.json` (`stable` profile).
 
 | Fixture | ours-fastest | ours-strictest | lol-html | lexbor |
 |---|---:|---:|---:|---:|
-| `rust-lang.html` | 1898.69 | 1971.75 | 1472.59 | 339.14 |
-| `wiki-html.html` | 1178.56 | 1090.74 | 1206.09 | 242.28 |
-| `mdn-html.html` | 2273.29 | 2271.25 | 1820.45 | 401.31 |
-| `w3-html52.html` | 913.87 | 861.77 | 708.96 | 187.79 |
-| `hn.html` | 1335.77 | 1227.76 | 855.77 | 217.63 |
+| `rust-lang.html` | 1898.85 | 1875.66 | 1491.90 | 341.85 |
+| `wiki-html.html` | 1257.31 | 1115.19 | 1057.86 | 271.88 |
+| `mdn-html.html` | 2186.76 | 2147.45 | 1597.81 | 350.86 |
+| `w3-html52.html` | 956.41 | 770.83 | 651.64 | 169.71 |
+| `hn.html` | 1249.40 | 1141.95 | 734.17 | 192.44 |
 
 #### Query Match Throughput (ours)
 
 | Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
 |---|---:|---:|---:|---:|
-| `attr-heavy-button` | 144294106.02 | 6.93 | 137008635.65 | 7.30 |
-| `attr-heavy-nav` | 143129292.98 | 6.99 | 133851427.59 | 7.47 |
+| `attr-heavy-button` | 133905556.41 | 7.47 | 129572617.68 | 7.72 |
+| `attr-heavy-nav` | 135558480.61 | 7.38 | 121338165.83 | 8.24 |
 
 #### Cached Query Throughput (ours)
 
 | Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
 |---|---:|---:|---:|---:|
-| `attr-heavy-button` | 197320389.12 | 5.07 | 193892765.67 | 5.16 |
-| `attr-heavy-nav` | 195404859.33 | 5.12 | 196108039.84 | 5.10 |
+| `attr-heavy-button` | 198099041.60 | 5.05 | 170508216.79 | 5.86 |
+| `attr-heavy-nav` | 175601875.43 | 5.69 | 180408697.86 | 5.54 |
 
 #### Query Parse Throughput (ours)
 
 | Selector case | Ops/s | ns/op |
 |---|---:|---:|
-| `simple` | 19089659.93 | 52.38 |
-| `complex` | 6562874.48 | 152.37 |
-| `grouped` | 6959767.77 | 143.68 |
+| `simple` | 16092266.62 | 62.14 |
+| `complex` | 6350928.16 | 157.46 |
+| `grouped` | 7465909.58 | 133.94 |
 
 For full per-parser, per-fixture tables and gate output:
 - `bench/results/latest.md`
@@ -232,7 +242,7 @@ Tracked suites:
 
 - selector suites: `nwmatcher`, `qwery_contextual`
 - parser suites:
-  - html5lib tree-construction compatibility subset
+  - html5lib tree-construction subset
   - WHATWG HTML parsing corpus (via WPT `html/syntax/parsing/html5lib_*.html`)
   - WPT HTML parsing corpus (non-`html5lib_*` files under `html/syntax/parsing/`)
 

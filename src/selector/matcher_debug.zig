@@ -142,7 +142,7 @@ fn classifyCompoundFailure(
         var class_i: u32 = 0;
         while (class_i < comp.class_len) : (class_i += 1) {
             const cls = selector.classes[comp.class_start + class_i].slice(selector.source);
-            if (!tokenIncludes(class_attr, cls)) {
+            if (!tables.tokenIncludesAsciiWhitespace(class_attr, cls)) {
                 return .{ .kind = .class, .group_index = g, .compound_index = c, .predicate_index = predicate_index };
             }
             predicate_index += 1;
@@ -194,7 +194,7 @@ fn matchesNotSimple(
         },
         .class => blk: {
             const class_attr = attr_inline.getAttrValue(doc, node, "class") orelse break :blk false;
-            break :blk tokenIncludes(class_attr, item.text.slice(selector_source));
+            break :blk tables.tokenIncludesAsciiWhitespace(class_attr, item.text.slice(selector_source));
         },
         .attr => matchesAttrSelector(doc, node, selector_source, item.attr),
     };
@@ -216,24 +216,9 @@ fn matchesAttrSelector(
         .prefix => std.mem.startsWith(u8, raw, value),
         .suffix => std.mem.endsWith(u8, raw, value),
         .contains => std.mem.indexOf(u8, raw, value) != null,
-        .includes => tokenIncludes(raw, value),
+        .includes => tables.tokenIncludesAsciiWhitespace(raw, value),
         .dash_match => std.mem.eql(u8, raw, value) or (raw.len > value.len and std.mem.startsWith(u8, raw, value) and raw[value.len] == '-'),
     };
-}
-
-fn tokenIncludes(value: []const u8, token: []const u8) bool {
-    if (token.len == 0) return false;
-
-    var i: usize = 0;
-    while (i < value.len) {
-        while (i < value.len and value[i] == ' ') : (i += 1) {}
-        if (i >= value.len) return false;
-
-        const start = i;
-        while (i < value.len and value[i] != ' ') : (i += 1) {}
-        if (std.mem.eql(u8, value[start..i], token)) return true;
-    }
-    return false;
 }
 
 fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
