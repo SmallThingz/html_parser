@@ -1709,6 +1709,96 @@ test "query accel state is invalidated by parse and clear" {
     try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_entries.items.len);
 }
 
+test "runtime attr-heavy selector stress keeps parent indexes cold" {
+    const alloc = std.testing.allocator;
+
+    var builder = std.ArrayList(u8).empty;
+    defer builder.deinit(alloc);
+
+    try builder.appendSlice(alloc, "<html><body><div id='root'>");
+    var i: usize = 0;
+    while (i < 1024) : (i += 1) {
+        if ((i % 4) == 0) {
+            try std.fmt.format(builder.writer(alloc), "<a id='a{d}' href='https://example/{d}' class='nav button'>x</a>", .{ i, i });
+        } else {
+            try std.fmt.format(builder.writer(alloc), "<a id='a{d}' href='/local/{d}' class='nav link'>x</a>", .{ i, i });
+        }
+    }
+    try builder.appendSlice(alloc, "</div></body></html>");
+
+    const html = try builder.toOwnedSlice(alloc);
+    defer alloc.free(html);
+
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+    try doc.parse(html, .{});
+
+    const selector = "a[href^=https][class*=button]:not(.missing)";
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const compiled = try ast.Selector.compileRuntime(arena.allocator(), selector);
+    try std.testing.expect(!compiled.requires_parent);
+
+    var loops: usize = 0;
+    while (loops < 256) : (loops += 1) {
+        const a = try doc.queryOneRuntime(selector);
+        const b = doc.queryOneCached(&compiled);
+        try std.testing.expect((a == null) == (b == null));
+    }
+    try std.testing.expect(!doc.parent_indexes_ready);
+}
+
+test "bench fixture attr-heavy runtime and cached query smoke" {
+    const alloc = std.testing.allocator;
+    const fixture_path = "bench/fixtures/rust-lang.html";
+    const fixture = std.fs.cwd().readFileAlloc(alloc, fixture_path, 64 * 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    defer alloc.free(fixture);
+
+    const selector = "a[href^=https][class*=button]:not(.missing)";
+
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const compiled = try ast.Selector.compileRuntime(arena.allocator(), selector);
+    try std.testing.expect(!compiled.requires_parent);
+
+    {
+        const html = try alloc.dupe(u8, fixture);
+        defer alloc.free(html);
+
+        var doc = Document.init(alloc);
+        defer doc.deinit();
+        try doc.parse(html, .{});
+
+        var loops: usize = 0;
+        while (loops < 32) : (loops += 1) {
+            const a = try doc.queryOneRuntime(selector);
+            const b = doc.queryOneCached(&compiled);
+            try std.testing.expect((a == null) == (b == null));
+        }
+        try std.testing.expect(!doc.parent_indexes_ready);
+    }
+
+    {
+        const html = try alloc.dupe(u8, fixture);
+        defer alloc.free(html);
+
+        var doc = Document.init(alloc);
+        defer doc.deinit();
+        try doc.parse(html, .{ .eager_child_views = false, .drop_whitespace_text_nodes = true });
+
+        var loops: usize = 0;
+        while (loops < 32) : (loops += 1) {
+            const a = try doc.queryOneRuntime(selector);
+            const b = doc.queryOneCached(&compiled);
+            try std.testing.expect((a == null) == (b == null));
+        }
+        try std.testing.expect(!doc.parent_indexes_ready);
+    }
+}
+
 test "queryOneRuntimeDebug reports runtime selector parse errors" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);

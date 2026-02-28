@@ -117,7 +117,9 @@ pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOption
         while (idx <= raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
             const node = &doc.nodes.items[idx];
             if (node.kind != .text) continue;
-            try out.appendSlice(arena_alloc, node.text.slice(doc.source));
+            const seg = node.text.slice(doc.source);
+            try ensureOutExtra(&out, arena_alloc, seg.len);
+            out.appendSliceAssumeCapacity(seg);
         }
     } else {
         var state: WhitespaceNormState = .{};
@@ -218,6 +220,11 @@ const WhitespaceNormState = struct {
 };
 
 fn appendNormalizedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Allocator, seg: []const u8, noalias state: *WhitespaceNormState) !void {
+    try ensureOutExtra(out, alloc, seg.len + 1);
+    appendNormalizedSegmentAssumeCapacity(out, seg, state);
+}
+
+fn appendNormalizedSegmentAssumeCapacity(noalias out: *std.ArrayList(u8), seg: []const u8, noalias state: *WhitespaceNormState) void {
     for (seg) |c| {
         if (tables.WhitespaceTable[c]) {
             state.pending_space = true;
@@ -225,48 +232,59 @@ fn appendNormalizedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Alloc
         }
 
         if (state.pending_space and state.wrote_any) {
-            try out.append(alloc, ' ');
+            out.appendAssumeCapacity(' ');
         }
-        try out.append(alloc, c);
+        out.appendAssumeCapacity(c);
         state.pending_space = false;
         state.wrote_any = true;
     }
 }
 
 fn appendDecodedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Allocator, seg: []const u8) !void {
+    try ensureOutExtra(out, alloc, seg.len);
     var idx: usize = 0;
     while (idx < seg.len) {
         const amp = std.mem.indexOfScalarPos(u8, seg, idx, '&') orelse {
-            try out.appendSlice(alloc, seg[idx..]);
+            out.appendSliceAssumeCapacity(seg[idx..]);
             break;
         };
 
-        if (amp > idx) try out.appendSlice(alloc, seg[idx..amp]);
+        if (amp > idx) out.appendSliceAssumeCapacity(seg[idx..amp]);
         if (entities.decodeEntityPrefix(seg[amp..])) |decoded| {
-            try out.appendSlice(alloc, decoded.bytes[0..decoded.len]);
+            out.appendSliceAssumeCapacity(decoded.bytes[0..decoded.len]);
             idx = amp + decoded.consumed;
         } else {
-            try out.append(alloc, seg[amp]);
+            out.appendAssumeCapacity(seg[amp]);
             idx = amp + 1;
         }
     }
 }
 
 fn appendDecodedNormalizedSegment(noalias out: *std.ArrayList(u8), alloc: std.mem.Allocator, seg: []const u8, noalias state: *WhitespaceNormState) !void {
+    try ensureOutExtra(out, alloc, seg.len + 1);
     var idx: usize = 0;
     while (idx < seg.len) {
         const amp = std.mem.indexOfScalarPos(u8, seg, idx, '&') orelse {
-            try appendNormalizedSegment(out, alloc, seg[idx..], state);
+            appendNormalizedSegmentAssumeCapacity(out, seg[idx..], state);
             break;
         };
 
-        if (amp > idx) try appendNormalizedSegment(out, alloc, seg[idx..amp], state);
+        if (amp > idx) appendNormalizedSegmentAssumeCapacity(out, seg[idx..amp], state);
         if (entities.decodeEntityPrefix(seg[amp..])) |decoded| {
-            try appendNormalizedSegment(out, alloc, decoded.bytes[0..decoded.len], state);
+            appendNormalizedSegmentAssumeCapacity(out, decoded.bytes[0..decoded.len], state);
             idx = amp + decoded.consumed;
         } else {
-            try appendNormalizedSegment(out, alloc, seg[amp .. amp + 1], state);
+            appendNormalizedSegmentAssumeCapacity(out, seg[amp .. amp + 1], state);
             idx = amp + 1;
         }
     }
+}
+
+fn ensureOutExtra(noalias out: *std.ArrayList(u8), alloc: std.mem.Allocator, extra: usize) !void {
+    const need = out.items.len + extra;
+    if (need <= out.capacity) return;
+    var target = out.capacity +| (out.capacity >> 1) + 16;
+    if (target < need) target = need;
+    if (target <= out.capacity) target = out.capacity + 1;
+    try out.ensureTotalCapacity(alloc, target);
 }

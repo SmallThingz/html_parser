@@ -110,7 +110,7 @@ const Parser = struct {
 
             const group_end: u32 = @intCast(self.compounds.items.len);
             if (group_end == group_start) return error.InvalidSelector;
-            try self.groups.append(self.alloc, .{
+            try self.pushGroup(.{
                 .compound_start = group_start,
                 .compound_len = group_end - group_start,
             });
@@ -190,13 +190,13 @@ const Parser = struct {
                 '.' => {
                     self.i += 1;
                     const class_name = self.parseIdent() orelse return error.InvalidSelector;
-                    try self.classes.append(self.alloc, class_name);
+                    try self.pushClass(class_name);
                     consumed = true;
                 },
                 '[' => {
                     self.i += 1;
                     const attr = try self.parseAttrSelector();
-                    try self.attrs.append(self.alloc, attr);
+                    try self.pushAttr(attr);
                     consumed = true;
                 },
                 ':' => {
@@ -215,7 +215,7 @@ const Parser = struct {
         out.pseudo_len = @as(u32, @intCast(self.pseudos.items.len)) - out.pseudo_start;
         out.not_len = @as(u32, @intCast(self.not_items.items.len)) - out.not_start;
 
-        try self.compounds.append(self.alloc, out);
+        try self.pushCompound(out);
     }
 
     fn parseAttrSelector(noalias self: *Parser) Error!ast.AttrSelector {
@@ -271,12 +271,12 @@ const Parser = struct {
         const name_slice = name.slice(self.source);
 
         if (tables.eqlIgnoreCaseAscii(name_slice, "first-child")) {
-            try self.pseudos.append(self.alloc, .{ .kind = .first_child });
+            try self.pushPseudo(.{ .kind = .first_child });
             return;
         }
 
         if (tables.eqlIgnoreCaseAscii(name_slice, "last-child")) {
-            try self.pseudos.append(self.alloc, .{ .kind = .last_child });
+            try self.pushPseudo(.{ .kind = .last_child });
             return;
         }
 
@@ -286,7 +286,7 @@ const Parser = struct {
             self.skipWs();
             const arg = self.parseUntil(')') orelse return error.InvalidSelector;
             const nth = parseNthExpr(tables.trimAsciiWhitespace(arg.slice(self.source))) orelse return error.InvalidSelector;
-            try self.pseudos.append(self.alloc, .{ .kind = .nth_child, .nth = nth });
+            try self.pushPseudo(.{ .kind = .nth_child, .nth = nth });
             return;
         }
 
@@ -297,7 +297,7 @@ const Parser = struct {
             const item = try self.parseSimpleNot();
             self.skipWs();
             if (!self.consumeIf(')')) return error.InvalidSelector;
-            try self.not_items.append(self.alloc, item);
+            try self.pushNotItem(item);
             return;
         }
 
@@ -402,6 +402,45 @@ const Parser = struct {
 
     fn peek(self: *const Parser) u8 {
         return self.source[self.i];
+    }
+
+    fn ensureArrayListExtra(comptime T: type, list: *std.ArrayList(T), alloc: std.mem.Allocator, extra: usize) !void {
+        const need = list.items.len + extra;
+        if (need <= list.capacity) return;
+        var target = list.capacity +| (list.capacity >> 1) + 8;
+        if (target < need) target = need;
+        if (target <= list.capacity) target = list.capacity + 1;
+        try list.ensureTotalCapacity(alloc, target);
+    }
+
+    fn pushGroup(noalias self: *Parser, value: ast.Group) Error!void {
+        try ensureArrayListExtra(ast.Group, &self.groups, self.alloc, 1);
+        self.groups.appendAssumeCapacity(value);
+    }
+
+    fn pushCompound(noalias self: *Parser, value: ast.Compound) Error!void {
+        try ensureArrayListExtra(ast.Compound, &self.compounds, self.alloc, 1);
+        self.compounds.appendAssumeCapacity(value);
+    }
+
+    fn pushClass(noalias self: *Parser, value: ast.Range) Error!void {
+        try ensureArrayListExtra(ast.Range, &self.classes, self.alloc, 1);
+        self.classes.appendAssumeCapacity(value);
+    }
+
+    fn pushAttr(noalias self: *Parser, value: ast.AttrSelector) Error!void {
+        try ensureArrayListExtra(ast.AttrSelector, &self.attrs, self.alloc, 1);
+        self.attrs.appendAssumeCapacity(value);
+    }
+
+    fn pushPseudo(noalias self: *Parser, value: ast.Pseudo) Error!void {
+        try ensureArrayListExtra(ast.Pseudo, &self.pseudos, self.alloc, 1);
+        self.pseudos.appendAssumeCapacity(value);
+    }
+
+    fn pushNotItem(noalias self: *Parser, value: ast.NotSimple) Error!void {
+        try ensureArrayListExtra(ast.NotSimple, &self.not_items, self.alloc, 1);
+        self.not_items.appendAssumeCapacity(value);
     }
 };
 
