@@ -31,9 +31,9 @@ lexbor         │████░░░░░░░░░░░░░░░░�
 
 ### Conformance Snapshot
 
-| Profile | nwmatcher | qwery_contextual | html5lib subset |
-|---|---:|---:|---:|
-| `strictest/fastest` | 20/20 (0 failed) | 54/54 (0 failed) | 539/600 (61 failed) |
+| Profile | nwmatcher | qwery_contextual | html5lib subset | WHATWG HTML parsing | WPT HTML parsing |
+|---|---:|---:|---:|---:|---:|
+| `strictest/fastest` | 20/20 (0 failed) | 54/54 (0 failed) | 539/600 (61 failed) | 432/500 (68 failed) | 432/500 (68 failed) |
 
 Source: `bench/results/external_suite_report.json`
 <!-- README_AUTO_SUMMARY:END -->
