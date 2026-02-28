@@ -193,33 +193,33 @@ Source: `bench/results/latest.json` (`stable` profile).
 
 | Fixture | ours-fastest | ours-strictest | lol-html | lexbor |
 |---|---:|---:|---:|---:|
-| `rust-lang.html` | 1898.85 | 1875.66 | 1491.90 | 341.85 |
-| `wiki-html.html` | 1257.31 | 1115.19 | 1057.86 | 271.88 |
-| `mdn-html.html` | 2186.76 | 2147.45 | 1597.81 | 350.86 |
-| `w3-html52.html` | 956.41 | 770.83 | 651.64 | 169.71 |
-| `hn.html` | 1249.40 | 1141.95 | 734.17 | 192.44 |
+| `rust-lang.html` | 1800.01 | 1953.06 | 1470.28 | 323.18 |
+| `wiki-html.html` | 1254.69 | 1110.65 | 1215.33 | 259.94 |
+| `mdn-html.html` | 2663.97 | 2467.81 | 1860.94 | 409.78 |
+| `w3-html52.html` | 968.55 | 860.05 | 749.44 | 199.21 |
+| `hn.html` | 1415.97 | 1248.66 | 866.48 | 223.72 |
 
 #### Query Match Throughput (ours)
 
 | Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
 |---|---:|---:|---:|---:|
-| `attr-heavy-button` | 133905556.41 | 7.47 | 129572617.68 | 7.72 |
-| `attr-heavy-nav` | 135558480.61 | 7.38 | 121338165.83 | 8.24 |
+| `attr-heavy-button` | 144906115.33 | 6.90 | 143757475.39 | 6.96 |
+| `attr-heavy-nav` | 143424077.75 | 6.97 | 143127039.56 | 6.99 |
 
 #### Cached Query Throughput (ours)
 
 | Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
 |---|---:|---:|---:|---:|
-| `attr-heavy-button` | 198099041.60 | 5.05 | 170508216.79 | 5.86 |
-| `attr-heavy-nav` | 175601875.43 | 5.69 | 180408697.86 | 5.54 |
+| `attr-heavy-button` | 212681789.76 | 4.70 | 203955097.25 | 4.90 |
+| `attr-heavy-nav` | 213652844.04 | 4.68 | 207045338.79 | 4.83 |
 
 #### Query Parse Throughput (ours)
 
 | Selector case | Ops/s | ns/op |
 |---|---:|---:|
-| `simple` | 16092266.62 | 62.14 |
-| `complex` | 6350928.16 | 157.46 |
-| `grouped` | 7465909.58 | 133.94 |
+| `simple` | 19467361.31 | 51.37 |
+| `complex` | 7596231.00 | 131.64 |
+| `grouped` | 9560142.39 | 104.60 |
 
 For full per-parser, per-fixture tables and gate output:
 - `bench/results/latest.md`

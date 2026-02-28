@@ -95,7 +95,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             try self.doc.parse_stack.ensureTotalCapacity(alloc, estimated_stack);
         }
 
-        fn parseTextKeepWhitespace(noalias self: *Self) !void {
+        inline fn parseTextKeepWhitespace(noalias self: *Self) !void {
             const start = self.i;
             self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
@@ -107,7 +107,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             node.subtree_end = node_idx;
         }
 
-        fn parseTextDropWhitespace(noalias self: *Self) !void {
+        inline fn parseTextDropWhitespace(noalias self: *Self) !void {
             const start = self.i;
             self.i = scanner.findByte(self.input, self.i, '<') orelse self.input.len;
             if (self.i == start) return;
@@ -287,7 +287,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             }
         }
 
-        fn applyImplicitClosures(noalias self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue) void {
+        inline fn applyImplicitClosures(noalias self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue) void {
             while (self.doc.parse_stack.items.len > 1) {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
@@ -348,7 +348,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             self.doc.parse_stack.appendAssumeCapacity(idx);
         }
 
-        fn currentParent(noalias self: *Self) u32 {
+        inline fn currentParent(noalias self: *Self) u32 {
             if (self.doc.parse_stack.items.len == 0) return InvalidIndex;
             return self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
         }
@@ -395,7 +395,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             self.i = self.input.len;
         }
 
-        fn skipWs(noalias self: *Self) void {
+        inline fn skipWs(noalias self: *Self) void {
             while (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) : (self.i += 1) {}
         }
 
@@ -445,7 +445,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             return null;
         }
 
-        fn isAllAsciiWhitespace(bytes: []const u8) bool {
+        inline fn isAllAsciiWhitespace(bytes: []const u8) bool {
             for (bytes) |c| {
                 if (!tables.WhitespaceTable[c]) return false;
             }
