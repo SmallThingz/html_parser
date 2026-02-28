@@ -1412,6 +1412,37 @@ test "raw-text unterminated tail keeps element open to end of input" {
     try std.testing.expect((doc.queryOne("div")) == null);
 }
 
+test "svg subtrees are skipped including nested svg nodes" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='before'></div><svg id='s'><g><svg id='inner'><rect id='r'/></svg><circle id='c'/></g></svg><div id='after'></div>".*;
+    try doc.parse(&html, .{});
+
+    try std.testing.expect(doc.queryOne("#before") != null);
+    try std.testing.expect(doc.queryOne("#after") != null);
+    try std.testing.expect(doc.queryOne("svg") == null);
+    try std.testing.expect(doc.queryOne("#s") == null);
+    try std.testing.expect(doc.queryOne("#inner") == null);
+    try std.testing.expect(doc.queryOne("#r") == null);
+    try std.testing.expect(doc.queryOne("#c") == null);
+}
+
+test "svg skip scanner ignores <svg in quoted attributes" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x' data-k=\"prefix <svg attr='x'> suffix\"></div><p id='after'></p>".*;
+    try doc.parse(&html, .{});
+
+    const x = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
+    const v = x.getAttributeValue("data-k") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("prefix <svg attr='x'> suffix", v);
+    try std.testing.expect(doc.queryOne("#after") != null);
+}
+
 test "optional-close p/li/td-th/dt-dd/head-body preserve expected query semantics" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);

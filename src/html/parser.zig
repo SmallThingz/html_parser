@@ -5,6 +5,7 @@ const scanner = @import("scanner.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 const EnableIncrementalTagHash = true;
+const SvgTagHash: tags.TagHashValue = tags.hashBytes("svg");
 
 /// Parses mutable HTML bytes into `doc` using permissive, in-place tree construction.
 pub fn parseInto(comptime Doc: type, noalias doc: *Doc, input: []u8, comptime opts: anytype) !void {
@@ -148,23 +149,16 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             }
 
             const tag_name = self.input[name_start..self.i];
+            const name_end = self.i;
             const tag_name_hash = if (EnableIncrementalTagHash) tag_hash_acc.value() else tags.hashBytes(tag_name);
 
             if (self.doc.parse_stack.items.len > 1 and tags.mayTriggerImplicitCloseHash(tag_name, tag_name_hash)) {
                 self.applyImplicitClosures(tag_name, tag_name_hash);
             }
 
-            const parent_idx = self.currentParent();
-            const node_idx = try self.appendNode(.element, parent_idx);
-            var node = &self.doc.nodes.items[node_idx];
-            node.name = .{ .start = @intCast(name_start), .end = @intCast(self.i) };
-            node.tag_hash = tag_name_hash;
-
-            node.attr_bytes.start = @intCast(self.i);
-            node.attr_bytes.end = @intCast(self.i);
-
             var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
+            const attr_bytes_start: usize = self.i;
 
             if (self.i < self.input.len and self.input[self.i] == '>') {
                 attr_bytes_end = self.i;
@@ -187,10 +181,29 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 attr_bytes_end = self.i;
             }
 
-            node.attr_bytes.end = @intCast(attr_bytes_end);
-
             const self_close = explicit_self_close or
                 (tag_name.len <= 6 and tags.isVoidTagHash(tag_name, tag_name_hash));
+
+            // Skip SVG subtrees entirely to keep parse work focused on primary HTML
+            // content. Nested <svg> blocks are counted; `<svg` in quoted attributes
+            // is ignored by quote-aware tag-end scanning.
+            if (isSvgTag(tag_name, tag_name_hash)) {
+                if (self_close) return;
+                if (self.findSvgClose(self.i)) |close_end| {
+                    self.i = close_end;
+                    return;
+                }
+                self.i = self.input.len;
+                return;
+            }
+
+            const parent_idx = self.currentParent();
+            const node_idx = try self.appendNode(.element, parent_idx);
+            var node = &self.doc.nodes.items[node_idx];
+            node.name = .{ .start = @intCast(name_start), .end = @intCast(name_end) };
+            node.tag_hash = tag_name_hash;
+            node.attr_bytes.start = @intCast(attr_bytes_start);
+            node.attr_bytes.end = @intCast(attr_bytes_end);
 
             if (!self_close and tag_name.len >= 5 and tag_name.len <= 6 and tags.isRawTextTagHash(tag_name, tag_name_hash)) {
                 const content_start = self.i;
@@ -391,6 +404,85 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
         inline fn skipWs(noalias self: *Self) void {
             while (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) : (self.i += 1) {}
+        }
+
+        inline fn isSvgTag(tag_name: []const u8, tag_hash: tags.TagHashValue) bool {
+            return tag_name.len == 3 and tag_hash == SvgTagHash and tables.eqlIgnoreCaseAscii(tag_name, "svg");
+        }
+
+        fn findSvgClose(noalias self: *Self, start: usize) ?usize {
+            var depth: usize = 1;
+            var i = start;
+            while (i < self.input.len) {
+                const lt = scanner.findByte(self.input, i, '<') orelse return null;
+                if (lt + 1 >= self.input.len) return null;
+
+                const next = self.input[lt + 1];
+                if (next == '!') {
+                    if (lt + 3 < self.input.len and self.input[lt + 2] == '-' and self.input[lt + 3] == '-') {
+                        var j = lt + 4;
+                        var found_close = false;
+                        while (j + 2 < self.input.len) {
+                            const dash = scanner.findByte(self.input, j, '-') orelse return null;
+                            if (dash + 2 < self.input.len and self.input[dash + 1] == '-' and self.input[dash + 2] == '>') {
+                                i = dash + 3;
+                                found_close = true;
+                                break;
+                            }
+                            j = dash + 1;
+                        }
+                        if (!found_close) return null;
+                        continue;
+                    }
+                    const gt = scanner.findByte(self.input, lt + 2, '>') orelse return null;
+                    i = gt + 1;
+                    continue;
+                }
+
+                if (next == '?') {
+                    const gt = scanner.findByte(self.input, lt + 2, '>') orelse return null;
+                    i = gt + 1;
+                    continue;
+                }
+
+                if (next == '/') {
+                    var j = lt + 2;
+                    while (j < self.input.len and tables.WhitespaceTable[self.input[j]]) : (j += 1) {}
+                    const name_start = j;
+                    var hash_acc = tags.TagHash.init();
+                    while (j < self.input.len and tables.TagNameCharTable[self.input[j]]) : (j += 1) {
+                        if (EnableIncrementalTagHash) hash_acc.update(self.input[j]);
+                    }
+                    const close_name = self.input[name_start..j];
+                    const close_hash = if (EnableIncrementalTagHash) hash_acc.value() else tags.hashBytes(close_name);
+                    const gt = scanner.findByte(self.input, j, '>') orelse return null;
+                    if (isSvgTag(close_name, close_hash)) {
+                        depth -= 1;
+                        if (depth == 0) return gt + 1;
+                    }
+                    i = gt + 1;
+                    continue;
+                }
+
+                var j = lt + 1;
+                while (j < self.input.len and tables.WhitespaceTable[self.input[j]]) : (j += 1) {}
+                const name_start = j;
+                var hash_acc = tags.TagHash.init();
+                while (j < self.input.len and tables.TagNameCharTable[self.input[j]]) : (j += 1) {
+                    if (EnableIncrementalTagHash) hash_acc.update(self.input[j]);
+                }
+                if (j == name_start) {
+                    i = lt + 1;
+                    continue;
+                }
+
+                const open_name = self.input[name_start..j];
+                const open_hash = if (EnableIncrementalTagHash) hash_acc.value() else tags.hashBytes(open_name);
+                const tag_end = scanner.findTagEndRespectQuotes(self.input, j) orelse return null;
+                if (!tag_end.self_close and isSvgTag(open_name, open_hash)) depth += 1;
+                i = tag_end.gt_index + 1;
+            }
+            return null;
         }
 
         inline fn findRawTextClose(noalias self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_end: usize } {
