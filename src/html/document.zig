@@ -27,10 +27,11 @@ const TagIndexEntry = struct {
 };
 
 /// Stored node kind in the raw DOM backing arrays.
-pub const NodeType = enum(u2) {
+pub const NodeType = enum(u3) {
     document,
     element,
     text,
+    svg,
 };
 
 /// Compile-time parser options and type factory for generated public API types.
@@ -86,6 +87,12 @@ pub const ParseOptions = struct {
             /// Returns text content of this subtree; may borrow or allocate in `arena_alloc`.
             pub fn innerText(self: @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
                 return node_api.innerText(self, arena_alloc, .{});
+            }
+
+            /// Returns full raw SVG source (`<svg...>...</svg>` or `<svg.../>`) for svg nodes.
+            pub fn svgSource(self: @This()) ?[]const u8 {
+                if (self.raw().kind != .svg) return null;
+                return self.raw().text.slice(self.doc.source);
             }
 
             /// Same as `innerText` but with explicit text-normalization options.
@@ -1427,6 +1434,21 @@ test "svg subtrees are skipped including nested svg nodes" {
     try std.testing.expect(doc.queryOne("#inner") == null);
     try std.testing.expect(doc.queryOne("#r") == null);
     try std.testing.expect(doc.queryOne("#c") == null);
+
+    var svg_count: usize = 0;
+    var outer_svg_idx: u32 = InvalidIndex;
+    var i: u32 = 1;
+    while (i < doc.nodes.items.len) : (i += 1) {
+        if (doc.nodes.items[i].kind == .svg) {
+            svg_count += 1;
+            outer_svg_idx = i;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), svg_count);
+
+    const svg_node = doc.nodeAt(outer_svg_idx) orelse return error.TestUnexpectedResult;
+    const svg_src = svg_node.svgSource() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("<svg id='s'><g><svg id='inner'><rect id='r'/></svg><circle id='c'/></g></svg>", svg_src);
 }
 
 test "svg skip scanner ignores <svg in quoted attributes" {
@@ -1441,6 +1463,33 @@ test "svg skip scanner ignores <svg in quoted attributes" {
     const v = x.getAttributeValue("data-k") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("prefix <svg attr='x'> suffix", v);
     try std.testing.expect(doc.queryOne("#after") != null);
+}
+
+test "self-closing svg is stored as svg node with full source span" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='before'></div><svg id='s' viewBox='0 0 1 1' /><div id='after'></div>".*;
+    try doc.parse(&html, .{});
+
+    try std.testing.expect(doc.queryOne("svg") == null);
+    try std.testing.expect(doc.queryOne("#before") != null);
+    try std.testing.expect(doc.queryOne("#after") != null);
+
+    var svg_idx: u32 = InvalidIndex;
+    var i: u32 = 1;
+    while (i < doc.nodes.items.len) : (i += 1) {
+        if (doc.nodes.items[i].kind == .svg) {
+            svg_idx = i;
+            break;
+        }
+    }
+    try std.testing.expect(svg_idx != InvalidIndex);
+
+    const svg_node = doc.nodeAt(svg_idx) orelse return error.TestUnexpectedResult;
+    const svg_src = svg_node.svgSource() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("<svg id='s' viewBox='0 0 1 1' />", svg_src);
 }
 
 test "optional-close p/li/td-th/dt-dd/head-body preserve expected query semantics" {

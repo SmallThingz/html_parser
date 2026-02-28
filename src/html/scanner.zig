@@ -45,7 +45,7 @@ pub fn findTagEndRespectQuotes(hay: []const u8, _start: usize) ?TagEnd {
 /// Returns true when a tag ending at `gt_index` is explicitly self-closing
 /// via `.../>` (allowing whitespace before `>`).
 pub inline fn isExplicitSelfClosingTag(hay: []const u8, start: usize, gt_index: usize) bool {
-    if (gt_index == 0 or gt_index > hay.len) return false;
+    if (gt_index == 0 or gt_index >= hay.len or hay[gt_index] != '>') return false;
     var j = gt_index;
     while (j > start and tables.WhitespaceTable[hay[j - 1]]) : (j -= 1) {}
     return j > start and hay[j - 1] == '/';
@@ -57,41 +57,37 @@ pub inline fn isExplicitSelfClosingTag(hay: []const u8, start: usize, gt_index: 
 pub fn findSvgSubtreeEnd(hay: []const u8, start: usize) ?usize {
     var depth: usize = 1;
     var i = start;
-    scan: while (i < hay.len) {
+    while (i < hay.len) {
         const lt = findByte(hay, i, '<') orelse return null;
         if (lt + 1 >= hay.len) return null;
 
-        var kind_i = lt + 1;
-        kind: switch (hay[kind_i]) {
-            ' ', '\t', '\n', '\r' => {
-                while (kind_i < hay.len and tables.WhitespaceTable[hay[kind_i]]) : (kind_i += 1) {}
-                if (kind_i >= hay.len) return null;
-                continue :kind hay[kind_i];
-            },
+        var k = lt + 1;
+        while (k < hay.len and tables.WhitespaceTable[hay[k]]) : (k += 1) {}
+        if (k >= hay.len) return null;
+
+        switch (hay[k]) {
             '!' => {
-                if (lt + 3 < hay.len and hay[lt + 2] == '-' and hay[lt + 3] == '-') {
-                    var j = lt + 4;
+                if (k + 2 < hay.len and hay[k + 1] == '-' and hay[k + 2] == '-') {
+                    var j = k + 3;
                     while (j + 2 < hay.len) {
                         const dash = findByte(hay, j, '-') orelse return null;
                         if (dash + 2 < hay.len and hay[dash + 1] == '-' and hay[dash + 2] == '>') {
                             i = dash + 3;
-                            continue :scan;
+                            break;
                         }
                         j = dash + 1;
-                    }
-                    return null;
+                    } else return null;
+                } else {
+                    const gt = findByte(hay, k + 1, '>') orelse return null;
+                    i = gt + 1;
                 }
-                const gt = findByte(hay, lt + 2, '>') orelse return null;
-                i = gt + 1;
-                continue :scan;
             },
             '?' => {
-                const gt = findByte(hay, lt + 2, '>') orelse return null;
+                const gt = findByte(hay, k + 1, '>') orelse return null;
                 i = gt + 1;
-                continue :scan;
             },
             '/' => {
-                var j = lt + 2;
+                var j = k + 1;
                 while (j < hay.len and tables.WhitespaceTable[hay[j]]) : (j += 1) {}
                 const name_start = j;
                 while (j < hay.len and tables.TagNameCharTable[hay[j]]) : (j += 1) {}
@@ -101,23 +97,20 @@ pub fn findSvgSubtreeEnd(hay: []const u8, start: usize) ?usize {
                     if (depth == 0) return gt + 1;
                 }
                 i = gt + 1;
-                continue :scan;
             },
             else => {
-                var j = kind_i;
-                while (j < hay.len and tables.WhitespaceTable[hay[j]]) : (j += 1) {}
-                const name_start = j;
+                var j = k;
                 while (j < hay.len and tables.TagNameCharTable[hay[j]]) : (j += 1) {}
-                if (j == name_start) {
+                if (j == k) {
                     i = lt + 1;
-                    continue :scan;
+                    continue;
                 }
 
                 const tag_end = findTagEndRespectQuotes(hay, j) orelse return null;
-                const open_self_close = isExplicitSelfClosingTag(hay, j, tag_end.gt_index);
-                if (isSvgTagName(hay[name_start..j]) and !open_self_close) depth += 1;
+                if (isSvgTagName(hay[k..j]) and !isExplicitSelfClosingTag(hay, j, tag_end.gt_index)) {
+                    depth += 1;
+                }
                 i = tag_end.gt_index + 1;
-                continue :scan;
             },
         }
     }

@@ -133,6 +133,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
         }
 
         fn parseOpeningTag(noalias self: *Self) !void {
+            const tag_lt_index = self.i;
             self.i += 1; // <
             self.skipWs();
 
@@ -185,12 +186,31 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             // content. Nested <svg> blocks are counted; `<svg` in quoted attributes
             // is ignored by quote-aware tag-end scanning.
             if (isSvgTag(tag_name, tag_name_hash)) {
-                if (scanner.isExplicitSelfClosingTag(self.input, attr_bytes_start, tag_gt_index)) return;
-                if (scanner.findSvgSubtreeEnd(self.input, self.i)) |close_end| {
+                const svg_self_close = scanner.isExplicitSelfClosingTag(self.input, attr_bytes_start, tag_gt_index);
+                const parent_idx = self.currentParent();
+                const node_idx = try self.appendNode(.svg, parent_idx);
+                var node = &self.doc.nodes.items[node_idx];
+                node.name = .{ .start = @intCast(name_start), .end = @intCast(name_end) };
+                node.tag_hash = tag_name_hash;
+                node.attr_bytes.start = @intCast(attr_bytes_start);
+                node.attr_bytes.end = @intCast(attr_bytes_end);
+                node.subtree_end = node_idx;
+
+                const svg_end: usize = if (svg_self_close)
+                    self.i
+                else if (scanner.findSvgSubtreeEnd(self.input, self.i)) |close_end| blk: {
                     self.i = close_end;
-                    return;
-                }
-                self.i = self.input.len;
+                    break :blk close_end;
+                } else blk: {
+                    self.i = self.input.len;
+                    break :blk self.input.len;
+                };
+
+                node = &self.doc.nodes.items[node_idx];
+                node.text = .{
+                    .start = @intCast(tag_lt_index),
+                    .end = @intCast(svg_end),
+                };
                 return;
             }
 
@@ -316,7 +336,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
         fn appendNode(noalias self: *Self, kind: anytype, parent_idx: u32) !u32 {
             const idx: u32 = @intCast(self.doc.nodes.items.len);
-            const build_links = parent_idx != InvalidIndex and kind == .element;
+            const build_links = parent_idx != InvalidIndex and (kind == .element or kind == .svg);
 
             const node: @TypeOf(self.doc.nodes.items[0]) = .{
                 .kind = kind,
