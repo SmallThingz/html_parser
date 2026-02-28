@@ -51,7 +51,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 }
 
                 if (self.i + 1 >= self.input.len) {
-                    @branchHint(.unlikely);
+                    @branchHint(.cold);
                     self.i += 1;
                     continue;
                 }
@@ -139,7 +139,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 if (EnableIncrementalTagHash) tag_hash_acc.update(self.input[self.i]);
             }
             if (self.i == name_start) {
-                @branchHint(.unlikely);
+                @branchHint(.cold);
                 // malformed tag, consume one byte and move on
                 self.i = @min(self.i + 1, self.input.len);
                 return;
@@ -176,7 +176,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 attr_bytes_end = tag_end.attr_end;
                 self.i = tag_end.gt_index + 1;
             } else {
-                @branchHint(.unlikely);
+                @branchHint(.cold);
                 attr_bytes_end = self.input.len;
                 self.i = self.input.len;
             }
@@ -205,7 +205,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                     self.i = close.close_end;
                     return;
                 } else {
-                    @branchHint(.unlikely);
+                    @branchHint(.cold);
                     if (self.input.len > content_start) {
                         const text_idx = try self.appendNode(.text, node_idx);
                         var text_node = &self.doc.nodes.items[text_idx];
@@ -244,7 +244,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             if (self.i < self.input.len) self.i += 1;
 
             if (close_name.len == 0) {
-                @branchHint(.unlikely);
+                @branchHint(.cold);
                 return;
             }
 
@@ -360,7 +360,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             var j = self.i;
             while (j + 2 < self.input.len) {
                 const dash = scanner.findByte(self.input, j, '-') orelse {
-                    @branchHint(.unlikely);
+                    @branchHint(.cold);
                     self.i = self.input.len;
                     return;
                 };
@@ -384,7 +384,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             var j = self.i;
             while (j + 1 < self.input.len) {
                 const q = scanner.findByte(self.input, j, '?') orelse {
-                    @branchHint(.unlikely);
+                    @branchHint(.cold);
                     self.i = self.input.len;
                     return;
                 };
