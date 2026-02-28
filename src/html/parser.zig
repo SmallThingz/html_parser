@@ -158,17 +158,21 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             var attr_bytes_end: usize = self.i;
             const attr_bytes_start: usize = self.i;
+            var tag_gt_index: usize = self.i;
 
             if (self.i < self.input.len and self.input[self.i] == '>') {
+                tag_gt_index = self.i;
                 attr_bytes_end = self.i;
                 self.i += 1;
             } else if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
+                tag_gt_index = tag_end.gt_index;
                 attr_bytes_end = tag_end.attr_end;
                 self.i = tag_end.gt_index + 1;
             } else {
                 @branchHint(.cold);
                 attr_bytes_end = self.input.len;
                 self.i = self.input.len;
+                tag_gt_index = self.input.len;
             }
 
             if (self.i == self.input.len and attr_bytes_end < self.i) {
@@ -181,7 +185,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             // content. Nested <svg> blocks are counted; `<svg` in quoted attributes
             // is ignored by quote-aware tag-end scanning.
             if (isSvgTag(tag_name, tag_name_hash)) {
-                if (self_close) return;
+                if (scanner.isExplicitSelfClosingTag(self.input, attr_bytes_start, tag_gt_index)) return;
                 if (scanner.findSvgSubtreeEnd(self.input, self.i)) |close_end| {
                     self.i = close_end;
                     return;

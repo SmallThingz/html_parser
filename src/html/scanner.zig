@@ -42,70 +42,84 @@ pub fn findTagEndRespectQuotes(hay: []const u8, _start: usize) ?TagEnd {
     }
 }
 
+/// Returns true when a tag ending at `gt_index` is explicitly self-closing
+/// via `.../>` (allowing whitespace before `>`).
+pub inline fn isExplicitSelfClosingTag(hay: []const u8, start: usize, gt_index: usize) bool {
+    if (gt_index == 0 or gt_index > hay.len) return false;
+    var j = gt_index;
+    while (j > start and tables.WhitespaceTable[hay[j - 1]]) : (j -= 1) {}
+    return j > start and hay[j - 1] == '/';
+}
+
 /// Scans from `start` (right after an opening `<svg...>` tag) to the matching
 /// closing `</svg>`, counting nested `<svg>` blocks and ignoring `<svg` text
 /// inside quoted attributes.
 pub fn findSvgSubtreeEnd(hay: []const u8, start: usize) ?usize {
     var depth: usize = 1;
     var i = start;
-    while (i < hay.len) {
+    scan: while (i < hay.len) {
         const lt = findByte(hay, i, '<') orelse return null;
         if (lt + 1 >= hay.len) return null;
 
-        const next = hay[lt + 1];
-        if (next == '!') {
-            if (lt + 3 < hay.len and hay[lt + 2] == '-' and hay[lt + 3] == '-') {
-                var j = lt + 4;
-                var found_close = false;
-                while (j + 2 < hay.len) {
-                    const dash = findByte(hay, j, '-') orelse return null;
-                    if (dash + 2 < hay.len and hay[dash + 1] == '-' and hay[dash + 2] == '>') {
-                        i = dash + 3;
-                        found_close = true;
-                        break;
+        var kind_i = lt + 1;
+        kind: switch (hay[kind_i]) {
+            ' ', '\t', '\n', '\r' => {
+                while (kind_i < hay.len and tables.WhitespaceTable[hay[kind_i]]) : (kind_i += 1) {}
+                if (kind_i >= hay.len) return null;
+                continue :kind hay[kind_i];
+            },
+            '!' => {
+                if (lt + 3 < hay.len and hay[lt + 2] == '-' and hay[lt + 3] == '-') {
+                    var j = lt + 4;
+                    while (j + 2 < hay.len) {
+                        const dash = findByte(hay, j, '-') orelse return null;
+                        if (dash + 2 < hay.len and hay[dash + 1] == '-' and hay[dash + 2] == '>') {
+                            i = dash + 3;
+                            continue :scan;
+                        }
+                        j = dash + 1;
                     }
-                    j = dash + 1;
+                    return null;
                 }
-                if (!found_close) return null;
-                continue;
-            }
-            const gt = findByte(hay, lt + 2, '>') orelse return null;
-            i = gt + 1;
-            continue;
-        }
+                const gt = findByte(hay, lt + 2, '>') orelse return null;
+                i = gt + 1;
+                continue :scan;
+            },
+            '?' => {
+                const gt = findByte(hay, lt + 2, '>') orelse return null;
+                i = gt + 1;
+                continue :scan;
+            },
+            '/' => {
+                var j = lt + 2;
+                while (j < hay.len and tables.WhitespaceTable[hay[j]]) : (j += 1) {}
+                const name_start = j;
+                while (j < hay.len and tables.TagNameCharTable[hay[j]]) : (j += 1) {}
+                const gt = findByte(hay, j, '>') orelse return null;
+                if (isSvgTagName(hay[name_start..j])) {
+                    depth -= 1;
+                    if (depth == 0) return gt + 1;
+                }
+                i = gt + 1;
+                continue :scan;
+            },
+            else => {
+                var j = kind_i;
+                while (j < hay.len and tables.WhitespaceTable[hay[j]]) : (j += 1) {}
+                const name_start = j;
+                while (j < hay.len and tables.TagNameCharTable[hay[j]]) : (j += 1) {}
+                if (j == name_start) {
+                    i = lt + 1;
+                    continue :scan;
+                }
 
-        if (next == '?') {
-            const gt = findByte(hay, lt + 2, '>') orelse return null;
-            i = gt + 1;
-            continue;
+                const tag_end = findTagEndRespectQuotes(hay, j) orelse return null;
+                const open_self_close = isExplicitSelfClosingTag(hay, j, tag_end.gt_index);
+                if (isSvgTagName(hay[name_start..j]) and !open_self_close) depth += 1;
+                i = tag_end.gt_index + 1;
+                continue :scan;
+            },
         }
-
-        if (next == '/') {
-            var j = lt + 2;
-            while (j < hay.len and tables.WhitespaceTable[hay[j]]) : (j += 1) {}
-            const name_start = j;
-            while (j < hay.len and tables.TagNameCharTable[hay[j]]) : (j += 1) {}
-            const gt = findByte(hay, j, '>') orelse return null;
-            if (isSvgTagName(hay[name_start..j])) {
-                depth -= 1;
-                if (depth == 0) return gt + 1;
-            }
-            i = gt + 1;
-            continue;
-        }
-
-        var j = lt + 1;
-        while (j < hay.len and tables.WhitespaceTable[hay[j]]) : (j += 1) {}
-        const name_start = j;
-        while (j < hay.len and tables.TagNameCharTable[hay[j]]) : (j += 1) {}
-        if (j == name_start) {
-            i = lt + 1;
-            continue;
-        }
-
-        const tag_end = findTagEndRespectQuotes(hay, j) orelse return null;
-        if (isSvgTagName(hay[name_start..j])) depth += 1;
-        i = tag_end.gt_index + 1;
     }
     return null;
 }
@@ -236,8 +250,29 @@ test "findTagEndRespectQuotes handles quoted >" {
     try std.testing.expectEqual(@as(usize, s.len - 1), out.attr_end);
 }
 
+test "isExplicitSelfClosingTag detects slash before > with optional whitespace" {
+    const a = " x='1' />";
+    const a_gt = findByte(a, 0, '>') orelse return error.TestUnexpectedResult;
+    try std.testing.expect(isExplicitSelfClosingTag(a, 0, a_gt));
+
+    const b = " x='1'/   >";
+    const b_gt = findByte(b, 0, '>') orelse return error.TestUnexpectedResult;
+    try std.testing.expect(isExplicitSelfClosingTag(b, 0, b_gt));
+
+    const c = " x='1' >";
+    const c_gt = findByte(c, 0, '>') orelse return error.TestUnexpectedResult;
+    try std.testing.expect(!isExplicitSelfClosingTag(c, 0, c_gt));
+}
+
 test "findSvgSubtreeEnd handles nested svg and quoted attribute bait" {
     const s = "<svg id='outer'><g data-k=\"x<svg y='z'>q\"><svg id='inner'><rect/></svg></g></svg><p id='after'></p>";
+    const open_gt = findByte(s, 0, '>') orelse return error.TestUnexpectedResult;
+    const out = findSvgSubtreeEnd(s, open_gt + 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("<p id='after'></p>", s[out..]);
+}
+
+test "findSvgSubtreeEnd does not count nested self-closing svg as depth increase" {
+    const s = "<svg id='outer'><svg id='inner' /><g/></svg><p id='after'></p>";
     const open_gt = findByte(s, 0, '>') orelse return error.TestUnexpectedResult;
     const out = findSvgSubtreeEnd(s, open_gt + 1) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("<p id='after'></p>", s[out..]);
