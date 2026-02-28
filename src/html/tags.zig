@@ -1,16 +1,20 @@
 const std = @import("std");
 const tables = @import("tables.zig");
 
+/// Packed tag-hash scalar used for fast tag dispatch.
 pub const TagHashValue = u64;
 const InvalidTagHash: TagHashValue = std.math.maxInt(TagHashValue);
 
+/// Incremental packed hash builder for ASCII tag names.
 pub const TagHash = struct {
     value_: TagHashValue = 0,
 
+    /// Creates a fresh tag hash accumulator.
     pub fn init() TagHash {
         return .{};
     }
 
+    /// Feeds one tag-name byte into hash accumulator.
     pub fn update(noalias self: *TagHash, c: u8) void {
         if (self.value_ == InvalidTagHash) return;
         if ((self.value_ >> (64 - 5)) != 0) {
@@ -29,11 +33,13 @@ pub const TagHash = struct {
         self.value_ = (self.value_ << 5) | code;
     }
 
+    /// Returns current hash value or invalid sentinel when overflowed.
     pub fn value(self: TagHash) TagHashValue {
         return self.value_;
     }
 };
 
+/// Hashes complete tag name using packed incremental hash.
 pub fn hashBytes(name: []const u8) TagHashValue {
     var h = TagHash.init();
     for (name) |c| h.update(c);
@@ -96,18 +102,22 @@ const HASH_SECTION = comptimeHash("section");
 const HASH_TABLE = comptimeHash("table");
 const HASH_UL = comptimeHash("ul");
 
+/// Returns whether tag is HTML void tag.
 pub fn isVoidTag(name: []const u8) bool {
     return isVoidTagHash(name, hashBytes(name));
 }
 
+/// Returns whether tag is HTML raw-text tag (`script`, `style`).
 pub fn isRawTextTag(name: []const u8) bool {
     return isRawTextTagHash(name, hashBytes(name));
 }
 
+/// Returns whether `new_tag` implicitly closes `open_tag`.
 pub fn shouldImplicitlyClose(open_tag: []const u8, new_tag: []const u8) bool {
     return shouldImplicitlyCloseHash(open_tag, hashBytes(open_tag), new_tag, hashBytes(new_tag));
 }
 
+/// Hash-dispatched void-tag check.
 pub fn isVoidTagHash(name: []const u8, name_hash: TagHashValue) bool {
     _ = name;
     switch (name_hash) {
@@ -130,6 +140,7 @@ pub fn isVoidTagHash(name: []const u8, name_hash: TagHashValue) bool {
     }
 }
 
+/// Hash-dispatched raw-text-tag check.
 pub fn isRawTextTagHash(name: []const u8, name_hash: TagHashValue) bool {
     _ = name;
     switch (name_hash) {
@@ -138,6 +149,7 @@ pub fn isRawTextTagHash(name: []const u8, name_hash: TagHashValue) bool {
     }
 }
 
+/// Returns true when `new_hash` can trigger optional-close logic.
 pub fn mayTriggerImplicitCloseHash(new_tag: []const u8, new_hash: TagHashValue) bool {
     _ = new_tag;
     switch (new_hash) {
@@ -179,6 +191,7 @@ pub fn mayTriggerImplicitCloseHash(new_tag: []const u8, new_hash: TagHashValue) 
     }
 }
 
+/// Returns true when `open_hash` is an optional-close source tag.
 pub fn isImplicitCloseSourceHash(open_hash: TagHashValue) bool {
     return switch (open_hash) {
         HASH_LI,
@@ -195,6 +208,7 @@ pub fn isImplicitCloseSourceHash(open_hash: TagHashValue) bool {
     };
 }
 
+/// Hash-aware optional-close predicate with fallback-safe arguments.
 pub fn shouldImplicitlyCloseHash(open_tag: []const u8, open_hash: TagHashValue, new_tag: []const u8, new_hash: TagHashValue) bool {
     if (open_hash != InvalidTagHash and new_hash != InvalidTagHash) {
         switch (open_hash) {

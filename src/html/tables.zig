@@ -1,5 +1,6 @@
 const std = @import("std");
 
+/// Builds a 256-entry boolean lookup table from a predicate.
 pub fn makeClassTable(comptime predicate: fn (u8) bool) [256]bool {
     @setEvalBranchQuota(10_000);
     var table = [_]bool{false} ** 256;
@@ -9,6 +10,7 @@ pub fn makeClassTable(comptime predicate: fn (u8) bool) [256]bool {
     return table;
 }
 
+/// Builds a 256-entry ASCII lowercase conversion table.
 pub fn makeLowerTable() [256]u8 {
     @setEvalBranchQuota(10_000);
     var table: [256]u8 = undefined;
@@ -19,36 +21,48 @@ pub fn makeLowerTable() [256]u8 {
     return table;
 }
 
+/// Returns whether byte is ASCII whitespace relevant to HTML tokenization.
 pub fn isWhitespace(c: u8) bool {
     return c == ' ' or c == '\n' or c == '\r' or c == '\t' or c == '\x0c';
 }
 
+/// Returns whether byte is a valid identifier start.
 pub fn isIdentStart(c: u8) bool {
     return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c == ':';
 }
 
+/// Returns whether byte is a valid identifier continuation.
 pub fn isIdentChar(c: u8) bool {
     return isIdentStart(c) or (c >= '0' and c <= '9') or c == '-' or c == '.';
 }
 
+/// Returns whether byte is valid in tag names.
 pub fn isTagNameChar(c: u8) bool {
     return isIdentChar(c);
 }
 
+/// Precomputed lowercase conversion table.
 pub const LowerTable = makeLowerTable();
+/// Precomputed whitespace classification table.
 pub const WhitespaceTable = makeClassTable(isWhitespace);
+/// Precomputed identifier-start classification table.
 pub const IdentStartTable = makeClassTable(isIdentStart);
+/// Precomputed identifier-char classification table.
 pub const IdentCharTable = makeClassTable(isIdentChar);
+/// Precomputed tag-name-char classification table.
 pub const TagNameCharTable = makeClassTable(isTagNameChar);
 
+/// Lowercases one ASCII byte using `LowerTable`.
 pub inline fn lower(c: u8) u8 {
     return LowerTable[c];
 }
 
+/// Lowercases ASCII bytes in-place.
 pub fn toLowerInPlace(bytes: []u8) void {
     for (bytes) |*c| c.* = lower(c.*);
 }
 
+/// Case-insensitive ASCII equality.
 pub fn eqlIgnoreCaseAscii(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {
@@ -57,11 +71,13 @@ pub fn eqlIgnoreCaseAscii(a: []const u8, b: []const u8) bool {
     return true;
 }
 
+/// Case-insensitive ASCII prefix check.
 pub fn startsWithIgnoreCaseAscii(hay: []const u8, needle: []const u8) bool {
     if (needle.len > hay.len) return false;
     return eqlIgnoreCaseAscii(hay[0..needle.len], needle);
 }
 
+/// Trims ASCII whitespace from both ends of `slice`.
 pub fn trimAsciiWhitespace(slice: []const u8) []const u8 {
     var start: usize = 0;
     var end: usize = slice.len;

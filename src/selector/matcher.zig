@@ -12,6 +12,7 @@ const HashClass: u32 = hashIgnoreCaseAscii("class");
 const EnableQueryAccel = true;
 const EnableMultiAttrCollect = true;
 
+/// Returns first matching node index for `selector` within optional `scope_root`.
 pub fn queryOneIndex(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, scope_root: u32) ?u32 {
     var best: ?u32 = null;
     for (selector.groups) |group| {
@@ -22,6 +23,7 @@ pub fn queryOneIndex(comptime Doc: type, noalias doc: *const Doc, selector: ast.
     return best;
 }
 
+/// Returns whether `node_index` matches any selector group within scope.
 pub fn matchesSelectorAt(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, node_index: u32, scope_root: u32) bool {
     for (selector.groups) |group| {
         if (group.compound_len == 0) continue;

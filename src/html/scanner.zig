@@ -2,16 +2,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const tables = @import("tables.zig");
 
+/// Result of scanning to a tag end while respecting quoted attributes.
 pub const TagEnd = struct {
     gt_index: usize,
     attr_end: usize,
     self_close: bool,
 };
 
+/// Finds `needle` byte in `hay` from `start`, using SIMD where available.
 pub inline fn findByte(hay: []const u8, start: usize, needle: u8) ?usize {
     return findByteDispatch(hay, start, needle);
 }
 
+/// Scans from `start` to next `>` while skipping quoted `>` inside attributes.
 pub fn findTagEndRespectQuotes(hay: []const u8, start: usize) ?TagEnd {
     const first = findAny3Dispatch(hay, start, '>', '"', '\'') orelse return null;
     const first_ch = hay[first];

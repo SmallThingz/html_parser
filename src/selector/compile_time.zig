@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const runtime = @import("runtime.zig");
 
+/// Allocator facade that allows selector compilation during comptime execution.
 pub const ComptimeAllocator = struct {
     pub const interface: std.mem.Allocator = .{
         .ptr = undefined,
@@ -15,6 +16,7 @@ pub const ComptimeAllocator = struct {
 
     const Alignment = std.mem.Alignment;
 
+    /// Comptime-only allocation callback.
     pub fn alloc(_: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
         if (!@inComptime()) return null;
         _ = ret_addr;
@@ -25,21 +27,25 @@ pub const ComptimeAllocator = struct {
         }
     }
 
+    /// Resize is disabled; callers fall back to allocate+copy.
     pub fn resize(_: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool {
         _ = .{ memory, alignment, new_len, ret_addr };
         return false;
     }
 
+    /// Remap is disabled to keep deterministic comptime allocations.
     pub fn remap(_: *anyopaque, memory: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
         _ = .{ memory, alignment, new_len, ret_addr };
         return null;
     }
 
+    /// No-op free for comptime allocator interface.
     pub fn free(_: *anyopaque, memory: []u8, alignment: Alignment, ret_addr: usize) void {
         _ = .{ memory, alignment, ret_addr };
     }
 };
 
+/// Compiles selector source at comptime into a fully materialized AST.
 pub fn compileImpl(comptime source: []const u8) ast.Selector {
     const parsed = runtime.compileRuntimeImpl(ComptimeAllocator.interface, source) catch |err| {
         @compileError("invalid selector: " ++ source ++ " (" ++ @errorName(err) ++ ")");

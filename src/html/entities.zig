@@ -1,22 +1,26 @@
 const std = @import("std");
 const scanner = @import("scanner.zig");
 
+/// Result of decoding one HTML entity prefix.
 pub const Decoded = struct {
     consumed: usize,
     bytes: [4]u8,
     len: usize,
 };
 
+/// Decodes entities in-place over entire slice and returns new length.
 pub fn decodeInPlace(slice: []u8) usize {
     return decodeInPlaceFrom(slice, 0);
 }
 
+/// Fast-path entity decode that skips work when no `&` is present.
 pub fn decodeInPlaceIfEntity(slice: []u8) usize {
     // Fast reject to keep the no-entity path single-pass and branch-light.
     const first = scanner.findByte(slice, 0, '&') orelse return slice.len;
     return decodeInPlaceFrom(slice, first);
 }
 
+/// Decodes a single entity prefix from `rem`, if valid.
 pub fn decodeEntityPrefix(rem: []const u8) ?Decoded {
     return decodeEntity(rem);
 }

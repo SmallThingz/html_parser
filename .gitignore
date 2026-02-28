@@ -2,6 +2,7 @@
 zig-out/
 
 bench/build/
+bench/.cache/
 bench/parsers/
 bench/results/*
 bench/fixtures/*.html

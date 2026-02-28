@@ -231,7 +231,12 @@ Artifact: `bench/results/external_suite_report.json`
 Tracked suites:
 
 - selector suites: `nwmatcher`, `qwery_contextual`
-- parser suite: html5lib tree-construction compatibility subset
+- parser suites:
+  - html5lib tree-construction compatibility subset
+  - WHATWG HTML parsing corpus (via WPT `html/syntax/parsing/html5lib_*.html`)
+  - WPT HTML parsing corpus (non-`html5lib_*` files under `html/syntax/parsing/`)
+
+Fetched suite repos are cached under `bench/.cache/suites/` (gitignored).
 
 ## Architecture
 

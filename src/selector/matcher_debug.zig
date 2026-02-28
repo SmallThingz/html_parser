@@ -8,6 +8,7 @@ const selector_debug = @import("../debug/selector_debug.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
+/// Debug matcher that returns first match and records near-miss diagnostics.
 pub fn explainFirstMatch(
     comptime Doc: type,
     noalias doc: *const Doc,

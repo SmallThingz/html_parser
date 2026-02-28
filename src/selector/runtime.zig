@@ -3,11 +3,13 @@ const ast = @import("ast.zig");
 const tables = @import("../html/tables.zig");
 const tags = @import("../html/tags.zig");
 
+/// Runtime selector parser errors.
 pub const Error = error{
     InvalidSelector,
     OutOfMemory,
 };
 
+/// Parses selector source into runtime-owned AST slices.
 pub fn compileRuntimeImpl(alloc: std.mem.Allocator, source: []const u8) Error!ast.Selector {
     const owned_source = try alloc.dupe(u8, source);
     errdefer alloc.free(owned_source);

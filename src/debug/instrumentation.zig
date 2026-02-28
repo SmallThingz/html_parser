@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../selector/ast.zig");
 const ParseOptions = @import("../html/document.zig").ParseOptions;
 
+/// Query operation kind passed to instrumentation hooks.
 pub const QueryInstrumentationKind = enum(u8) {
     one_runtime,
     one_cached,
@@ -9,12 +10,14 @@ pub const QueryInstrumentationKind = enum(u8) {
     all_cached,
 };
 
+/// Timing/count payload emitted after `parseWithHooks`.
 pub const ParseInstrumentationStats = struct {
     elapsed_ns: u64,
     input_len: usize,
     node_count: usize,
 };
 
+/// Timing payload emitted after query hook wrappers.
 pub const QueryInstrumentationStats = struct {
     elapsed_ns: u64,
     selector_len: usize,
@@ -41,6 +44,7 @@ fn matchedFromValue(value: anytype) ?bool {
     };
 }
 
+/// Parses `input` and invokes optional parse hooks when provided.
 pub fn parseWithHooks(doc: anytype, input: []u8, comptime opts: ParseOptions, hooks: anytype) !void {
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onParseStart")) {
         hooks.onParseStart(input.len);
@@ -59,6 +63,7 @@ pub fn parseWithHooks(doc: anytype, input: []u8, comptime opts: ParseOptions, ho
     }
 }
 
+/// Executes `queryOneRuntime` and emits query timing hooks.
 pub fn queryOneRuntimeWithHooks(doc: anytype, selector: []const u8, hooks: anytype) @TypeOf(doc.queryOneRuntime(selector)) {
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryStart")) {
         hooks.onQueryStart(.one_runtime, selector.len);
@@ -89,6 +94,7 @@ pub fn queryOneRuntimeWithHooks(doc: anytype, selector: []const u8, hooks: anyty
     }
 }
 
+/// Executes `queryOneCached` and emits query timing hooks.
 pub fn queryOneCachedWithHooks(doc: anytype, sel: *const ast.Selector, hooks: anytype) @TypeOf(doc.queryOneCached(sel)) {
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryStart")) {
         hooks.onQueryStart(.one_cached, sel.source.len);
@@ -107,6 +113,7 @@ pub fn queryOneCachedWithHooks(doc: anytype, sel: *const ast.Selector, hooks: an
     return value;
 }
 
+/// Executes `queryAllRuntime` and emits query timing hooks.
 pub fn queryAllRuntimeWithHooks(doc: anytype, selector: []const u8, hooks: anytype) @TypeOf(doc.queryAllRuntime(selector)) {
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryStart")) {
         hooks.onQueryStart(.all_runtime, selector.len);
@@ -137,6 +144,7 @@ pub fn queryAllRuntimeWithHooks(doc: anytype, selector: []const u8, hooks: anyty
     }
 }
 
+/// Executes `queryAllCached` and emits query timing hooks.
 pub fn queryAllCachedWithHooks(doc: anytype, sel: *const ast.Selector, hooks: anytype) @TypeOf(doc.queryAllCached(sel)) {
     if (comptime @hasDecl(HookDeclType(@TypeOf(hooks)), "onQueryStart")) {
         hooks.onQueryStart(.all_cached, sel.source.len);

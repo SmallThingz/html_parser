@@ -31,6 +31,7 @@ const FnvPrime: u32 = 16777619;
 // - `name=...` raw value, lazily materialized on first read
 // - `name\0...` parsed value (with marker layout handled by parseParsedValue)
 // - `name` + delimiter/end -> boolean/name-only attribute
+/// Returns attribute value by name from in-place attribute bytes, decoding lazily.
 pub fn getAttrValue(noalias doc_ptr: anytype, node: anytype, name: []const u8) ?[]const u8 {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
@@ -101,6 +102,7 @@ pub fn getAttrValue(noalias doc_ptr: anytype, node: anytype, name: []const u8) ?
     return null;
 }
 
+/// One-pass multi-attribute collector used by matcher hot paths.
 pub fn collectSelectedValues(noalias doc_ptr: anytype, node: anytype, selected_names: []const []const u8, out_values: []?[]const u8) void {
     const mut_doc = @constCast(doc_ptr);
     const source: []u8 = mut_doc.source;
@@ -182,6 +184,7 @@ pub fn collectSelectedValues(noalias doc_ptr: anytype, node: anytype, selected_n
     }
 }
 
+/// Hash-assisted multi-attribute collector variant for selector matching.
 pub fn collectSelectedValuesByHash(
     noalias doc_ptr: anytype,
     node: anytype,

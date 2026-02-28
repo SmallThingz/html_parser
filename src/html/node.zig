@@ -5,10 +5,12 @@ const attr_inline = @import("attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
+/// Controls text extraction behavior for `innerText*` APIs.
 pub const TextOptions = struct {
     normalize_whitespace: bool = true,
 };
 
+/// Returns first element child of this node.
 pub fn firstChild(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.first_child;
@@ -19,6 +21,7 @@ pub fn firstChild(self: anytype) ?@TypeOf(self) {
     return null;
 }
 
+/// Returns last element child of this node.
 pub fn lastChild(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.last_child;
@@ -29,6 +32,7 @@ pub fn lastChild(self: anytype) ?@TypeOf(self) {
     return null;
 }
 
+/// Returns next element sibling of this node.
 pub fn nextSibling(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.next_sibling;
@@ -39,6 +43,7 @@ pub fn nextSibling(self: anytype) ?@TypeOf(self) {
     return null;
 }
 
+/// Returns previous element sibling of this node.
 pub fn prevSibling(self: anytype) ?@TypeOf(self) {
     const raw = &self.doc.nodes.items[self.index];
     var idx = raw.prev_sibling;
@@ -49,6 +54,7 @@ pub fn prevSibling(self: anytype) ?@TypeOf(self) {
     return null;
 }
 
+/// Returns parent element of this node, if available.
 pub fn parentNode(self: anytype) ?@TypeOf(self) {
     self.doc.ensureParentIndexesBuilt();
     const parent = self.doc.parentIndex(self.index);
@@ -56,6 +62,7 @@ pub fn parentNode(self: anytype) ?@TypeOf(self) {
     return self.doc.nodeAt(parent);
 }
 
+/// Returns borrowed child-index slice for this node.
 pub fn children(self: anytype) []const u32 {
     // Child views are built once and then borrowed on every call.
     self.doc.ensureChildViewsBuilt();
@@ -64,11 +71,13 @@ pub fn children(self: anytype) []const u32 {
     return self.doc.child_indexes.items[start..end];
 }
 
+/// Returns decoded attribute value for `name`, if present.
 pub fn getAttributeValue(self: anytype, name: []const u8) ?[]const u8 {
     const raw = &self.doc.nodes.items[self.index];
     return attr_inline.getAttrValue(self.doc, raw, name);
 }
 
+/// Returns subtree text; may borrow in-place bytes or allocate into `arena_alloc`.
 pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
     const doc = self.doc;
     const raw = &doc.nodes.items[self.index];
@@ -124,6 +133,7 @@ pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOption
     return try out.toOwnedSlice(arena_alloc);
 }
 
+/// Always materializes subtree text into owned bytes allocated from `alloc`.
 pub fn innerTextOwned(self: anytype, alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
     const doc = self.doc;
     const raw = &doc.nodes.items[self.index];

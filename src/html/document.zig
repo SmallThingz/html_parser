@@ -11,6 +11,7 @@ const parser = @import("parser.zig");
 const node_api = @import("node.zig");
 const tags = @import("tags.zig");
 
+/// Sentinel used for missing node indexes and invalid spans.
 pub const InvalidIndex: u32 = std.math.maxInt(u32);
 const QueryAccelMinBudgetBytes: usize = 4096;
 const QueryAccelBudgetDivisor: usize = 20; // 5%
@@ -25,20 +26,24 @@ const TagIndexEntry = struct {
     span: IndexSpan,
 };
 
+/// Stored node kind in the raw DOM backing arrays.
 pub const NodeType = enum(u2) {
     document,
     element,
     text,
 };
 
+/// Compile-time parser options and type factory for generated public API types.
 pub const ParseOptions = struct {
     // Precompute `children()` slices during parse.
     eager_child_views: bool = true,
     // In fastest-mode style runs, whitespace-only text nodes can be dropped.
     drop_whitespace_text_nodes: bool = false,
 
+    /// Returns the raw node storage layout used by `Document.nodes`.
     pub fn GetNodeRaw(_: @This()) type {
         return struct {
+            //! Backing node storage record for parsed DOM state.
             kind: NodeType,
 
             name: Span = .{},
@@ -58,106 +63,131 @@ pub const ParseOptions = struct {
         };
     }
 
+    /// Returns the lightweight node wrapper type bound to this option set.
     pub fn GetNode(options: @This()) type {
         return struct {
+            //! Public node wrapper that carries document pointer + node index.
             const DocType = options.GetDocument();
             const QueryIterType = options.QueryIter();
 
             doc: *DocType,
             index: u32,
 
+            /// Returns the underlying raw node record.
             pub fn raw(self: @This()) *const options.GetNodeRaw() {
                 return &self.doc.nodes.items[self.index];
             }
 
+            /// Returns element tag name bytes from parsed source.
             pub fn tagName(self: @This()) []const u8 {
                 return self.raw().name.slice(self.doc.source);
             }
 
+            /// Returns text content of this subtree; may borrow or allocate in `arena_alloc`.
             pub fn innerText(self: @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
                 return node_api.innerText(self, arena_alloc, .{});
             }
 
+            /// Same as `innerText` but with explicit text-normalization options.
             pub fn innerTextWithOptions(self: @This(), arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
                 return node_api.innerText(self, arena_alloc, opts);
             }
 
+            /// Always materializes subtree text into newly allocated output.
             pub fn innerTextOwned(self: @This(), arena_alloc: std.mem.Allocator) ![]const u8 {
                 return node_api.innerTextOwned(self, arena_alloc, .{});
             }
 
+            /// Owned variant of `innerTextWithOptions`.
             pub fn innerTextOwnedWithOptions(self: @This(), arena_alloc: std.mem.Allocator, opts: TextOptions) ![]const u8 {
                 return node_api.innerTextOwned(self, arena_alloc, opts);
             }
 
+            /// Returns decoded attribute value for `name`, if present.
             pub fn getAttributeValue(self: @This(), name: []const u8) ?[]const u8 {
                 return node_api.getAttributeValue(self, name);
             }
 
+            /// Returns first element child.
             pub fn firstChild(self: @This()) ?@This() {
                 return node_api.firstChild(self);
             }
 
+            /// Returns last element child.
             pub fn lastChild(self: @This()) ?@This() {
                 return node_api.lastChild(self);
             }
 
+            /// Returns next element sibling.
             pub fn nextSibling(self: @This()) ?@This() {
                 return node_api.nextSibling(self);
             }
 
+            /// Returns previous element sibling.
             pub fn prevSibling(self: @This()) ?@This() {
                 return node_api.prevSibling(self);
             }
 
+            /// Returns parent element node.
             pub fn parentNode(self: @This()) ?@This() {
                 return node_api.parentNode(self);
             }
 
+            /// Returns borrowed slice of child node indexes.
             pub fn children(self: @This()) []const u32 {
                 return node_api.children(self);
             }
 
+            /// Compiles selector at comptime and returns first descendant match.
             pub fn queryOne(self: @This(), comptime selector: []const u8) ?@This() {
                 const sel = comptime ast.Selector.compile(selector);
                 return self.queryOneCached(&sel);
             }
 
+            /// Returns first descendant match for already compiled selector.
             pub fn queryOneCached(self: @This(), sel: *const ast.Selector) ?@This() {
                 return self.doc.queryOneCachedFrom(sel.*, self.index);
             }
 
+            /// Debug variant of `queryOne` that fills mismatch diagnostics report.
             pub fn queryOneDebug(self: @This(), comptime selector: []const u8, report: *selector_debug.QueryDebugReport) ?@This() {
                 const sel = comptime ast.Selector.compile(selector);
                 return self.doc.queryOneCachedDebugFrom(sel, self.index, report);
             }
 
+            /// Parses selector at runtime and returns first descendant match.
             pub fn queryOneRuntime(self: @This(), selector: []const u8) runtime_selector.Error!?@This() {
                 return self.doc.queryOneRuntimeFrom(selector, self.index);
             }
 
+            /// Runtime debug query returning first match and mismatch diagnostics.
             pub fn queryOneRuntimeDebug(self: @This(), selector: []const u8, report: *selector_debug.QueryDebugReport) runtime_selector.Error!?@This() {
                 return self.doc.queryOneRuntimeDebugFrom(selector, self.index, report);
             }
 
+            /// Compiles selector at comptime and returns lazy descendant iterator.
             pub fn queryAll(self: @This(), comptime selector: []const u8) QueryIterType {
                 const sel = comptime ast.Selector.compile(selector);
                 return self.queryAllCached(&sel);
             }
 
+            /// Returns lazy descendant iterator for already compiled selector.
             pub fn queryAllCached(self: @This(), sel: *const ast.Selector) QueryIterType {
                 self.doc.ensureQueryPrereqs(sel.*);
                 return .{ .doc = self.doc, .selector = sel.*, .scope_root = self.index, .next_index = self.index + 1 };
             }
 
+            /// Parses selector at runtime and returns lazy descendant iterator.
             pub fn queryAllRuntime(self: @This(), selector: []const u8) runtime_selector.Error!QueryIterType {
                 return self.doc.queryAllRuntimeFrom(selector, self.index);
             }
         };
     }
 
+    /// Returns the lazy query iterator type for this option set.
     pub fn QueryIter(options: @This()) type {
         return struct {
+            //! Lazy selector iterator over document or scoped subtree matches.
             const DocType = options.GetDocument();
             const NodeTypeWrapper = options.GetNode();
 
@@ -167,6 +197,7 @@ pub const ParseOptions = struct {
             next_index: u32 = 1,
             runtime_generation: u64 = 0,
 
+            /// Returns next matching node or `null` when exhausted.
             pub fn next(noalias self: *@This()) ?NodeTypeWrapper {
                 if (self.runtime_generation != 0 and self.runtime_generation != self.doc.query_all_generation) {
                     return null;
@@ -193,8 +224,10 @@ pub const ParseOptions = struct {
         };
     }
 
+    /// Returns the document type (parser + query surface) for this option set.
     pub fn GetDocument(options: @This()) type {
         return struct {
+            //! Parsed document owner and query entrypoint container.
             const DocSelf = @This();
             const RawNodeType = options.GetNodeRaw();
             const NodeTypeWrapper = options.GetNode();
@@ -239,12 +272,14 @@ pub const ParseOptions = struct {
             query_accel_tag_entries: std.ArrayListUnmanaged(TagIndexEntry) = .{},
             query_accel_tag_nodes: std.ArrayListUnmanaged(u32) = .{},
 
+            /// Initializes an empty document using `allocator` for internal storage.
             pub fn init(allocator: std.mem.Allocator) DocSelf {
                 return .{
                     .allocator = allocator,
                 };
             }
 
+            /// Releases all document-owned memory.
             pub fn deinit(noalias self: *DocSelf) void {
                 self.nodes.deinit(self.allocator);
                 self.child_indexes.deinit(self.allocator);
@@ -259,6 +294,7 @@ pub const ParseOptions = struct {
                 if (self.query_all_arena) |*arena| arena.deinit();
             }
 
+            /// Clears parsed state while retaining reusable capacities.
             pub fn clear(noalias self: *DocSelf) void {
                 self.nodes.clearRetainingCapacity();
                 self.child_indexes.clearRetainingCapacity();
@@ -276,6 +312,7 @@ pub const ParseOptions = struct {
                 if (self.query_all_generation == 0) self.query_all_generation = 1;
             }
 
+            /// Parses mutable HTML input in-place with supplied parse options.
             pub fn parse(noalias self: *DocSelf, input: []u8, comptime opts: ParseOptions) !void {
                 self.clear();
                 self.source = input;
@@ -286,24 +323,29 @@ pub const ParseOptions = struct {
                 }
             }
 
+            /// Returns first matching element for comptime selector.
             pub fn queryOne(self: *const DocSelf, comptime selector: []const u8) ?NodeTypeWrapper {
                 const sel = comptime ast.Selector.compile(selector);
                 return self.queryOneCached(&sel);
             }
 
+            /// Returns first matching element for precompiled selector.
             pub fn queryOneCached(self: *const DocSelf, sel: *const ast.Selector) ?NodeTypeWrapper {
                 return self.queryOneCachedFrom(sel.*, InvalidIndex);
             }
 
+            /// Debug variant of `queryOne` that records mismatch details.
             pub fn queryOneDebug(self: *const DocSelf, comptime selector: []const u8, report: *selector_debug.QueryDebugReport) ?NodeTypeWrapper {
                 const sel = comptime ast.Selector.compile(selector);
                 return self.queryOneCachedDebugFrom(sel, InvalidIndex, report);
             }
 
+            /// Parses selector at runtime and returns first match.
             pub fn queryOneRuntime(self: *const DocSelf, selector: []const u8) runtime_selector.Error!?NodeTypeWrapper {
                 return self.queryOneRuntimeFrom(selector, InvalidIndex);
             }
 
+            /// Runtime debug query returning first match and diagnostics report.
             pub fn queryOneRuntimeDebug(self: *const DocSelf, selector: []const u8, report: *selector_debug.QueryDebugReport) runtime_selector.Error!?NodeTypeWrapper {
                 return self.queryOneRuntimeDebugFrom(selector, InvalidIndex, report);
             }
@@ -358,17 +400,20 @@ pub const ParseOptions = struct {
                 return self.nodeAt(idx);
             }
 
+            /// Returns lazy iterator over matches for comptime selector.
             pub fn queryAll(self: *const DocSelf, comptime selector: []const u8) QueryIterType {
                 const sel = comptime ast.Selector.compile(selector);
                 return self.queryAllCached(&sel);
             }
 
+            /// Returns lazy iterator over matches for precompiled selector.
             pub fn queryAllCached(self: *const DocSelf, sel: *const ast.Selector) QueryIterType {
                 const mut_self: *DocSelf = @constCast(self);
                 mut_self.ensureQueryPrereqs(sel.*);
                 return .{ .doc = @constCast(self), .selector = sel.*, .scope_root = InvalidIndex, .next_index = 1 };
             }
 
+            /// Parses selector at runtime and returns lazy iterator.
             pub fn queryAllRuntime(self: *const DocSelf, selector: []const u8) runtime_selector.Error!QueryIterType {
                 return self.queryAllRuntimeFrom(selector, InvalidIndex);
             }
@@ -399,11 +444,13 @@ pub const ParseOptions = struct {
                 if (selector.requires_parent) self.ensureParentIndexesBuilt();
             }
 
+            /// Returns parent index for `idx` when parent table is available.
             pub fn parentIndex(self: *const DocSelf, idx: u32) u32 {
                 if (!self.parent_indexes_ready or idx >= self.parent_indexes.items.len) return InvalidIndex;
                 return self.parent_indexes.items[idx];
             }
 
+            /// Lazily materializes parent indexes used by ancestry navigation.
             pub fn ensureParentIndexesBuilt(noalias self: *DocSelf) void {
                 if (self.parent_indexes_ready) return;
                 self.buildParentIndexes() catch @panic("out of memory building parent indexes");
@@ -427,10 +474,12 @@ pub const ParseOptions = struct {
                 self.parent_indexes_ready = true;
             }
 
+            /// Returns first `<html>` element in the document.
             pub fn html(self: *const DocSelf) ?NodeTypeWrapper {
                 return self.findFirstTag("html");
             }
 
+            /// Returns whether `bytes` points inside the document's source buffer.
             pub fn isOwned(self: *const DocSelf, bytes: []const u8) bool {
                 if (self.source.len == 0 or bytes.len == 0) return false;
                 const src_start = @intFromPtr(self.source.ptr);
@@ -440,14 +489,17 @@ pub const ParseOptions = struct {
                 return bytes_start >= src_start and bytes_end <= src_end;
             }
 
+            /// Returns first `<head>` element in the document.
             pub fn head(self: *const DocSelf) ?NodeTypeWrapper {
                 return self.findFirstTag("head");
             }
 
+            /// Returns first `<body>` element in the document.
             pub fn body(self: *const DocSelf) ?NodeTypeWrapper {
                 return self.findFirstTag("body");
             }
 
+            /// Returns first element whose tag name equals `name` (ASCII-insensitive).
             pub fn findFirstTag(self: *const DocSelf, name: []const u8) ?NodeTypeWrapper {
                 var i: usize = 1;
                 while (i < self.nodes.items.len) : (i += 1) {
@@ -458,6 +510,7 @@ pub const ParseOptions = struct {
                 return null;
             }
 
+            /// Wraps raw node index as public `Node` wrapper when valid.
             pub fn nodeAt(self: *const DocSelf, idx: u32) ?NodeTypeWrapper {
                 if (idx == InvalidIndex or idx >= self.nodes.items.len) return null;
                 return .{
@@ -639,6 +692,7 @@ pub const ParseOptions = struct {
                 return span;
             }
 
+            /// Internal id-index lookup used by matcher acceleration path.
             pub fn queryAccelLookupId(self: *const DocSelf, id: []const u8, used_index: *bool) ?u32 {
                 const mut_self: *DocSelf = @constCast(self);
                 if (!mut_self.ensureIdIndex()) {
@@ -669,6 +723,7 @@ pub const ParseOptions = struct {
                 return null;
             }
 
+            /// Internal tag-index lookup used by matcher acceleration path.
             pub fn queryAccelLookupTag(self: *const DocSelf, tag_hash: tags.TagHashValue, used_index: *bool) ?[]const u32 {
                 const mut_self: *DocSelf = @constCast(self);
                 const span = mut_self.ensureTagIndex(tag_hash) orelse {
@@ -681,6 +736,7 @@ pub const ParseOptions = struct {
                 return mut_self.query_accel_tag_nodes.items[start..end];
             }
 
+            /// Lazily materializes borrowed child index slices for `children()`.
             pub fn ensureChildViewsBuilt(noalias self: *DocSelf) void {
                 if (self.child_views_ready) return;
                 // Allocation failure here indicates an unrecoverable internal state for
@@ -688,10 +744,12 @@ pub const ParseOptions = struct {
                 self.buildChildViews() catch @panic("out of memory building child views");
             }
 
+            /// Returns start offset for node's child view in `child_indexes`.
             pub fn childViewStart(self: *const DocSelf, idx: u32) u32 {
                 return self.child_view_starts.items[idx];
             }
 
+            /// Returns child count for node's child view.
             pub fn childViewLen(self: *const DocSelf, idx: u32) u32 {
                 return self.child_view_lens.items[idx];
             }
@@ -730,20 +788,25 @@ pub const ParseOptions = struct {
     }
 };
 
+/// Re-exported text extraction options used by node text APIs.
 pub const TextOptions = node_api.TextOptions;
 
+/// Inclusive-exclusive byte span into the document source buffer.
 pub const Span = struct {
     start: u32 = 0,
     end: u32 = 0,
 
+    /// Returns the span length in bytes.
     pub fn len(self: @This()) u32 {
         return self.end - self.start;
     }
 
+    /// Borrows immutable bytes referenced by this span.
     pub fn slice(self: @This(), source: []const u8) []const u8 {
         return source[self.start..self.end];
     }
 
+    /// Borrows mutable bytes referenced by this span.
     pub fn sliceMut(self: @This(), source: []u8) []u8 {
         return source[self.start..self.end];
     }
@@ -1718,22 +1781,26 @@ const HookProbe = struct {
         .matched = null,
     },
 
+    /// Test hook callback for parse start.
     pub fn onParseStart(self: *@This(), input_len: usize) void {
         self.parse_start_calls += 1;
         self.last_input_len = input_len;
     }
 
+    /// Test hook callback for parse completion.
     pub fn onParseEnd(self: *@This(), stats: instrumentation.ParseInstrumentationStats) void {
         self.parse_end_calls += 1;
         self.last_parse_stats = stats;
     }
 
+    /// Test hook callback for query start.
     pub fn onQueryStart(self: *@This(), kind: instrumentation.QueryInstrumentationKind, selector_len: usize) void {
         self.query_start_calls += 1;
         self.last_query_kind = kind;
         self.last_selector_len = selector_len;
     }
 
+    /// Test hook callback for query completion.
     pub fn onQueryEnd(self: *@This(), stats: instrumentation.QueryInstrumentationStats) void {
         self.query_end_calls += 1;
         self.last_query_stats = stats;

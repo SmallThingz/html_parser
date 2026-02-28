@@ -8,6 +8,7 @@ const InvalidIndex: u32 = std.math.maxInt(u32);
 const EnableIncrementalTagHash = true;
 const EnableTextNormalizeFastPath = true;
 
+/// Parses mutable HTML bytes into `doc` using permissive, in-place tree construction.
 pub fn parseInto(comptime Doc: type, noalias doc: *Doc, input: []u8, comptime opts: anytype) !void {
     var p = Parser(Doc, opts){
         .doc = doc,
