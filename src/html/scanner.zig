@@ -1,12 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const tables = @import("tables.zig");
 
 /// Result of scanning to a tag end while respecting quoted attributes.
 pub const TagEnd = struct {
     gt_index: usize,
     attr_end: usize,
-    self_close: bool,
 };
 
 /// Finds `needle` byte in `hay` from `start`, using SIMD where available.
@@ -20,7 +18,10 @@ pub fn findTagEndRespectQuotes(hay: []const u8, _start: usize) ?TagEnd {
     var start = _start;
     var end = findAny3Dispatch(hay, start) orelse {@branchHint(.cold); return null;};
     blk: switch (hay[end]) {
-        '>' => return finalizeTagEnd(hay, start, end),
+        '>' => return .{
+            .gt_index = end,
+            .attr_end = end,
+        },
         '\'', '"' => |q| {
             start = 1 + end;
             start = 1 + (findByte(hay, start, q) orelse {@branchHint(.cold); return null;});
@@ -29,45 +30,6 @@ pub fn findTagEndRespectQuotes(hay: []const u8, _start: usize) ?TagEnd {
         },
         else => unreachable,
     }
-}
-
-inline fn finalizeTagEnd(hay: []const u8, start: usize, gt_index: usize) TagEnd {
-    // Trim trailing ASCII whitespace before deciding whether this is
-    // `.../>` or `...>`.
-    if (gt_index > start) {
-        const prev = hay[gt_index - 1];
-        if (prev == '/') {
-            return .{
-                .gt_index = gt_index,
-                .attr_end = gt_index - 1,
-                .self_close = true,
-            };
-        }
-        if (!tables.WhitespaceTable[prev]) {
-            return .{
-                .gt_index = gt_index,
-                .attr_end = gt_index,
-                .self_close = false,
-            };
-        }
-    }
-
-    var j = gt_index;
-    while (j > start and tables.WhitespaceTable[hay[j - 1]]) : (j -= 1) {}
-
-    if (j > start and hay[j - 1] == '/') {
-        return .{
-            .gt_index = gt_index,
-            .attr_end = j - 1,
-            .self_close = true,
-        };
-    }
-
-    return .{
-        .gt_index = gt_index,
-        .attr_end = gt_index,
-        .self_close = false,
-    };
 }
 
 inline fn findAny3Dispatch(hay:[]const u8, start: usize) ?usize {
@@ -183,9 +145,9 @@ test "findByte helper matches scalar behavior" {
     try std.testing.expectEqual(@as(?usize, 3), findByte(s, 0, '<'));
 }
 
-test "findTagEndRespectQuotes handles quoted > and self close" {
+test "findTagEndRespectQuotes handles quoted >" {
     const s = " x='1>2' y=z />";
     const out = findTagEndRespectQuotes(s, 0) orelse return error.TestUnexpectedResult;
-    try std.testing.expect(out.self_close);
     try std.testing.expectEqual(@as(usize, s.len - 1), out.gt_index);
+    try std.testing.expectEqual(@as(usize, s.len - 1), out.attr_end);
 }

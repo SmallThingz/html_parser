@@ -156,19 +156,13 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 self.applyImplicitClosures(tag_name, tag_name_hash);
             }
 
-            var explicit_self_close = false;
             var attr_bytes_end: usize = self.i;
             const attr_bytes_start: usize = self.i;
 
             if (self.i < self.input.len and self.input[self.i] == '>') {
                 attr_bytes_end = self.i;
                 self.i += 1;
-            } else if (self.i + 1 < self.input.len and self.input[self.i] == '/' and self.input[self.i + 1] == '>') {
-                explicit_self_close = true;
-                attr_bytes_end = self.i;
-                self.i += 2;
             } else if (scanner.findTagEndRespectQuotes(self.input, self.i)) |tag_end| {
-                explicit_self_close = tag_end.self_close;
                 attr_bytes_end = tag_end.attr_end;
                 self.i = tag_end.gt_index + 1;
             } else {
@@ -181,8 +175,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 attr_bytes_end = self.i;
             }
 
-            const self_close = explicit_self_close or
-                (tag_name.len <= 6 and tags.isVoidTagHash(tag_name, tag_name_hash));
+            const self_close = tag_name.len <= 6 and tags.isVoidTagHash(tag_name, tag_name_hash);
 
             // Skip SVG subtrees entirely to keep parse work focused on primary HTML
             // content. Nested <svg> blocks are counted; `<svg` in quoted attributes
@@ -479,7 +472,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 const open_name = self.input[name_start..j];
                 const open_hash = if (EnableIncrementalTagHash) hash_acc.value() else tags.hashBytes(open_name);
                 const tag_end = scanner.findTagEndRespectQuotes(self.input, j) orelse return null;
-                if (!tag_end.self_close and isSvgTag(open_name, open_hash)) depth += 1;
+                if (isSvgTag(open_name, open_hash)) depth += 1;
                 i = tag_end.gt_index + 1;
             }
             return null;
