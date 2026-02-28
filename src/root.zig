@@ -9,6 +9,7 @@ pub const NearMiss = @import("debug/selector_debug.zig").NearMiss;
 pub const ParseInstrumentationStats = @import("debug/instrumentation.zig").ParseInstrumentationStats;
 pub const QueryInstrumentationStats = @import("debug/instrumentation.zig").QueryInstrumentationStats;
 pub const QueryInstrumentationKind = @import("debug/instrumentation.zig").QueryInstrumentationKind;
+
 pub const parseWithHooks = @import("debug/instrumentation.zig").parseWithHooks;
 pub const queryOneRuntimeWithHooks = @import("debug/instrumentation.zig").queryOneRuntimeWithHooks;
 pub const queryOneCachedWithHooks = @import("debug/instrumentation.zig").queryOneCachedWithHooks;
@@ -57,9 +58,4 @@ test "smoke parse/query" {
     const parent = span.parentNode() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("div", parent.tagName());
     try std.testing.expect(doc.queryOne("div > span.k") != null);
-}
-
-test {
-    _ = @import("examples_tests.zig");
-    _ = @import("behavioral_tests.zig");
 }

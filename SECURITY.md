@@ -21,7 +21,7 @@ Security-relevant areas include:
 - parser bounds safety,
 - selector parser and matcher memory safety,
 - mutation logic in in-place attribute/entity decode,
-- external tool command invocation paths in `src/tools/scripts.zig`.
+- external tool command invocation paths in `tools/scripts.zig`.
 
 ## Response Goals
 

@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     const bench_exe = b.addExecutable(.{
         .name = "htmlparser-bench",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/bench/bench.zig"),
+            .root_source_file = b.path("tools/bench/bench.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
     const tools_exe = b.addExecutable(.{
         .name = "htmlparser-tools",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tools/scripts.zig"),
+            .root_source_file = b.path("tools/scripts.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -118,9 +118,35 @@ pub fn build(b: *std.Build) void {
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    const examples_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/tests/examples_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "htmlparser", .module = mod },
+            },
+        }),
+    });
+    const run_examples_tests = b.addRunArtifact(examples_tests);
+
+    const behavioral_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/tests/behavioral_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "htmlparser", .module = mod },
+            },
+        }),
+    });
+    const run_behavioral_tests = b.addRunArtifact(behavioral_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_examples_tests.step);
+    test_step.dependOn(&run_behavioral_tests.step);
 
     const ship_check_step = b.step("ship-check", "Run release-readiness checks (test + docs + examples)");
     ship_check_step.dependOn(test_step);

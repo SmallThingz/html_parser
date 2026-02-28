@@ -1,5 +1,5 @@
 const std = @import("std");
-const html = @import("root.zig");
+const html = @import("htmlparser");
 const default_options: html.ParseOptions = .{};
 const Document = default_options.GetDocument();
 

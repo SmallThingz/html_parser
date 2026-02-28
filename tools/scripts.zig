@@ -1432,10 +1432,15 @@ fn ensureSuites(alloc: std.mem.Allocator) !void {
 
 fn buildSuiteRunner(alloc: std.mem.Allocator) !void {
     try common.ensureDir(BIN_DIR);
+    const root_mod = "-Mroot=tools/suite_runner.zig";
+    const html_mod = "-Mhtmlparser=src/root.zig";
     const argv = [_][]const u8{
         "zig",
         "build-exe",
-        "src/suite_runner.zig",
+        "--dep",
+        "htmlparser",
+        root_mod,
+        html_mod,
         "-O",
         "ReleaseFast",
         "-femit-bin=" ++ SUITE_RUNNER_BIN,
