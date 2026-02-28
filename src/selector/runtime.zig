@@ -405,43 +405,30 @@ const Parser = struct {
         return self.source[self.i];
     }
 
-    fn ensureArrayListExtra(comptime T: type, list: *std.ArrayList(T), alloc: std.mem.Allocator, extra: usize) !void {
-        const need = list.items.len + extra;
-        if (need <= list.capacity) return;
-        var target = list.capacity +| (list.capacity >> 1) + 8;
-        if (target < need) target = need;
-        if (target <= list.capacity) target = list.capacity + 1;
-        try list.ensureTotalCapacity(alloc, target);
-    }
+    const appendAlloc = @import("../common.zig").appendAlloc;
 
     fn pushGroup(noalias self: *Parser, value: ast.Group) Error!void {
-        try ensureArrayListExtra(ast.Group, &self.groups, self.alloc, 1);
-        self.groups.appendAssumeCapacity(value);
+        try appendAlloc(ast.Group, &self.groups, self.alloc, value);
     }
 
     fn pushCompound(noalias self: *Parser, value: ast.Compound) Error!void {
-        try ensureArrayListExtra(ast.Compound, &self.compounds, self.alloc, 1);
-        self.compounds.appendAssumeCapacity(value);
+        try appendAlloc(ast.Compound, &self.compounds, self.alloc, value);
     }
 
     fn pushClass(noalias self: *Parser, value: ast.Range) Error!void {
-        try ensureArrayListExtra(ast.Range, &self.classes, self.alloc, 1);
-        self.classes.appendAssumeCapacity(value);
+        try appendAlloc(ast.Range, &self.classes, self.alloc, value);
     }
 
     fn pushAttr(noalias self: *Parser, value: ast.AttrSelector) Error!void {
-        try ensureArrayListExtra(ast.AttrSelector, &self.attrs, self.alloc, 1);
-        self.attrs.appendAssumeCapacity(value);
+        try appendAlloc(ast.AttrSelector, &self.attrs, self.alloc, value);
     }
 
     fn pushPseudo(noalias self: *Parser, value: ast.Pseudo) Error!void {
-        try ensureArrayListExtra(ast.Pseudo, &self.pseudos, self.alloc, 1);
-        self.pseudos.appendAssumeCapacity(value);
+        try appendAlloc(ast.Pseudo, &self.pseudos, self.alloc, value);
     }
 
     fn pushNotItem(noalias self: *Parser, value: ast.NotSimple) Error!void {
-        try ensureArrayListExtra(ast.NotSimple, &self.not_items, self.alloc, 1);
-        self.not_items.appendAssumeCapacity(value);
+        try appendAlloc(ast.NotSimple, &self.not_items, self.alloc, value);
     }
 };
 

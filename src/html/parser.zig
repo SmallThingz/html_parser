@@ -83,12 +83,16 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
         fn reserveCapacities(noalias self: *Self) !void {
             const alloc = self.doc.allocator;
             const input_len = self.input.len;
-            var estimated_nodes = @max(@as(usize, 16), (input_len / 12) + 8);
-            var estimated_stack = @max(@as(usize, 8), (input_len / 256) + 8);
+
+            var estimated_nodes: usize = undefined;
+            var estimated_stack: usize = undefined;
 
             if (opts.drop_whitespace_text_nodes) {
-                estimated_nodes = @max(@as(usize, 32), (input_len / 6) + 32);
-                estimated_stack = @max(@as(usize, 16), (input_len / 192) + 16);
+                estimated_nodes = @max(@as(usize, 32), (input_len / 32) + 32);
+                estimated_stack = @max(@as(usize, 16), (input_len / 512) + 16);
+            } else {
+                estimated_nodes = @max(@as(usize, 16), (input_len / 16) + 8);
+                estimated_stack = @max(@as(usize, 8), (input_len / 256) + 8);
             }
 
             try self.doc.nodes.ensureTotalCapacity(alloc, estimated_nodes);
@@ -327,25 +331,15 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             return idx;
         }
 
+        const appendAlloc = @import("../common.zig").appendAlloc;
         fn pushNode(noalias self: *Self, node: @TypeOf(self.doc.nodes.items[0])) !u32 {
             const len = self.doc.nodes.items.len;
-            if (len == self.doc.nodes.capacity) {
-                var target = len +| (len >> 1) + 16;
-                if (target <= len) target = len + 1;
-                try self.doc.nodes.ensureTotalCapacity(self.doc.allocator, target);
-            }
-            self.doc.nodes.appendAssumeCapacity(node);
+            try appendAlloc(@TypeOf(node), &self.doc.nodes, self.doc.allocator, node);
             return @intCast(len);
         }
 
         fn pushStack(noalias self: *Self, idx: u32) !void {
-            const len = self.doc.parse_stack.items.len;
-            if (len == self.doc.parse_stack.capacity) {
-                var target = len +| (len >> 1) + 16;
-                if (target <= len) target = len + 1;
-                try self.doc.parse_stack.ensureTotalCapacity(self.doc.allocator, target);
-            }
-            self.doc.parse_stack.appendAssumeCapacity(idx);
+            try appendAlloc(u32, &self.doc.parse_stack, self.doc.allocator, idx);
         }
 
         inline fn currentParent(noalias self: *Self) u32 {
