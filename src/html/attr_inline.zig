@@ -315,8 +315,7 @@ fn parseRawValue(source: []u8, span_end: usize, eq_index: usize) RawValue {
     }
 
     if (c == '\'' or c == '"') {
-        const q = c;
-        const j = scanner.findByte(source, i + 1, q) orelse span_end;
+        const j = scanner.findByte(source, i + 1, c) orelse span_end;
         const next_start = if (j < span_end) j + 1 else span_end;
         return .{ .kind = .quoted, .start = i + 1, .end = j, .next_start = next_start };
     }
