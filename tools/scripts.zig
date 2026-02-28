@@ -1480,6 +1480,53 @@ const ParserSuiteSummary = struct {
     examples: []const []const u8,
 };
 
+const SelectorFailure = struct {
+    case_index: usize,
+    selector: []const u8,
+    context: ?[]const u8,
+    expected: usize,
+    actual: ?usize,
+    error_msg: ?[]const u8,
+};
+
+const ParserFailure = struct {
+    case_index: usize,
+    input_preview: []const u8,
+    input_len: usize,
+    expected: []const []const u8,
+    actual: []const []const u8,
+    error_msg: ?[]const u8,
+};
+
+const SelectorSuitesResult = struct {
+    nw: SelectorSuiteSummary,
+    qw: SelectorSuiteSummary,
+    nw_failures: []const SelectorFailure,
+    qw_failures: []const SelectorFailure,
+};
+
+const ParserSuiteResult = struct {
+    summary: ParserSuiteSummary,
+    failures: []const ParserFailure,
+};
+
+const ExternalFailuresOut = struct {
+    modes: []const ModeFailuresOut,
+};
+
+const ModeFailuresOut = struct {
+    mode: []const u8,
+    selector_suites: struct {
+        nwmatcher: []const SelectorFailure,
+        qwery_contextual: []const SelectorFailure,
+    },
+    parser_suites: struct {
+        html5lib_subset: []const ParserFailure,
+        whatwg_html_parsing: []const ParserFailure,
+        wpt_html_parsing: []const ParserFailure,
+    },
+};
+
 fn ensureSuites(alloc: std.mem.Allocator) !void {
     try common.ensureDir(SUITES_CACHE_DIR);
     try common.ensureDir(SUITES_DIR);
@@ -1588,7 +1635,22 @@ fn loadQwCases(alloc: std.mem.Allocator) ![]QwCase {
     return out;
 }
 
-fn runSelectorSuites(alloc: std.mem.Allocator, mode: []const u8) !struct { nw: SelectorSuiteSummary, qw: SelectorSuiteSummary } {
+fn dupeStringSlices(alloc: std.mem.Allocator, src: []const []const u8) ![]const []const u8 {
+    const out = try alloc.alloc([]const u8, src.len);
+    errdefer alloc.free(out);
+    for (src, 0..) |s, idx| {
+        out[idx] = try alloc.dupe(u8, s);
+    }
+    return out;
+}
+
+fn htmlPreview(alloc: std.mem.Allocator, html: []const u8) ![]const u8 {
+    const max_preview: usize = 220;
+    const clipped = html[0..@min(html.len, max_preview)];
+    return std.mem.replaceOwned(u8, alloc, clipped, "\n", "\\n");
+}
+
+fn runSelectorSuites(alloc: std.mem.Allocator, mode: []const u8) !SelectorSuitesResult {
     const nw_cases = try loadNwCases(alloc);
     defer {
         for (nw_cases) |c| alloc.free(c.selector);
@@ -1613,28 +1675,64 @@ fn runSelectorSuites(alloc: std.mem.Allocator, mode: []const u8) !struct { nw: S
     var nw_passed: usize = 0;
     var nw_examples = std.ArrayList([]const u8).empty;
     defer nw_examples.deinit(alloc);
+    var nw_failures = std.ArrayList(SelectorFailure).empty;
+    defer nw_failures.deinit(alloc);
     for (nw_cases, 0..) |c, idx| {
         if (idx >= 140) break;
         const got = runSelectorCount(alloc, mode, nw_fixture, c.selector) catch {
             const msg = try std.fmt.allocPrint(alloc, "{s} expected {d} got <parse-error>", .{ c.selector, c.expected });
             if (nw_examples.items.len < 8) try nw_examples.append(alloc, msg);
+            try nw_failures.append(alloc, .{
+                .case_index = idx,
+                .selector = try alloc.dupe(u8, c.selector),
+                .context = null,
+                .expected = c.expected,
+                .actual = null,
+                .error_msg = "parse-error",
+            });
             continue;
         };
         if (got == c.expected) {
             nw_passed += 1;
-        } else if (nw_examples.items.len < 8) {
-            const msg = try std.fmt.allocPrint(alloc, "{s} expected {d} got {d}", .{ c.selector, c.expected, got });
-            try nw_examples.append(alloc, msg);
+        } else {
+            if (nw_examples.items.len < 8) {
+                const msg = try std.fmt.allocPrint(alloc, "{s} expected {d} got {d}", .{ c.selector, c.expected, got });
+                try nw_examples.append(alloc, msg);
+            }
+            try nw_failures.append(alloc, .{
+                .case_index = idx,
+                .selector = try alloc.dupe(u8, c.selector),
+                .context = null,
+                .expected = c.expected,
+                .actual = got,
+                .error_msg = null,
+            });
         }
     }
 
     var qw_passed: usize = 0;
     var qw_examples = std.ArrayList([]const u8).empty;
     defer qw_examples.deinit(alloc);
-    for (qw_cases) |c| {
+    var qw_failures = std.ArrayList(SelectorFailure).empty;
+    defer qw_failures.deinit(alloc);
+    for (qw_cases, 0..) |c, idx| {
         const got = blk: {
             if (std.mem.eql(u8, c.context, "document")) {
-                break :blk runSelectorCount(alloc, mode, qw_fixture, c.selector) catch |err| return err;
+                break :blk runSelectorCount(alloc, mode, qw_fixture, c.selector) catch {
+                    if (qw_examples.items.len < 8) {
+                        const msg = try std.fmt.allocPrint(alloc, "{s} {s} expected {d} got <parse-error>", .{ c.context, c.selector, c.expected });
+                        try qw_examples.append(alloc, msg);
+                    }
+                    try qw_failures.append(alloc, .{
+                        .case_index = idx,
+                        .selector = try alloc.dupe(u8, c.selector),
+                        .context = try alloc.dupe(u8, c.context),
+                        .expected = c.expected,
+                        .actual = null,
+                        .error_msg = "parse-error",
+                    });
+                    continue;
+                };
             }
             const html = if (std.mem.eql(u8, c.context, "doc")) qw_doc_html else qw_frag_html;
             const tmp = try tempHtmlFile(alloc, html);
@@ -1642,14 +1740,38 @@ fn runSelectorSuites(alloc: std.mem.Allocator, mode: []const u8) !struct { nw: S
                 std.fs.deleteFileAbsolute(tmp) catch {};
                 alloc.free(tmp);
             }
-            break :blk runSelectorCountScoped(alloc, mode, tmp, "root", c.selector) catch |err| return err;
+            break :blk runSelectorCountScoped(alloc, mode, tmp, "root", c.selector) catch {
+                if (qw_examples.items.len < 8) {
+                    const msg = try std.fmt.allocPrint(alloc, "{s} {s} expected {d} got <parse-error>", .{ c.context, c.selector, c.expected });
+                    try qw_examples.append(alloc, msg);
+                }
+                try qw_failures.append(alloc, .{
+                    .case_index = idx,
+                    .selector = try alloc.dupe(u8, c.selector),
+                    .context = try alloc.dupe(u8, c.context),
+                    .expected = c.expected,
+                    .actual = null,
+                    .error_msg = "parse-error",
+                });
+                continue;
+            };
         };
 
         if (got == c.expected) {
             qw_passed += 1;
-        } else if (qw_examples.items.len < 8) {
-            const msg = try std.fmt.allocPrint(alloc, "{s} {s} expected {d} got {d}", .{ c.context, c.selector, c.expected, got });
-            try qw_examples.append(alloc, msg);
+        } else {
+            if (qw_examples.items.len < 8) {
+                const msg = try std.fmt.allocPrint(alloc, "{s} {s} expected {d} got {d}", .{ c.context, c.selector, c.expected, got });
+                try qw_examples.append(alloc, msg);
+            }
+            try qw_failures.append(alloc, .{
+                .case_index = idx,
+                .selector = try alloc.dupe(u8, c.selector),
+                .context = try alloc.dupe(u8, c.context),
+                .expected = c.expected,
+                .actual = got,
+                .error_msg = null,
+            });
         }
     }
 
@@ -1666,6 +1788,8 @@ fn runSelectorSuites(alloc: std.mem.Allocator, mode: []const u8) !struct { nw: S
             .failed = qw_cases.len - qw_passed,
             .examples = try qw_examples.toOwnedSlice(alloc),
         },
+        .nw_failures = try nw_failures.toOwnedSlice(alloc),
+        .qw_failures = try qw_failures.toOwnedSlice(alloc),
     };
 }
 
@@ -1863,11 +1987,13 @@ fn eqlStringSlices(a: []const []const u8, b: []const []const u8) bool {
     return true;
 }
 
-fn runParserCases(alloc: std.mem.Allocator, mode: []const u8, cases: []const ParserCase, max_cases: usize) !ParserSuiteSummary {
+fn runParserCases(alloc: std.mem.Allocator, mode: []const u8, cases: []const ParserCase, max_cases: usize) !ParserSuiteResult {
     const limit = @min(max_cases, cases.len);
     var passed: usize = 0;
     var examples = std.ArrayList([]const u8).empty;
     defer examples.deinit(alloc);
+    var failures = std.ArrayList(ParserFailure).empty;
+    defer failures.deinit(alloc);
     var idx: usize = 0;
     while (idx < limit) : (idx += 1) {
         const c = cases[idx];
@@ -1882,6 +2008,15 @@ fn runParserCases(alloc: std.mem.Allocator, mode: []const u8, cases: []const Par
                 const msg = std.fmt.allocPrint(alloc, "{s} -> <parse-error>", .{src}) catch "parse-error";
                 try examples.append(alloc, msg);
             }
+            const empty: []const []const u8 = &.{};
+            try failures.append(alloc, .{
+                .case_index = idx,
+                .input_preview = try htmlPreview(alloc, c.html),
+                .input_len = c.html.len,
+                .expected = try dupeStringSlices(alloc, c.expected),
+                .actual = empty,
+                .error_msg = "parse-error",
+            });
             continue;
         };
         defer alloc.free(raw);
@@ -1892,24 +2027,37 @@ fn runParserCases(alloc: std.mem.Allocator, mode: []const u8, cases: []const Par
         }
         if (eqlStringSlices(c.expected, got)) {
             passed += 1;
-        } else if (examples.items.len < 10) {
-            var src_short = c.html;
-            if (src_short.len > 100) src_short = src_short[0..100];
-            const src_escaped = try std.mem.replaceOwned(u8, alloc, src_short, "\n", "\\n");
-            const msg = try std.fmt.allocPrint(alloc, "{s}", .{src_escaped});
-            try examples.append(alloc, msg);
+        } else {
+            if (examples.items.len < 10) {
+                var src_short = c.html;
+                if (src_short.len > 100) src_short = src_short[0..100];
+                const src_escaped = try std.mem.replaceOwned(u8, alloc, src_short, "\n", "\\n");
+                const msg = try std.fmt.allocPrint(alloc, "{s}", .{src_escaped});
+                try examples.append(alloc, msg);
+            }
+            try failures.append(alloc, .{
+                .case_index = idx,
+                .input_preview = try htmlPreview(alloc, c.html),
+                .input_len = c.html.len,
+                .expected = try dupeStringSlices(alloc, c.expected),
+                .actual = try dupeStringSlices(alloc, got),
+                .error_msg = null,
+            });
         }
     }
 
     return .{
-        .total = limit,
-        .passed = passed,
-        .failed = limit - passed,
-        .examples = try examples.toOwnedSlice(alloc),
+        .summary = .{
+            .total = limit,
+            .passed = passed,
+            .failed = limit - passed,
+            .examples = try examples.toOwnedSlice(alloc),
+        },
+        .failures = try failures.toOwnedSlice(alloc),
     };
 }
 
-fn runHtml5libParserSuite(alloc: std.mem.Allocator, mode: []const u8, max_cases: usize) !ParserSuiteSummary {
+fn runHtml5libParserSuite(alloc: std.mem.Allocator, mode: []const u8, max_cases: usize) !ParserSuiteResult {
     const tc_dir = SUITES_DIR ++ "/html5lib-tests/tree-construction";
     var dir = try std.fs.cwd().openDir(tc_dir, .{ .iterate = true });
     defer dir.close();
@@ -1946,7 +2094,7 @@ fn runHtml5libParserSuite(alloc: std.mem.Allocator, mode: []const u8, max_cases:
     return runParserCases(alloc, mode, cases.items, max_cases);
 }
 
-fn runWptParserSuite(alloc: std.mem.Allocator, mode: []const u8, max_cases: usize, whatwg_only: bool) !ParserSuiteSummary {
+fn runWptParserSuite(alloc: std.mem.Allocator, mode: []const u8, max_cases: usize, whatwg_only: bool) !ParserSuiteResult {
     const wpt_dir = SUITES_DIR ++ "/wpt/html/syntax/parsing";
     var dir = try std.fs.cwd().openDir(wpt_dir, .{ .iterate = true });
     defer dir.close();
@@ -1992,6 +2140,7 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
     var max_wpt_cases: usize = 500;
     var max_whatwg_cases: usize = 500;
     var json_out: []const u8 = "bench/results/external_suite_report.json";
+    var failures_out: []const u8 = "bench/results/external_suite_failures.json";
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -2016,6 +2165,10 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             json_out = args[i];
+        } else if (std.mem.eql(u8, arg, "--failures-out")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            failures_out = args[i];
         } else return error.InvalidArgument;
     }
 
@@ -2031,6 +2184,11 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
         parser_html5lib: ParserSuiteSummary,
         parser_whatwg: ParserSuiteSummary,
         parser_wpt: ParserSuiteSummary,
+        nw_failures: []const SelectorFailure,
+        qw_failures: []const SelectorFailure,
+        parser_html5lib_failures: []const ParserFailure,
+        parser_whatwg_failures: []const ParserFailure,
+        parser_wpt_failures: []const ParserFailure,
     }).empty;
     defer mode_reports.deinit(alloc);
 
@@ -2043,9 +2201,14 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
             .mode = mode,
             .nw = sel.nw,
             .qw = sel.qw,
-            .parser_html5lib = parser_html5lib,
-            .parser_whatwg = parser_whatwg,
-            .parser_wpt = parser_wpt,
+            .parser_html5lib = parser_html5lib.summary,
+            .parser_whatwg = parser_whatwg.summary,
+            .parser_wpt = parser_wpt.summary,
+            .nw_failures = sel.nw_failures,
+            .qw_failures = sel.qw_failures,
+            .parser_html5lib_failures = parser_html5lib.failures,
+            .parser_whatwg_failures = parser_whatwg.failures,
+            .parser_wpt_failures = parser_wpt.failures,
         });
 
         std.debug.print("Mode: {s}\n", .{mode});
@@ -2054,19 +2217,19 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
         std.debug.print("    qwery_contextual: {d}/{d} passed ({d} failed)\n", .{ sel.qw.passed, sel.qw.total, sel.qw.failed });
         std.debug.print("  Parser suites:\n", .{});
         std.debug.print("    html5lib tree-construction subset: {d}/{d} passed ({d} failed)\n", .{
-            parser_html5lib.passed,
-            parser_html5lib.total,
-            parser_html5lib.failed,
+            parser_html5lib.summary.passed,
+            parser_html5lib.summary.total,
+            parser_html5lib.summary.failed,
         });
         std.debug.print("    WHATWG HTML parsing (WPT html5lib_* corpus): {d}/{d} passed ({d} failed)\n", .{
-            parser_whatwg.passed,
-            parser_whatwg.total,
-            parser_whatwg.failed,
+            parser_whatwg.summary.passed,
+            parser_whatwg.summary.total,
+            parser_whatwg.summary.failed,
         });
         std.debug.print("    WPT HTML parsing (non-html5lib corpus): {d}/{d} passed ({d} failed)\n", .{
-            parser_wpt.passed,
-            parser_wpt.total,
-            parser_wpt.failed,
+            parser_wpt.summary.passed,
+            parser_wpt.summary.total,
+            parser_wpt.summary.failed,
         });
     }
 
@@ -2101,6 +2264,37 @@ fn runExternalSuites(alloc: std.mem.Allocator, args: []const []const u8) !void {
     try jw.writeAll("}}");
     try common.writeFile(json_out, json_buf.items);
     std.debug.print("Wrote report: {s}\n", .{json_out});
+
+    var failure_modes = std.ArrayList(ModeFailuresOut).empty;
+    defer failure_modes.deinit(alloc);
+    for (mode_reports.items) |mr| {
+        try failure_modes.append(alloc, .{
+            .mode = mr.mode,
+            .selector_suites = .{
+                .nwmatcher = mr.nw_failures,
+                .qwery_contextual = mr.qw_failures,
+            },
+            .parser_suites = .{
+                .html5lib_subset = mr.parser_html5lib_failures,
+                .whatwg_html_parsing = mr.parser_whatwg_failures,
+                .wpt_html_parsing = mr.parser_wpt_failures,
+            },
+        });
+    }
+
+    const failure_json_out: ExternalFailuresOut = .{
+        .modes = failure_modes.items,
+    };
+    var failure_json_writer: std.io.Writer.Allocating = .init(alloc);
+    defer failure_json_writer.deinit();
+    var failure_json_stream: std.json.Stringify = .{
+        .writer = &failure_json_writer.writer,
+        .options = .{ .whitespace = .indent_2 },
+    };
+    try failure_json_stream.write(failure_json_out);
+    try common.writeFile(failures_out, failure_json_writer.written());
+    std.debug.print("Wrote failures: {s}\n", .{failures_out});
+
     if (std.mem.eql(u8, json_out, "bench/results/external_suite_report.json")) {
         try updateReadmeAutoSummary(alloc);
     }
@@ -2405,7 +2599,7 @@ fn usage() void {
         \\  htmlparser-tools setup-fixtures [--refresh]
         \\  htmlparser-tools run-benchmarks [--profile quick|stable] [--write-baseline]
         \\  htmlparser-tools sync-docs-bench
-        \\  htmlparser-tools run-external-suites [--mode strictest|fastest|both] [--max-html5lib-cases N] [--max-whatwg-cases N] [--max-wpt-cases N] [--json-out path]
+        \\  htmlparser-tools run-external-suites [--mode strictest|fastest|both] [--max-html5lib-cases N] [--max-whatwg-cases N] [--max-wpt-cases N] [--json-out path] [--failures-out path]
         \\  htmlparser-tools docs-check
         \\  htmlparser-tools examples-check
         \\
