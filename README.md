@@ -23,10 +23,10 @@ Source: `bench/results/latest.json` (`stable` profile).
 ### Parse Throughput (Average Across Fixtures)
 
 ```text
-ours-fastest   │████████████████████│ 1570.96 MB/s (100.00%)
-ours-strictest │███████████████████░│ 1514.59 MB/s (96.41%)
-lol-html       │███████████████░░░░░│ 1213.86 MB/s (77.27%)
-lexbor         │████░░░░░░░░░░░░░░░░│ 284.06 MB/s (18.08%)
+ours-fastest   │████████████████████│ 1520.04 MB/s (100.00%)
+ours-strictest │████████████████████│ 1484.65 MB/s (97.67%)
+lol-html       │████████████████░░░░│ 1212.77 MB/s (79.79%)
+lexbor         │████░░░░░░░░░░░░░░░░│ 277.63 MB/s (18.26%)
 ```
 
 ### Conformance Snapshot

@@ -7,6 +7,7 @@ const attr_inline = @import("../html/attr_inline.zig");
 const InvalidIndex: u32 = std.math.maxInt(u32);
 const MaxProbeEntries: usize = 24;
 const MaxCollectedAttrs: usize = 24;
+const LocalMatchFrameCap: usize = 48;
 const HashId: u32 = hashIgnoreCaseAscii("id");
 const HashClass: u32 = hashIgnoreCaseAscii("class");
 const EnableQueryAccel = true;
@@ -33,43 +34,142 @@ pub fn matchesSelectorAt(comptime Doc: type, noalias doc: *const Doc, selector: 
     return false;
 }
 
+const MatchFramePhase = enum(u8) {
+    enter,
+    scan_descendant,
+    scan_sibling,
+};
+
+const MatchFrame = struct {
+    rel_index: u32,
+    node_index: u32,
+    phase: MatchFramePhase = .enter,
+    cursor: u32 = InvalidIndex,
+};
+
 fn matchGroupFromRight(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, group: ast.Group, rel_index: u32, node_index: u32, scope_root: u32) bool {
-    const comp_abs: usize = @intCast(group.compound_start + rel_index);
-    const comp = selector.compounds[comp_abs];
-
-    if (!matchesCompound(Doc, doc, selector, comp, node_index)) return false;
-    if (rel_index == 0) {
-        if (comp.combinator == .none) return true;
-        return matchesScopeAnchor(doc, comp.combinator, node_index, scope_root);
+    if (group.compound_len == 0) {
+        @branchHint(.cold);
+        return false;
     }
 
-    switch (comp.combinator) {
-        .child => {
-            const p = parentElement(doc, node_index) orelse return false;
-            return matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, p, scope_root);
-        },
-        .descendant => {
-            var p = parentElement(doc, node_index);
-            while (p) |idx| {
-                if (matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, idx, scope_root)) return true;
-                p = parentElement(doc, idx);
-            }
+    const needed_frames: usize = @intCast(group.compound_len);
+    var local_frames: [LocalMatchFrameCap]MatchFrame = undefined;
+    var heap_frames: ?[]MatchFrame = null;
+    defer if (heap_frames) |frames| std.heap.page_allocator.free(frames);
+
+    const frames: []MatchFrame = if (needed_frames <= LocalMatchFrameCap)
+        local_frames[0..needed_frames]
+    else blk: {
+        @branchHint(.cold);
+        const buf = std.heap.page_allocator.alloc(MatchFrame, needed_frames) catch {
+            @branchHint(.cold);
             return false;
-        },
-        .adjacent => {
-            const prev = prevElementSibling(doc, node_index) orelse return false;
-            return matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, prev, scope_root);
-        },
-        .sibling => {
-            var prev = prevElementSibling(doc, node_index);
-            while (prev) |idx| {
-                if (matchGroupFromRight(Doc, doc, selector, group, rel_index - 1, idx, scope_root)) return true;
-                prev = prevElementSibling(doc, idx);
-            }
-            return false;
-        },
-        .none => return false,
+        };
+        heap_frames = buf;
+        break :blk buf;
+    };
+
+    var depth: usize = 1;
+    frames[0] = .{
+        .rel_index = rel_index,
+        .node_index = node_index,
+    };
+
+    while (depth != 0) {
+        var frame = &frames[depth - 1];
+        switch (frame.phase) {
+            .enter => {
+                const comp_abs: usize = @intCast(group.compound_start + frame.rel_index);
+                const comp = selector.compounds[comp_abs];
+                if (!matchesCompound(Doc, doc, selector, comp, frame.node_index)) {
+                    depth -= 1;
+                    continue;
+                }
+
+                if (frame.rel_index == 0) {
+                    if (comp.combinator == .none or matchesScopeAnchor(doc, comp.combinator, frame.node_index, scope_root)) return true;
+                    depth -= 1;
+                    continue;
+                }
+
+                switch (comp.combinator) {
+                    .child => {
+                        const p = parentElement(doc, frame.node_index) orelse {
+                            depth -= 1;
+                            continue;
+                        };
+                        frame.rel_index -= 1;
+                        frame.node_index = p;
+                    },
+                    .adjacent => {
+                        const prev = prevElementSibling(doc, frame.node_index) orelse {
+                            depth -= 1;
+                            continue;
+                        };
+                        frame.rel_index -= 1;
+                        frame.node_index = prev;
+                    },
+                    .descendant => {
+                        const first = parentElement(doc, frame.node_index) orelse {
+                            depth -= 1;
+                            continue;
+                        };
+                        frame.phase = .scan_descendant;
+                        frame.cursor = first;
+                        frames[depth] = .{
+                            .rel_index = frame.rel_index - 1,
+                            .node_index = first,
+                        };
+                        depth += 1;
+                    },
+                    .sibling => {
+                        const first = prevElementSibling(doc, frame.node_index) orelse {
+                            depth -= 1;
+                            continue;
+                        };
+                        frame.phase = .scan_sibling;
+                        frame.cursor = first;
+                        frames[depth] = .{
+                            .rel_index = frame.rel_index - 1,
+                            .node_index = first,
+                        };
+                        depth += 1;
+                    },
+                    .none => {
+                        @branchHint(.cold);
+                        depth -= 1;
+                    },
+                }
+            },
+            .scan_descendant => {
+                const next = parentElement(doc, frame.cursor) orelse {
+                    depth -= 1;
+                    continue;
+                };
+                frame.cursor = next;
+                frames[depth] = .{
+                    .rel_index = frame.rel_index - 1,
+                    .node_index = next,
+                };
+                depth += 1;
+            },
+            .scan_sibling => {
+                const next = prevElementSibling(doc, frame.cursor) orelse {
+                    depth -= 1;
+                    continue;
+                };
+                frame.cursor = next;
+                frames[depth] = .{
+                    .rel_index = frame.rel_index - 1,
+                    .node_index = next,
+                };
+                depth += 1;
+            },
+        }
     }
+
+    return false;
 }
 
 fn firstMatchForGroup(comptime Doc: type, doc: *const Doc, selector: ast.Selector, group: ast.Group, scope_root: u32) ?u32 {
