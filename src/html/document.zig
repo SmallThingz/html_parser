@@ -1162,6 +1162,22 @@ test "parse-time text normalization is off by default and query-time normalizati
     try std.testing.expectEqualStrings("alpha & beta", normalized);
 }
 
+test "parse-time attribute decoding is off by default and query-time lookup decodes" {
+    const alloc = std.testing.allocator;
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var html = "<div id='x' data-v='a&amp;b'></div>".*;
+    try doc.parse(&html, .{});
+
+    const node = doc.findFirstTag("div") orelse return error.TestUnexpectedResult;
+    const span = doc.source[node.raw().attr_bytes.start..node.raw().attr_bytes.end];
+    try std.testing.expect(std.mem.indexOf(u8, span, "&amp;") != null);
+
+    const value = node.getAttributeValue("data-v") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("a&b", value);
+}
+
 test "isOwned distinguishes borrowed single-text and allocated multi-text innerText" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
@@ -1286,12 +1302,16 @@ test "inplace extended skip metadata preserves traversal for following attribute
 
     var builder = std.ArrayList(u8).empty;
     defer builder.deinit(alloc);
-    try builder.appendSlice(alloc, "<div id='x' a='");
+    const prefix = "<div id='x' a='";
+    const entity = "&amp;";
+    const suffix = "' b='ok'></div>";
+    try builder.ensureTotalCapacity(alloc, prefix.len + (320 * entity.len) + suffix.len);
+    builder.appendSliceAssumeCapacity(prefix);
     var i: usize = 0;
     while (i < 320) : (i += 1) {
-        try builder.appendSlice(alloc, "&amp;");
+        builder.appendSliceAssumeCapacity(entity);
     }
-    try builder.appendSlice(alloc, "' b='ok'></div>");
+    builder.appendSliceAssumeCapacity(suffix);
 
     const html = try builder.toOwnedSlice(alloc);
     defer alloc.free(html);
@@ -1714,8 +1734,10 @@ test "runtime attr-heavy selector stress keeps parent indexes cold" {
 
     var builder = std.ArrayList(u8).empty;
     defer builder.deinit(alloc);
-
-    try builder.appendSlice(alloc, "<html><body><div id='root'>");
+    const prefix = "<html><body><div id='root'>";
+    const suffix = "</div></body></html>";
+    try builder.ensureUnusedCapacity(alloc, prefix.len + suffix.len);
+    builder.appendSliceAssumeCapacity(prefix);
     var i: usize = 0;
     while (i < 1024) : (i += 1) {
         if ((i % 4) == 0) {
@@ -1724,7 +1746,8 @@ test "runtime attr-heavy selector stress keeps parent indexes cold" {
             try std.fmt.format(builder.writer(alloc), "<a id='a{d}' href='/local/{d}' class='nav link'>x</a>", .{ i, i });
         }
     }
-    try builder.appendSlice(alloc, "</div></body></html>");
+    try builder.ensureUnusedCapacity(alloc, suffix.len);
+    builder.appendSliceAssumeCapacity(suffix);
 
     const html = try builder.toOwnedSlice(alloc);
     defer alloc.free(html);

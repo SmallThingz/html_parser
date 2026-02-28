@@ -1,12 +1,10 @@
 const std = @import("std");
 const tables = @import("tables.zig");
 const tags = @import("tags.zig");
-const entities = @import("entities.zig");
 const scanner = @import("scanner.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 const EnableIncrementalTagHash = true;
-const EnableTextNormalizeFastPath = true;
 
 /// Parses mutable HTML bytes into `doc` using permissive, in-place tree construction.
 pub fn parseInto(comptime Doc: type, noalias doc: *Doc, input: []u8, comptime opts: anytype) !void {
@@ -445,66 +443,6 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 };
             }
             return null;
-        }
-
-        fn normalizeTextNodeInPlace(input: []u8, text_span: anytype) void {
-            const text_mut = text_span.sliceMut(input);
-            if (EnableTextNormalizeFastPath and !textNeedsNormalization(text_mut)) return;
-            const decoded_len = entities.decodeInPlaceIfEntity(text_mut);
-            text_span.end = text_span.start + @as(u32, @intCast(decoded_len));
-
-            const norm_slice = text_span.sliceMut(input);
-            const new_len = normalizeWhitespaceInPlace(norm_slice);
-            text_span.end = text_span.start + @as(u32, @intCast(new_len));
-        }
-
-        fn normalizeWhitespaceInPlace(bytes: []u8) usize {
-            var r: usize = 0;
-            var w: usize = 0;
-            var pending_space = false;
-            var wrote_any = false;
-
-            while (r < bytes.len) : (r += 1) {
-                const c = bytes[r];
-                if (tables.WhitespaceTable[c]) {
-                    pending_space = true;
-                    continue;
-                }
-
-                if (pending_space and wrote_any) {
-                    bytes[w] = ' ';
-                    w += 1;
-                }
-                bytes[w] = c;
-                w += 1;
-                pending_space = false;
-                wrote_any = true;
-            }
-
-            return w;
-        }
-
-        fn textNeedsNormalization(bytes: []const u8) bool {
-            if (bytes.len == 0) return false;
-
-            var prev_ws = false;
-            var i: usize = 0;
-            while (i < bytes.len) : (i += 1) {
-                const c = bytes[i];
-                if (c == '&') return true;
-
-                const ws = tables.WhitespaceTable[c];
-                if (!ws) {
-                    prev_ws = false;
-                    continue;
-                }
-
-                if (i == 0 or i + 1 == bytes.len) return true;
-                if (c != ' ') return true;
-                if (prev_ws) return true;
-                prev_ws = true;
-            }
-            return false;
         }
 
         fn isAllAsciiWhitespace(bytes: []const u8) bool {
