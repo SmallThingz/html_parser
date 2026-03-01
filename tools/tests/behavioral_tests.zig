@@ -21,46 +21,47 @@ test "document helpers find html/head/body on full documents and return null for
     try std.testing.expect(doc.body() == null);
 }
 
-test "parent navigation materializes parent indexes lazily" {
+test "parent navigation uses in-node parent indexes" {
     var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='root'><span id='child'></span></div>".*;
     try doc.parse(&input, .{});
-    try std.testing.expect(!doc.parent_indexes_ready);
+    const child_before = doc.queryOne("span#child") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 1), child_before.raw().parent);
 
     const child = doc.queryOne("span#child") orelse return error.TestUnexpectedResult;
     const parent = child.parentNode() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("root", parent.getAttributeValue("id").?);
-    try std.testing.expect(doc.parent_indexes_ready);
+    try std.testing.expectEqual(@as(u32, 1), child.raw().parent);
 
     const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
     try std.testing.expect(root.firstChild() != null);
     try std.testing.expect(root.children().len == 1);
 }
 
-test "queries that need ancestry lazily materialize parent pointers" {
+test "queries that need ancestry work with in-node parent pointers" {
     var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='a'><span id='b'><em id='c'></em></span></div>".*;
     try doc.parse(&input, .{});
-    try std.testing.expect(!doc.parent_indexes_ready);
+    try std.testing.expectEqual(@as(u32, 2), (doc.queryOne("#c") orelse return error.TestUnexpectedResult).raw().parent);
 
     try std.testing.expect(doc.queryOne("#a #c") != null);
-    try std.testing.expect(doc.parent_indexes_ready);
 }
 
-test "attr-only queries do not force parent pointer materialization" {
+test "attr-only queries leave parent pointers unchanged" {
     var doc = Document.init(std.testing.allocator);
     defer doc.deinit();
 
     var input = "<div id='a' class='x'></div>".*;
     try doc.parse(&input, .{});
-    try std.testing.expect(!doc.parent_indexes_ready);
+    const node = doc.queryOne("#a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 0), node.raw().parent);
 
     try std.testing.expect(doc.queryOne("div#a[class=x]") != null);
-    try std.testing.expect(!doc.parent_indexes_ready);
+    try std.testing.expectEqual(@as(u32, 0), node.raw().parent);
 }
 
 test "queryAll yields matches in document preorder" {

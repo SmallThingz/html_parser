@@ -17,11 +17,9 @@ fn parseMode(arg: []const u8) !BenchMode {
 fn parseDocForBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void {
     switch (mode) {
         .strictest => try doc.parse(input, .{
-            .eager_child_views = true,
             .drop_whitespace_text_nodes = false,
         }),
         .fastest => try doc.parse(input, .{
-            .eager_child_views = false,
             .drop_whitespace_text_nodes = true,
         }),
     }

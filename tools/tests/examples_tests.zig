@@ -105,7 +105,6 @@ test "example parity: strictest and fastest selectors agree" {
     defer strictest_doc.deinit();
     var strictest_buf = fixture.*;
     try strictest_doc.parse(&strictest_buf, .{
-        .eager_child_views = true,
         .drop_whitespace_text_nodes = false,
     });
 
@@ -113,7 +112,6 @@ test "example parity: strictest and fastest selectors agree" {
     defer fastest_doc.deinit();
     var fastest_buf = fixture.*;
     try fastest_doc.parse(&fastest_buf, .{
-        .eager_child_views = false,
         .drop_whitespace_text_nodes = true,
     });
 

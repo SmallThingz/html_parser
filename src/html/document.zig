@@ -41,8 +41,6 @@ inline fn isElementLike(kind: NodeType) bool {
 
 /// Compile-time parser options and type factory for generated public API types.
 pub const ParseOptions = struct {
-    // Precompute `children()` slices during parse.
-    eager_child_views: bool = true,
     // In fastest-mode style runs, whitespace-only text nodes can be dropped.
     drop_whitespace_text_nodes: bool = false,
 
@@ -62,7 +60,7 @@ pub const ParseOptions = struct {
             last_child: u32 = InvalidIndex,
             prev_sibling: u32 = InvalidIndex,
             next_sibling: u32 = InvalidIndex,
-            parent: void = {},
+            parent: u32 = InvalidIndex,
 
             subtree_end: u32 = 0,
         };
@@ -246,14 +244,9 @@ pub const ParseOptions = struct {
 
             allocator: std.mem.Allocator,
             source: []u8 = &[_]u8{},
-            child_views_ready: bool = false,
 
             nodes: std.ArrayListUnmanaged(RawNodeType) = .{},
             child_indexes: std.ArrayListUnmanaged(u32) = .{},
-            child_view_starts: std.ArrayListUnmanaged(u32) = .{},
-            child_view_lens: std.ArrayListUnmanaged(u32) = .{},
-            parent_indexes: std.ArrayListUnmanaged(u32) = .{},
-            parent_indexes_ready: bool = false,
             parse_stack: std.ArrayListUnmanaged(u32) = .{},
 
             query_one_arena: ?std.heap.ArenaAllocator = null,
@@ -294,9 +287,6 @@ pub const ParseOptions = struct {
             pub fn deinit(noalias self: *DocSelf) void {
                 self.nodes.deinit(self.allocator);
                 self.child_indexes.deinit(self.allocator);
-                self.child_view_starts.deinit(self.allocator);
-                self.child_view_lens.deinit(self.allocator);
-                self.parent_indexes.deinit(self.allocator);
                 self.parse_stack.deinit(self.allocator);
                 self.query_accel_id_map.deinit(self.allocator);
                 self.query_accel_tag_entries.deinit(self.allocator);
@@ -309,12 +299,7 @@ pub const ParseOptions = struct {
             pub fn clear(noalias self: *DocSelf) void {
                 self.nodes.clearRetainingCapacity();
                 self.child_indexes.clearRetainingCapacity();
-                self.child_view_starts.clearRetainingCapacity();
-                self.child_view_lens.clearRetainingCapacity();
-                self.parent_indexes.clearRetainingCapacity();
-                self.parent_indexes_ready = false;
                 self.parse_stack.clearRetainingCapacity();
-                self.child_views_ready = false;
                 if (self.query_one_arena) |*arena| _ = arena.reset(.retain_capacity);
                 if (self.query_all_arena) |*arena| _ = arena.reset(.retain_capacity);
                 self.invalidateRuntimeSelectorCaches();
@@ -329,9 +314,6 @@ pub const ParseOptions = struct {
                 self.source = input;
                 self.query_accel_budget_bytes = @max(input.len / QueryAccelBudgetDivisor, QueryAccelMinBudgetBytes);
                 try parser.parseInto(DocSelf, self, input, opts);
-                if (opts.eager_child_views) {
-                    try self.buildChildViews();
-                }
             }
 
             /// Returns first matching element for comptime selector.
@@ -452,37 +434,13 @@ pub const ParseOptions = struct {
             }
 
             fn ensureQueryPrereqs(noalias self: *DocSelf, selector: ast.Selector) void {
-                if (selector.requires_parent) self.ensureParentIndexesBuilt();
+                _ = .{ self, selector };
             }
 
-            /// Returns parent index for `idx` when parent table is available.
+            /// Returns parent index for `idx`.
             pub fn parentIndex(self: *const DocSelf, idx: u32) u32 {
-                if (!self.parent_indexes_ready or idx >= self.parent_indexes.items.len) return InvalidIndex;
-                return self.parent_indexes.items[idx];
-            }
-
-            /// Lazily materializes parent indexes used by ancestry navigation.
-            pub fn ensureParentIndexesBuilt(noalias self: *DocSelf) void {
-                if (self.parent_indexes_ready) return;
-                self.buildParentIndexes() catch @panic("out of memory building parent indexes");
-            }
-
-            fn buildParentIndexes(noalias self: *DocSelf) !void {
-                const alloc = self.allocator;
-                const node_count = self.nodes.items.len;
-                self.parent_indexes.clearRetainingCapacity();
-                try self.parent_indexes.ensureTotalCapacity(alloc, node_count);
-                self.parent_indexes.items.len = node_count;
-                @memset(self.parent_indexes.items, InvalidIndex);
-
-                var parent_idx: u32 = 0;
-                while (parent_idx < node_count) : (parent_idx += 1) {
-                    var child = self.nodes.items[parent_idx].first_child;
-                    while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
-                        self.parent_indexes.items[child] = parent_idx;
-                    }
-                }
-                self.parent_indexes_ready = true;
+                if (idx >= self.nodes.items.len) return InvalidIndex;
+                return self.nodes.items[idx].parent;
             }
 
             /// Returns first `<html>` element in the document.
@@ -754,53 +712,16 @@ pub const ParseOptions = struct {
                 return mut_self.query_accel_tag_nodes.items[start..end];
             }
 
-            /// Lazily materializes borrowed child index slices for `children()`.
-            pub fn ensureChildViewsBuilt(noalias self: *DocSelf) void {
-                if (self.child_views_ready) return;
-                // Allocation failure here indicates an unrecoverable internal state for
-                // callers expecting non-fallible navigation APIs.
-                self.buildChildViews() catch @panic("out of memory building child views");
-            }
-
-            /// Returns start offset for node's child view in `child_indexes`.
-            pub fn childViewStart(self: *const DocSelf, idx: u32) u32 {
-                return self.child_view_starts.items[idx];
-            }
-
-            /// Returns child count for node's child view.
-            pub fn childViewLen(self: *const DocSelf, idx: u32) u32 {
-                return self.child_view_lens.items[idx];
-            }
-
-            fn buildChildViews(noalias self: *DocSelf) !void {
-                const node_count = self.nodes.items.len;
-                const alloc = self.allocator;
-
-                self.child_view_starts.clearRetainingCapacity();
-                self.child_view_lens.clearRetainingCapacity();
-                try self.child_view_starts.ensureTotalCapacity(alloc, node_count);
-                try self.child_view_lens.ensureTotalCapacity(alloc, node_count);
-                self.child_view_starts.items.len = node_count;
-                self.child_view_lens.items.len = node_count;
+            /// Returns borrowed child indexes for `parent_idx`.
+            pub fn childrenIndexes(self: *DocSelf, parent_idx: u32) []const u32 {
                 self.child_indexes.clearRetainingCapacity();
-                const child_count = if (node_count > 0) node_count - 1 else 0;
-                try self.child_indexes.ensureTotalCapacity(alloc, child_count);
-                self.child_indexes.items.len = 0;
+                if (parent_idx >= self.nodes.items.len) return self.child_indexes.items;
 
-                var i: u32 = 0;
-                while (i < node_count) : (i += 1) {
-                    self.child_view_starts.items[i] = @intCast(self.child_indexes.items.len);
-                    self.child_view_lens.items[i] = 0;
-
-                    var child = self.nodes.items[i].first_child;
-                    while (child != InvalidIndex) {
-                        self.child_indexes.appendAssumeCapacity(child);
-                        self.child_view_lens.items[i] += 1;
-                        child = self.nodes.items[child].next_sibling;
-                    }
+                var child = self.nodes.items[parent_idx].first_child;
+                while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
+                    self.child_indexes.append(self.allocator, child) catch @panic("out of memory building children view");
                 }
-
-                self.child_views_ready = true;
+                return self.child_indexes.items;
             }
         };
     }
@@ -1711,7 +1632,7 @@ test "parse option bundles preserve selector/query behavior for representative i
 
     try strict_doc.parse(&strict_html, .{});
     try fast_doc.parse(&fast_html, .{
-        .eager_child_views = false,
+        .drop_whitespace_text_nodes = true,
     });
 
     const selectors = [_][]const u8{
@@ -1740,7 +1661,7 @@ test "attribute scanner handles quoted > and self-closing tails" {
 
     var html = "<div id='a' data-q='x>y' data-n=abc></div><img id='i' src='x' /><br id='b'>".*;
     try doc.parse(&html, .{
-        .eager_child_views = false,
+        .drop_whitespace_text_nodes = true,
     });
 
     try std.testing.expect(doc.queryOne("div#a[data-q='x>y']") != null);
@@ -1755,7 +1676,7 @@ test "attribute parsing still builds the DOM" {
 
     var html = "<div id='x'><span id='y'></span></div>".*;
     try doc.parse(&html, .{
-        .eager_child_views = false,
+        .drop_whitespace_text_nodes = true,
     });
 
     // Document node plus parsed element nodes must exist.
@@ -1764,26 +1685,22 @@ test "attribute parsing still builds the DOM" {
     try std.testing.expect(doc.queryOne("#y") != null);
 }
 
-test "children() lazily builds child views when eager child views are disabled" {
+test "children() returns sibling-chain backed index slices" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
 
     var html = "<div id='root'><span id='a'></span><span id='b'></span></div>".*;
-    try doc.parse(&html, .{ .eager_child_views = false });
-    try std.testing.expect(!doc.child_views_ready);
+    try doc.parse(&html, .{});
 
     const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
-    const before_len = doc.child_indexes.items.len;
     const kids = root.children();
     try std.testing.expectEqual(@as(usize, 2), kids.len);
-    try std.testing.expect(doc.child_views_ready);
-    try std.testing.expect(doc.child_indexes.items.len >= before_len);
-    const after_first = doc.child_indexes.items.len;
+    try std.testing.expectEqualStrings("a", (doc.nodeAt(kids[0]) orelse return error.TestUnexpectedResult).getAttributeValue("id").?);
+    try std.testing.expectEqualStrings("b", (doc.nodeAt(kids[1]) orelse return error.TestUnexpectedResult).getAttributeValue("id").?);
 
     const again = root.children();
     try std.testing.expectEqual(@as(usize, 2), again.len);
-    try std.testing.expectEqual(after_first, doc.child_indexes.items.len);
 }
 
 test "moved document keeps node-scoped queries and navigation valid" {
@@ -1868,7 +1785,7 @@ test "query accel state is invalidated by parse and clear" {
     try std.testing.expectEqual(@as(usize, 0), doc.query_accel_tag_entries.items.len);
 }
 
-test "runtime attr-heavy selector stress keeps parent indexes cold" {
+test "runtime attr-heavy selector stress uses in-node parents" {
     const alloc = std.testing.allocator;
 
     var builder = std.ArrayList(u8).empty;
@@ -1907,7 +1824,7 @@ test "runtime attr-heavy selector stress keeps parent indexes cold" {
         const b = doc.queryOneCached(&compiled);
         try std.testing.expect((a == null) == (b == null));
     }
-    try std.testing.expect(!doc.parent_indexes_ready);
+    try std.testing.expectEqual(0, doc.nodes.items[1].parent);
 }
 
 test "bench fixture attr-heavy runtime and cached query smoke" {
@@ -1940,7 +1857,7 @@ test "bench fixture attr-heavy runtime and cached query smoke" {
             const b = doc.queryOneCached(&compiled);
             try std.testing.expect((a == null) == (b == null));
         }
-        try std.testing.expect(!doc.parent_indexes_ready);
+        try std.testing.expectEqual(0, doc.nodes.items[1].parent);
     }
 
     {
@@ -1949,7 +1866,7 @@ test "bench fixture attr-heavy runtime and cached query smoke" {
 
         var doc = Document.init(alloc);
         defer doc.deinit();
-        try doc.parse(html, .{ .eager_child_views = false, .drop_whitespace_text_nodes = true });
+        try doc.parse(html, .{ .drop_whitespace_text_nodes = true });
 
         var loops: usize = 0;
         while (loops < 32) : (loops += 1) {
@@ -1957,7 +1874,7 @@ test "bench fixture attr-heavy runtime and cached query smoke" {
             const b = doc.queryOneCached(&compiled);
             try std.testing.expect((a == null) == (b == null));
         }
-        try std.testing.expect(!doc.parent_indexes_ready);
+        try std.testing.expectEqual(0, doc.nodes.items[1].parent);
     }
 }
 

@@ -138,21 +138,17 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             const name_start = self.i;
             var tag_name_key: u64 = 0;
-
-            outer: {
-                inline for (0..8) |len| {
-                    if (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) {
-                        self.i += 1;
-                        var c = self.input[self.i];
+            var tag_name_key_len: u8 = 0;
+            while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
+                if (tag_name_key_len < 8) {
+                    var c = self.input[self.i];
+                    if (c >= 'A' and c <= 'Z') {
                         c = tables.lower(c);
-                    } else {
-                        @memcpy(std.mem.asBytes(&tag_name_key)[0 .. len], self.input[name_start..][0 .. len]);
-                        break :outer;
+                        self.input[self.i] = c;
                     }
-                } else {
-                    @memcpy(std.mem.asBytes(&tag_name_key), self.input[name_start..][0 .. 8]);
+                    tag_name_key |= @as(u64, c) << @as(u6, @intCast(tag_name_key_len * 8));
+                    tag_name_key_len += 1;
                 }
-                while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {}
             }
 
             if (self.i == name_start) {
@@ -361,6 +357,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             const node: @TypeOf(self.doc.nodes.items[0]) = .{
                 .kind = kind,
+                .parent = parent_idx,
                 .subtree_end = idx,
             };
 

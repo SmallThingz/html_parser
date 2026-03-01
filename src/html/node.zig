@@ -60,7 +60,6 @@ pub fn prevSibling(self: anytype) ?@TypeOf(self) {
 
 /// Returns parent element of this node, if available.
 pub fn parentNode(self: anytype) ?@TypeOf(self) {
-    self.doc.ensureParentIndexesBuilt();
     const parent = self.doc.parentIndex(self.index);
     if (parent == InvalidIndex or parent == 0) return null;
     return self.doc.nodeAt(parent);
@@ -68,11 +67,7 @@ pub fn parentNode(self: anytype) ?@TypeOf(self) {
 
 /// Returns borrowed child-index slice for this node.
 pub fn children(self: anytype) []const u32 {
-    // Child views are built once and then borrowed on every call.
-    self.doc.ensureChildViewsBuilt();
-    const start: usize = @intCast(self.doc.childViewStart(self.index));
-    const end: usize = start + @as(usize, @intCast(self.doc.childViewLen(self.index)));
-    return self.doc.child_indexes.items[start..end];
+    return self.doc.childrenIndexes(self.index);
 }
 
 /// Returns decoded attribute value for `name`, if present.
