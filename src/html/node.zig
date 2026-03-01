@@ -6,7 +6,7 @@ const attr_inline = @import("attr_inline.zig");
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
 inline fn isElementLike(kind: anytype) bool {
-    return kind == .element or kind == .svg;
+    return kind == .element;
 }
 
 /// Controls text extraction behavior for `innerText*` APIs.

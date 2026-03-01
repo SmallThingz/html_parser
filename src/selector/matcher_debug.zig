@@ -9,7 +9,7 @@ const selector_debug = @import("../debug/selector_debug.zig");
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
 inline fn isElementLike(kind: anytype) bool {
-    return kind == .element or kind == .svg;
+    return kind == .element;
 }
 
 /// Debug matcher that returns first match and records near-miss diagnostics.

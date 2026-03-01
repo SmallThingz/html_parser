@@ -132,7 +132,6 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
         }
 
         fn parseOpeningTag(noalias self: *Self) !void {
-            const tag_lt_index = self.i;
             self.i += 1; // <
             self.skipWs();
 
@@ -196,28 +195,43 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             if (isSvgTag(tag_name, tag_name_key)) {
                 const svg_self_close = scanner.isExplicitSelfClosingTag(self.input, attr_bytes_start, tag_gt_index);
                 const parent_idx = self.currentParent();
-                const node_idx = try self.appendNode(.svg, parent_idx);
+                const node_idx = try self.appendNode(.element, parent_idx);
                 var node = &self.doc.nodes.items[node_idx];
                 node.name = .{ .start = @intCast(name_start), .end = @intCast(name_end) };
                 node.attr_end = @intCast(attr_bytes_end);
-                node.subtree_end = node_idx;
+                if (svg_self_close) {
+                    node.subtree_end = node_idx;
+                    return;
+                }
 
-                const svg_end: usize = if (svg_self_close)
-                    self.i
-                else if (scanner.findSvgSubtreeEnd(self.input, self.i)) |close_end| blk: {
+                const content_start = self.i;
+                if (scanner.findSvgSubtreeEnd(self.input, self.i)) |close_end| {
+                    var content_end = close_end;
+                    while (content_end > content_start and self.input[content_end - 1] != '<') : (content_end -= 1) {}
+
+                    if (content_end > content_start) {
+                        const text_idx = try self.appendNode(.text, node_idx);
+                        var text_node = &self.doc.nodes.items[text_idx];
+                        text_node.text = .{ .start = @intCast(content_start), .end = @intCast(content_end - 1) };
+                        text_node.subtree_end = text_idx;
+                    }
+
+                    node = &self.doc.nodes.items[node_idx];
+                    node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
                     self.i = close_end;
-                    break :blk close_end;
-                } else blk: {
+                    return;
+                } else {
+                    if (self.input.len > content_start) {
+                        const text_idx = try self.appendNode(.text, node_idx);
+                        var text_node = &self.doc.nodes.items[text_idx];
+                        text_node.text = .{ .start = @intCast(content_start), .end = @intCast(self.input.len) };
+                        text_node.subtree_end = text_idx;
+                    }
+                    node = &self.doc.nodes.items[node_idx];
+                    node.subtree_end = @intCast(self.doc.nodes.items.len - 1);
                     self.i = self.input.len;
-                    break :blk self.input.len;
-                };
-
-                node = &self.doc.nodes.items[node_idx];
-                node.text = .{
-                    .start = @intCast(tag_lt_index),
-                    .end = @intCast(svg_end),
-                };
-                return;
+                    return;
+                }
             }
 
             const parent_idx = self.currentParent();
@@ -351,7 +365,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
         fn appendNode(noalias self: *Self, kind: anytype, parent_idx: u32) !u32 {
             const idx: u32 = @intCast(self.doc.nodes.items.len);
-            const build_links = parent_idx != InvalidIndex and (kind == .element or kind == .svg);
+            const build_links = parent_idx != InvalidIndex and kind == .element;
 
             const node: @TypeOf(self.doc.nodes.items[0]) = .{
                 .kind = kind,

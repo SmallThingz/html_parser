@@ -14,7 +14,7 @@ const EnableQueryAccel = true;
 const EnableMultiAttrCollect = true;
 
 inline fn isElementLike(kind: anytype) bool {
-    return kind == .element or kind == .svg;
+    return kind == .element;
 }
 
 /// Returns first matching node index for `selector` within optional `scope_root`.
