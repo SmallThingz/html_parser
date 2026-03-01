@@ -195,9 +195,10 @@ fn firstMatchForGroup(comptime Doc: type, doc: *const Doc, selector: ast.Selecto
         }
     }
 
-    if (EnableQueryAccel and @hasDecl(Doc, "queryAccelLookupTag") and comp.has_tag != 0 and comp.tag_hash != 0) {
+    if (EnableQueryAccel and @hasDecl(Doc, "queryAccelLookupTag") and comp.has_tag != 0 and comp.tag_key != 0) {
         var used = false;
-        if (doc.queryAccelLookupTag(@intCast(comp.tag_hash), &used)) |candidates| {
+        const tag = comp.tag.slice(selector.source);
+        if (doc.queryAccelLookupTag(tag, comp.tag_key, &used)) |candidates| {
             if (scope_root != InvalidIndex) {
                 const scope_end = doc.nodes.items[scope_root].subtree_end;
                 for (candidates) |idx| {
@@ -282,9 +283,10 @@ fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Se
 
     if (comp.has_tag != 0) {
         const tag = comp.tag.slice(selector.source);
-        const tag_hash: tags.TagHashValue = if (comp.tag_hash != 0) @intCast(comp.tag_hash) else tags.hashBytes(tag);
-        if (node.tag_hash != tag_hash) return false;
-        if (!tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag)) return false;
+        const tag_key: u64 = if (comp.tag_key != 0) comp.tag_key else tags.first8Key(tag);
+        const node_name = node.name.slice(doc.source);
+        const node_key = tags.first8Key(node_name);
+        if (!tags.equalByLenAndKeyIgnoreCase(node_name, node_key, tag, tag_key)) return false;
     }
 
     if (comp.has_id != 0) {

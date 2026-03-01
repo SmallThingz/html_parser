@@ -1,276 +1,332 @@
 const std = @import("std");
 const tables = @import("tables.zig");
 
-/// Packed tag-hash scalar used for fast tag dispatch.
-pub const TagHashValue = u64;
-const InvalidTagHash: TagHashValue = std.math.maxInt(TagHashValue);
+/// Returns a packed key of the first up-to-8 tag bytes.
+///
+/// Byte `i` (little-endian) stores `name[i]`.
+pub inline fn first8Key(name: []const u8) u64 {
+    var hash: u64 = 0;
+    const n: usize = @min(name.len, 8);
+    @memcpy(std.mem.asBytes(&hash)[0..n], name[0..n]);
+    return hash;
+}
 
-/// Incremental packed hash builder for ASCII tag names.
-pub const TagHash = struct {
-    value_: TagHashValue = 0,
+/// Case-insensitive equality check accelerated by `(len,key)` prechecks.
+///
+/// The packed keys are byte-exact; callers are expected to canonicalize the first
+/// eight bytes (parser does this in-place).
+pub inline fn equalByLenAndKeyIgnoreCase(a: []const u8, a_key: u64, b: []const u8, b_key: u64) bool {
+    if (a.len != b.len) return false;
+    if (a_key != b_key) return false;
+    if (a.len <= 8) return true;
+    return tables.eqlIgnoreCaseAscii(a[8..], b[8..]);
+}
 
-    /// Creates a fresh tag hash accumulator.
-    pub fn init() TagHash {
-        return .{};
-    }
+inline fn litKey(comptime s: []const u8) u64 {
+    return comptime first8Key(s);
+}
 
-    /// Feeds one tag-name byte into hash accumulator.
-    pub fn update(noalias self: *TagHash, c: u8) void {
-        if (self.value_ == InvalidTagHash) return;
-        if ((self.value_ >> (64 - 5)) != 0) {
-            self.value_ = InvalidTagHash;
-            return;
-        }
+inline fn eqLit(name: []const u8, key: u64, comptime lit: []const u8) bool {
+    if (name.len != lit.len) return false;
+    if (key != comptime litKey(lit)) return false;
+    if (lit.len <= 8) return true;
+    return tables.eqlIgnoreCaseAscii(name[8..], lit[8..]);
+}
 
-        const code: TagHashValue = switch (c) {
-            'a'...'z', 'A'...'Z' => (@as(TagHashValue, c & 0x1f) + 5),
-            '1'...'6' => (@as(TagHashValue, c & 0x0f) - 1),
-            else => {
-                self.value_ = InvalidTagHash;
-                return;
-            },
-        };
-        self.value_ = (self.value_ << 5) | code;
-    }
+const KEY = struct {
+    const AREA = litKey("area");
+    const BASE = litKey("base");
+    const BR = litKey("br");
+    const COL = litKey("col");
+    const EMBED = litKey("embed");
+    const HR = litKey("hr");
+    const IMG = litKey("img");
+    const INPUT = litKey("input");
+    const LINK = litKey("link");
+    const META = litKey("meta");
+    const PARAM = litKey("param");
+    const SOURCE = litKey("source");
+    const TRACK = litKey("track");
+    const WBR = litKey("wbr");
 
-    /// Returns current hash value or invalid sentinel when overflowed.
-    pub fn value(self: TagHash) TagHashValue {
-        return self.value_;
-    }
+    const SCRIPT = litKey("script");
+    const STYLE = litKey("style");
+
+    const LI = litKey("li");
+    const P = litKey("p");
+    const DT = litKey("dt");
+    const DD = litKey("dd");
+    const OPTION = litKey("option");
+    const TR = litKey("tr");
+    const TD = litKey("td");
+    const TH = litKey("th");
+    const HEAD = litKey("head");
+    const BODY = litKey("body");
+
+    const ADDRESS = litKey("address");
+    const ARTICLE = litKey("article");
+    const ASIDE = litKey("aside");
+    const BLOCKQUOTE = litKey("blockquote");
+    const DIV = litKey("div");
+    const DL = litKey("dl");
+    const FIELDSET = litKey("fieldset");
+    const FOOTER = litKey("footer");
+    const FORM = litKey("form");
+    const H1 = litKey("h1");
+    const H2 = litKey("h2");
+    const H3 = litKey("h3");
+    const H4 = litKey("h4");
+    const H5 = litKey("h5");
+    const H6 = litKey("h6");
+    const HEADER = litKey("header");
+    const MAIN = litKey("main");
+    const NAV = litKey("nav");
+    const OL = litKey("ol");
+    const PRE = litKey("pre");
+    const SECTION = litKey("section");
+    const TABLE = litKey("table");
+    const UL = litKey("ul");
+
+    const SVG = litKey("svg");
 };
-
-/// Hashes complete tag name using packed incremental hash.
-pub fn hashBytes(name: []const u8) TagHashValue {
-    var h = TagHash.init();
-    for (name) |c| h.update(c);
-    return h.value();
-}
-
-fn comptimeHash(comptime name: []const u8) TagHashValue {
-    return comptime hashBytes(name);
-}
-
-const HASH_AREA = comptimeHash("area");
-const HASH_BASE = comptimeHash("base");
-const HASH_BR = comptimeHash("br");
-const HASH_COL = comptimeHash("col");
-const HASH_EMBED = comptimeHash("embed");
-const HASH_HR = comptimeHash("hr");
-const HASH_IMG = comptimeHash("img");
-const HASH_INPUT = comptimeHash("input");
-const HASH_LINK = comptimeHash("link");
-const HASH_META = comptimeHash("meta");
-const HASH_PARAM = comptimeHash("param");
-const HASH_SOURCE = comptimeHash("source");
-const HASH_TRACK = comptimeHash("track");
-const HASH_WBR = comptimeHash("wbr");
-const HASH_SCRIPT = comptimeHash("script");
-const HASH_STYLE = comptimeHash("style");
-
-const HASH_LI = comptimeHash("li");
-const HASH_P = comptimeHash("p");
-const HASH_DT = comptimeHash("dt");
-const HASH_DD = comptimeHash("dd");
-const HASH_OPTION = comptimeHash("option");
-const HASH_TR = comptimeHash("tr");
-const HASH_TD = comptimeHash("td");
-const HASH_TH = comptimeHash("th");
-const HASH_HEAD = comptimeHash("head");
-const HASH_BODY = comptimeHash("body");
-
-const HASH_ADDRESS = comptimeHash("address");
-const HASH_ARTICLE = comptimeHash("article");
-const HASH_ASIDE = comptimeHash("aside");
-const HASH_BLOCKQUOTE = comptimeHash("blockquote");
-const HASH_DIV = comptimeHash("div");
-const HASH_DL = comptimeHash("dl");
-const HASH_FIELDSET = comptimeHash("fieldset");
-const HASH_FOOTER = comptimeHash("footer");
-const HASH_FORM = comptimeHash("form");
-const HASH_H1 = comptimeHash("h1");
-const HASH_H2 = comptimeHash("h2");
-const HASH_H3 = comptimeHash("h3");
-const HASH_H4 = comptimeHash("h4");
-const HASH_H5 = comptimeHash("h5");
-const HASH_H6 = comptimeHash("h6");
-const HASH_HEADER = comptimeHash("header");
-const HASH_MAIN = comptimeHash("main");
-const HASH_NAV = comptimeHash("nav");
-const HASH_OL = comptimeHash("ol");
-const HASH_PRE = comptimeHash("pre");
-const HASH_SECTION = comptimeHash("section");
-const HASH_TABLE = comptimeHash("table");
-const HASH_UL = comptimeHash("ul");
 
 /// Returns whether tag is HTML void tag.
 pub fn isVoidTag(name: []const u8) bool {
-    return isVoidTagHash(name, hashBytes(name));
+    return isVoidTagWithKey(name, first8Key(name));
 }
 
 /// Returns whether tag is HTML raw-text tag (`script`, `style`).
 pub fn isRawTextTag(name: []const u8) bool {
-    return isRawTextTagHash(name, hashBytes(name));
+    return isRawTextTagWithKey(name, first8Key(name));
 }
 
 /// Returns whether `new_tag` implicitly closes `open_tag`.
 pub fn shouldImplicitlyClose(open_tag: []const u8, new_tag: []const u8) bool {
-    return shouldImplicitlyCloseHash(open_tag, hashBytes(open_tag), new_tag, hashBytes(new_tag));
+    return shouldImplicitlyCloseWithKeys(open_tag, first8Key(open_tag), new_tag, first8Key(new_tag));
 }
 
-/// Hash-dispatched void-tag check.
-pub fn isVoidTagHash(name: []const u8, name_hash: TagHashValue) bool {
-    _ = name;
-    switch (name_hash) {
-        HASH_AREA,
-        HASH_BASE,
-        HASH_BR,
-        HASH_COL,
-        HASH_EMBED,
-        HASH_HR,
-        HASH_IMG,
-        HASH_INPUT,
-        HASH_LINK,
-        HASH_META,
-        HASH_PARAM,
-        HASH_SOURCE,
-        HASH_TRACK,
-        HASH_WBR,
-        => return true,
-        else => return false,
-    }
-}
-
-/// Hash-dispatched raw-text-tag check.
-pub fn isRawTextTagHash(name: []const u8, name_hash: TagHashValue) bool {
-    _ = name;
-    switch (name_hash) {
-        HASH_SCRIPT, HASH_STYLE => return true,
-        else => return false,
-    }
-}
-
-/// Returns true when `new_hash` can trigger optional-close logic.
-pub fn mayTriggerImplicitCloseHash(new_tag: []const u8, new_hash: TagHashValue) bool {
-    _ = new_tag;
-    switch (new_hash) {
-        HASH_LI,
-        HASH_P,
-        HASH_DT,
-        HASH_DD,
-        HASH_OPTION,
-        HASH_TR,
-        HASH_TD,
-        HASH_TH,
-        HASH_BODY,
-        HASH_ADDRESS,
-        HASH_ARTICLE,
-        HASH_ASIDE,
-        HASH_BLOCKQUOTE,
-        HASH_DIV,
-        HASH_DL,
-        HASH_FIELDSET,
-        HASH_FOOTER,
-        HASH_FORM,
-        HASH_H1,
-        HASH_H2,
-        HASH_H3,
-        HASH_H4,
-        HASH_H5,
-        HASH_H6,
-        HASH_HEADER,
-        HASH_HR,
-        HASH_MAIN,
-        HASH_NAV,
-        HASH_OL,
-        HASH_PRE,
-        HASH_SECTION,
-        HASH_TABLE,
-        HASH_UL,
-        => return true,
-        else => return false,
-    }
-}
-
-/// Returns true when `open_hash` is an optional-close source tag.
-pub fn isImplicitCloseSourceHash(open_hash: TagHashValue) bool {
-    return switch (open_hash) {
-        HASH_LI,
-        HASH_P,
-        HASH_DT,
-        HASH_DD,
-        HASH_OPTION,
-        HASH_TR,
-        HASH_TD,
-        HASH_TH,
-        HASH_HEAD,
-        => true,
+/// Fast void-tag check with caller-provided key.
+pub fn isVoidTagWithKey(name: []const u8, key: u64) bool {
+    return switch (name.len) {
+        2 => switch (key) {
+            KEY.BR, KEY.HR => true,
+            else => false,
+        },
+        3 => switch (key) {
+            KEY.COL, KEY.IMG, KEY.WBR => true,
+            else => false,
+        },
+        4 => switch (key) {
+            KEY.AREA, KEY.BASE, KEY.LINK, KEY.META => true,
+            else => false,
+        },
+        5 => switch (key) {
+            KEY.EMBED, KEY.INPUT, KEY.PARAM, KEY.TRACK => true,
+            else => false,
+        },
+        6 => switch (key) {
+            KEY.SOURCE => true,
+            else => false,
+        },
         else => false,
     };
 }
 
-/// Hash-aware optional-close predicate with fallback-safe arguments.
-pub fn shouldImplicitlyCloseHash(open_tag: []const u8, open_hash: TagHashValue, new_tag: []const u8, new_hash: TagHashValue) bool {
-    if (open_hash != InvalidTagHash and new_hash != InvalidTagHash) {
-        switch (open_hash) {
-            HASH_LI => return new_hash == HASH_LI,
-            HASH_P => return closesPHash(new_tag, new_hash),
-            HASH_DT, HASH_DD => return new_hash == HASH_DT or new_hash == HASH_DD,
-            HASH_OPTION => return new_hash == HASH_OPTION,
-            HASH_TR => return new_hash == HASH_TR,
-            HASH_TD, HASH_TH => return new_hash == HASH_TD or new_hash == HASH_TH,
-            HASH_HEAD => return new_hash == HASH_BODY,
-            else => return false,
-        }
-    }
-
-    if (hashEq(open_tag, open_hash, HASH_LI, "li") and hashEq(new_tag, new_hash, HASH_LI, "li")) return true;
-    if (hashEq(open_tag, open_hash, HASH_P, "p") and closesPHash(new_tag, new_hash)) return true;
-
-    if (hashEq(open_tag, open_hash, HASH_DT, "dt") and (hashEq(new_tag, new_hash, HASH_DT, "dt") or hashEq(new_tag, new_hash, HASH_DD, "dd"))) return true;
-    if (hashEq(open_tag, open_hash, HASH_DD, "dd") and (hashEq(new_tag, new_hash, HASH_DT, "dt") or hashEq(new_tag, new_hash, HASH_DD, "dd"))) return true;
-
-    if (hashEq(open_tag, open_hash, HASH_OPTION, "option") and hashEq(new_tag, new_hash, HASH_OPTION, "option")) return true;
-
-    if (hashEq(open_tag, open_hash, HASH_TR, "tr") and hashEq(new_tag, new_hash, HASH_TR, "tr")) return true;
-
-    if ((hashEq(open_tag, open_hash, HASH_TD, "td") or hashEq(open_tag, open_hash, HASH_TH, "th")) and
-        (hashEq(new_tag, new_hash, HASH_TD, "td") or hashEq(new_tag, new_hash, HASH_TH, "th"))) return true;
-
-    if (hashEq(open_tag, open_hash, HASH_HEAD, "head") and hashEq(new_tag, new_hash, HASH_BODY, "body")) return true;
-
-    return false;
+/// Fast raw-text-tag check with caller-provided key.
+pub fn isRawTextTagWithKey(name: []const u8, key: u64) bool {
+    return switch (name.len) {
+        5 => key == KEY.STYLE,
+        6 => key == KEY.SCRIPT,
+        else => false,
+    };
 }
 
-fn closesPHash(new_tag: []const u8, new_hash: TagHashValue) bool {
-    return hashEq(new_tag, new_hash, HASH_ADDRESS, "address") or
-        hashEq(new_tag, new_hash, HASH_ARTICLE, "article") or
-        hashEq(new_tag, new_hash, HASH_ASIDE, "aside") or
-        hashEq(new_tag, new_hash, HASH_BLOCKQUOTE, "blockquote") or
-        hashEq(new_tag, new_hash, HASH_DIV, "div") or
-        hashEq(new_tag, new_hash, HASH_DL, "dl") or
-        hashEq(new_tag, new_hash, HASH_FIELDSET, "fieldset") or
-        hashEq(new_tag, new_hash, HASH_FOOTER, "footer") or
-        hashEq(new_tag, new_hash, HASH_FORM, "form") or
-        hashEq(new_tag, new_hash, HASH_H1, "h1") or
-        hashEq(new_tag, new_hash, HASH_H2, "h2") or
-        hashEq(new_tag, new_hash, HASH_H3, "h3") or
-        hashEq(new_tag, new_hash, HASH_H4, "h4") or
-        hashEq(new_tag, new_hash, HASH_H5, "h5") or
-        hashEq(new_tag, new_hash, HASH_H6, "h6") or
-        hashEq(new_tag, new_hash, HASH_HEADER, "header") or
-        hashEq(new_tag, new_hash, HASH_HR, "hr") or
-        hashEq(new_tag, new_hash, HASH_MAIN, "main") or
-        hashEq(new_tag, new_hash, HASH_NAV, "nav") or
-        hashEq(new_tag, new_hash, HASH_OL, "ol") or
-        hashEq(new_tag, new_hash, HASH_P, "p") or
-        hashEq(new_tag, new_hash, HASH_PRE, "pre") or
-        hashEq(new_tag, new_hash, HASH_SECTION, "section") or
-        hashEq(new_tag, new_hash, HASH_TABLE, "table") or
-        hashEq(new_tag, new_hash, HASH_UL, "ul");
+/// Returns true when `new_tag` can trigger optional-close logic.
+pub fn mayTriggerImplicitCloseWithKey(new_tag: []const u8, new_key: u64) bool {
+    return switch (new_tag.len) {
+        1 => new_key == KEY.P,
+        2 => switch (new_key) {
+            KEY.LI,
+            KEY.DT,
+            KEY.DD,
+            KEY.TR,
+            KEY.TD,
+            KEY.TH,
+            KEY.HR,
+            KEY.H1,
+            KEY.H2,
+            KEY.H3,
+            KEY.H4,
+            KEY.H5,
+            KEY.H6,
+            KEY.DL,
+            KEY.OL,
+            KEY.UL,
+            => true,
+            else => false,
+        },
+        3 => switch (new_key) {
+            KEY.DIV,
+            KEY.NAV,
+            KEY.PRE,
+            => true,
+            else => false,
+        },
+        4 => switch (new_key) {
+            KEY.BODY,
+            KEY.FORM,
+            KEY.MAIN,
+            => true,
+            else => false,
+        },
+        5 => switch (new_key) {
+            KEY.ASIDE,
+            KEY.TABLE,
+            => true,
+            else => false,
+        },
+        6 => switch (new_key) {
+            KEY.OPTION,
+            KEY.FOOTER,
+            KEY.HEADER,
+            KEY.ADDRESS,
+            KEY.ARTICLE,
+            KEY.SECTION,
+            => true,
+            else => false,
+        },
+        7 => switch (new_key) {
+            KEY.FIELDSET => true,
+            else => false,
+        },
+        10 => switch (new_key) {
+            KEY.BLOCKQUOTE => tables.lower(new_tag[8]) == 't' and tables.lower(new_tag[9]) == 'e',
+            else => false,
+        },
+        else => false,
+    };
 }
 
-fn hashEq(name: []const u8, name_hash: TagHashValue, expected_hash: TagHashValue, expected_name: []const u8) bool {
-    _ = .{ name, expected_name };
-    if (name_hash == expected_hash) return true;
-    return false;
+/// Returns true when `open_tag` is an optional-close source tag.
+pub fn isImplicitCloseSourceWithKey(open_tag: []const u8, open_key: u64) bool {
+    return switch (open_tag.len) {
+        1 => open_key == KEY.P,
+        2 => switch (open_key) {
+            KEY.LI,
+            KEY.DT,
+            KEY.DD,
+            KEY.TR,
+            KEY.TD,
+            KEY.TH,
+            => true,
+            else => false,
+        },
+        4 => switch (open_key) {
+            KEY.HEAD => true,
+            else => false,
+        },
+        6 => switch (open_key) {
+            KEY.OPTION => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+/// Optional-close predicate with precomputed `(len,key)` fast path.
+pub fn shouldImplicitlyCloseWithKeys(open_tag: []const u8, open_key: u64, new_tag: []const u8, new_key: u64) bool {
+    return switch (open_tag.len) {
+        1 => open_key == KEY.P and closesPWithKey(new_tag, new_key),
+        2 => switch (open_key) {
+            KEY.LI => new_tag.len == 2 and new_key == KEY.LI,
+            KEY.DT, KEY.DD => new_tag.len == 2 and (new_key == KEY.DT or new_key == KEY.DD),
+            KEY.TR => new_tag.len == 2 and new_key == KEY.TR,
+            KEY.TD, KEY.TH => new_tag.len == 2 and (new_key == KEY.TD or new_key == KEY.TH),
+            else => false,
+        },
+        4 => switch (open_key) {
+            KEY.HEAD => new_tag.len == 4 and new_key == KEY.BODY,
+            else => false,
+        },
+        6 => switch (open_key) {
+            KEY.OPTION => new_tag.len == 6 and new_key == KEY.OPTION,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+fn closesPWithKey(new_tag: []const u8, new_key: u64) bool {
+    return switch (new_tag.len) {
+        1 => new_key == KEY.P,
+        2 => switch (new_key) {
+            KEY.HR,
+            KEY.H1,
+            KEY.H2,
+            KEY.H3,
+            KEY.H4,
+            KEY.H5,
+            KEY.H6,
+            KEY.DL,
+            KEY.OL,
+            KEY.UL,
+            => true,
+            else => false,
+        },
+        3 => switch (new_key) {
+            KEY.DIV,
+            KEY.NAV,
+            KEY.PRE,
+            => true,
+            else => false,
+        },
+        4 => switch (new_key) {
+            KEY.FORM,
+            KEY.MAIN,
+            => true,
+            else => false,
+        },
+        5 => switch (new_key) {
+            KEY.ASIDE,
+            KEY.TABLE,
+            => true,
+            else => false,
+        },
+        6 => switch (new_key) {
+            KEY.FOOTER,
+            KEY.HEADER,
+            KEY.ADDRESS,
+            KEY.ARTICLE,
+            KEY.SECTION,
+            => true,
+            else => false,
+        },
+        7 => switch (new_key) {
+            KEY.FIELDSET => true,
+            else => false,
+        },
+        10 => switch (new_key) {
+            KEY.BLOCKQUOTE => tables.lower(new_tag[8]) == 't' and tables.lower(new_tag[9]) == 'e',
+            else => false,
+        },
+        else => false,
+    };
+}
+
+/// Fast check for `svg` tag by `(len,key)`.
+pub inline fn isSvgWithKey(name: []const u8, key: u64) bool {
+    return name.len == 3 and key == KEY.SVG;
+}
+
+test "tag helpers on canonical lowercase names" {
+    try std.testing.expect(isVoidTag("img"));
+    try std.testing.expect(isRawTextTag("script"));
+    try std.testing.expect(shouldImplicitlyClose("p", "blockquote"));
+}
+
+test "equalByLenAndKeyIgnoreCase handles long names with canonical keys" {
+    const a = "blockquote";
+    const b = "blockquote";
+    try std.testing.expect(equalByLenAndKeyIgnoreCase(a, first8Key(a), b, first8Key(b)));
+    try std.testing.expect(eqLit("blockquote", first8Key("blockquote"), "blockquote"));
 }

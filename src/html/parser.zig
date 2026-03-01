@@ -4,8 +4,7 @@ const tags = @import("tags.zig");
 const scanner = @import("scanner.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
-const EnableIncrementalTagHash = true;
-const SvgTagHash: tags.TagHashValue = tags.hashBytes("svg");
+const SvgTagKey: u64 = tags.first8Key("svg");
 
 /// Parses mutable HTML bytes into `doc` using permissive, in-place tree construction.
 pub fn parseInto(comptime Doc: type, noalias doc: *Doc, input: []u8, comptime opts: anytype) !void {
@@ -138,9 +137,18 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             self.skipWs();
 
             const name_start = self.i;
-            var tag_hash_acc = tags.TagHash.init();
+            var tag_name_key: u64 = 0;
+            var tag_key_len: u8 = 0;
             while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                if (EnableIncrementalTagHash) tag_hash_acc.update(self.input[self.i]);
+                if (tag_key_len < 8) {
+                    var c = self.input[self.i];
+                    if (c >= 'A' and c <= 'Z') {
+                        c = tables.lower(c);
+                        self.input[self.i] = c;
+                    }
+                    tag_name_key |= @as(u64, c) << @as(u6, @intCast(tag_key_len * 8));
+                    tag_key_len += 1;
+                }
             }
             if (self.i == name_start) {
                 @branchHint(.cold);
@@ -151,10 +159,9 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             const tag_name = self.input[name_start..self.i];
             const name_end = self.i;
-            const tag_name_hash = if (EnableIncrementalTagHash) tag_hash_acc.value() else tags.hashBytes(tag_name);
 
-            if (self.doc.parse_stack.items.len > 1 and tags.mayTriggerImplicitCloseHash(tag_name, tag_name_hash)) {
-                self.applyImplicitClosures(tag_name, tag_name_hash);
+            if (self.doc.parse_stack.items.len > 1 and tags.mayTriggerImplicitCloseWithKey(tag_name, tag_name_key)) {
+                self.applyImplicitClosures(tag_name, tag_name_key);
             }
 
             var attr_bytes_end: usize = self.i;
@@ -180,18 +187,17 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 attr_bytes_end = self.i;
             }
 
-            const self_close = tag_name.len <= 6 and tags.isVoidTagHash(tag_name, tag_name_hash);
+            const self_close = tag_name.len <= 6 and tags.isVoidTagWithKey(tag_name, tag_name_key);
 
             // Skip SVG subtrees entirely to keep parse work focused on primary HTML
             // content. Nested <svg> blocks are counted; `<svg` in quoted attributes
             // is ignored by quote-aware tag-end scanning.
-            if (isSvgTag(tag_name, tag_name_hash)) {
+            if (isSvgTag(tag_name, tag_name_key)) {
                 const svg_self_close = scanner.isExplicitSelfClosingTag(self.input, attr_bytes_start, tag_gt_index);
                 const parent_idx = self.currentParent();
                 const node_idx = try self.appendNode(.svg, parent_idx);
                 var node = &self.doc.nodes.items[node_idx];
                 node.name = .{ .start = @intCast(name_start), .end = @intCast(name_end) };
-                node.tag_hash = tag_name_hash;
                 node.attr_bytes.start = @intCast(attr_bytes_start);
                 node.attr_bytes.end = @intCast(attr_bytes_end);
                 node.subtree_end = node_idx;
@@ -218,11 +224,10 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             const node_idx = try self.appendNode(.element, parent_idx);
             var node = &self.doc.nodes.items[node_idx];
             node.name = .{ .start = @intCast(name_start), .end = @intCast(name_end) };
-            node.tag_hash = tag_name_hash;
             node.attr_bytes.start = @intCast(attr_bytes_start);
             node.attr_bytes.end = @intCast(attr_bytes_end);
 
-            if (!self_close and tag_name.len >= 5 and tag_name.len <= 6 and tags.isRawTextTagHash(tag_name, tag_name_hash)) {
+            if (!self_close and tag_name.len >= 5 and tag_name.len <= 6 and tags.isRawTextTagWithKey(tag_name, tag_name_key)) {
                 const content_start = self.i;
                 if (self.findRawTextClose(tag_name, self.i)) |close| {
                     if (close.content_end > content_start) {
@@ -264,13 +269,21 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             self.skipWs();
 
             const name_start = self.i;
-            var close_hash_acc = tags.TagHash.init();
+            var close_key: u64 = 0;
+            var close_key_len: u8 = 0;
             while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {
-                if (EnableIncrementalTagHash) close_hash_acc.update(self.input[self.i]);
+                if (close_key_len < 8) {
+                    var c = self.input[self.i];
+                    if (c >= 'A' and c <= 'Z') {
+                        c = tables.lower(c);
+                        self.input[self.i] = c;
+                    }
+                    close_key |= @as(u64, c) << @as(u6, @intCast(close_key_len * 8));
+                    close_key_len += 1;
+                }
             }
             const name_end = self.i;
             const close_name = self.input[name_start..name_end];
-            const close_hash = if (EnableIncrementalTagHash) close_hash_acc.value() else tags.hashBytes(close_name);
 
             self.i = scanner.findByte(self.input, self.i, '>') orelse self.input.len;
             if (self.i < self.input.len) self.i += 1;
@@ -283,9 +296,10 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             if (self.doc.parse_stack.items.len > 1) {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
-                if (top.tag_hash == close_hash and top.name.len() == close_name.len) {
+                if (top.name.len() == close_name.len) {
                     const top_name = top.name.slice(self.input);
-                    const matches_top = std.mem.eql(u8, top_name, close_name) or tables.eqlIgnoreCaseAscii(top_name, close_name);
+                    const top_key = tags.first8Key(top_name);
+                    const matches_top = tags.equalByLenAndKeyIgnoreCase(top_name, top_key, close_name, close_key);
                     if (matches_top) {
                         _ = self.doc.parse_stack.pop();
                         var node = &self.doc.nodes.items[top_idx];
@@ -301,10 +315,10 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 s -= 1;
                 const idx = self.doc.parse_stack.items[s];
                 const n = &self.doc.nodes.items[idx];
-                if (n.tag_hash != close_hash) continue;
                 if (n.name.len() != close_name.len) continue;
                 const open_name = n.name.slice(self.input);
-                const matches = std.mem.eql(u8, open_name, close_name) or tables.eqlIgnoreCaseAscii(open_name, close_name);
+                const open_key = tags.first8Key(open_name);
+                const matches = tags.equalByLenAndKeyIgnoreCase(open_name, open_key, close_name, close_key);
                 if (!matches) continue;
                 found = s;
                 break;
@@ -321,12 +335,14 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             }
         }
 
-        inline fn applyImplicitClosures(noalias self: *Self, new_tag: []const u8, new_tag_hash: tags.TagHashValue) void {
+        inline fn applyImplicitClosures(noalias self: *Self, new_tag: []const u8, new_tag_key: u64) void {
             while (self.doc.parse_stack.items.len > 1) {
                 const top_idx = self.doc.parse_stack.items[self.doc.parse_stack.items.len - 1];
                 const top = &self.doc.nodes.items[top_idx];
-                if (!tags.isImplicitCloseSourceHash(top.tag_hash)) break;
-                if (!tags.shouldImplicitlyCloseHash(top.name.slice(self.input), top.tag_hash, new_tag, new_tag_hash)) break;
+                const top_name = top.name.slice(self.input);
+                const top_key = tags.first8Key(top_name);
+                if (!tags.isImplicitCloseSourceWithKey(top_name, top_key)) break;
+                if (!tags.shouldImplicitlyCloseWithKeys(top_name, top_key, new_tag, new_tag_key)) break;
 
                 _ = self.doc.parse_stack.pop();
                 var n = &self.doc.nodes.items[top_idx];
@@ -423,8 +439,8 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             while (self.i < self.input.len and tables.WhitespaceTable[self.input[self.i]]) : (self.i += 1) {}
         }
 
-        inline fn isSvgTag(tag_name: []const u8, tag_hash: tags.TagHashValue) bool {
-            return tag_name.len == 3 and tag_hash == SvgTagHash and tables.eqlIgnoreCaseAscii(tag_name, "svg");
+        inline fn isSvgTag(tag_name: []const u8, tag_key: u64) bool {
+            return tag_name.len == 3 and tag_key == SvgTagKey;
         }
 
         inline fn findRawTextClose(noalias self: *Self, tag_name: []const u8, start: usize) ?struct { content_end: usize, close_end: usize } {

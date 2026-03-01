@@ -173,7 +173,7 @@ const Parser = struct {
                 out.has_tag = 1;
                 out.tag = self.parseIdent() orelse return error.InvalidSelector;
                 self.lowerRange(out.tag);
-                out.tag_hash = tags.hashBytes(out.tag.slice(self.source));
+                out.tag_key = tags.first8Key(out.tag.slice(self.source));
                 consumed = true;
             }
         }

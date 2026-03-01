@@ -110,7 +110,7 @@ pub const Compound = extern struct {
 
     has_tag: u8 = 0,
     tag: Range = .{},
-    tag_hash: u64 = 0,
+    tag_key: u64 = 0,
 
     has_id: u8 = 0,
     id: Range = .{},

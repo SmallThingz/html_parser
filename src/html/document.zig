@@ -22,7 +22,8 @@ const IndexSpan = struct {
 };
 
 const TagIndexEntry = struct {
-    tag_hash: tags.TagHashValue,
+    tag_len: u16,
+    tag_key: u64,
     span: IndexSpan,
 };
 
@@ -52,7 +53,6 @@ pub const ParseOptions = struct {
             kind: NodeType,
 
             name: Span = .{},
-            tag_hash: tags.TagHashValue = 0,
             text: Span = .{},
 
             // In-place attribute byte range inside the opening tag.
@@ -657,16 +657,20 @@ pub const ParseOptions = struct {
                 return true;
             }
 
-            fn ensureTagIndex(self: *DocSelf, tag_hash: tags.TagHashValue) ?IndexSpan {
-                if (tag_hash == std.math.maxInt(tags.TagHashValue)) return null;
+            fn ensureTagIndex(self: *DocSelf, tag_name: []const u8, tag_key: u64) ?IndexSpan {
                 if (self.query_accel_tag_disabled or self.query_accel_budget_exhausted) return null;
+                const tag_len: u16 = @intCast(tag_name.len);
                 for (self.query_accel_tag_entries.items) |entry| {
-                    if (entry.tag_hash == tag_hash) return entry.span;
+                    if (entry.tag_len == tag_len and entry.tag_key == tag_key) return entry.span;
                 }
 
                 var count: usize = 0;
                 for (self.nodes.items[1..]) |node| {
-                    if (isElementLike(node.kind) and node.tag_hash == tag_hash) count += 1;
+                    if (!isElementLike(node.kind)) continue;
+                    const node_name = node.name.slice(self.source);
+                    if (node_name.len != tag_name.len) continue;
+                    if (tags.first8Key(node_name) != tag_key) continue;
+                    count += 1;
                 }
 
                 const reserve_bytes = count * @sizeOf(u32) + @sizeOf(TagIndexEntry);
@@ -684,9 +688,11 @@ pub const ParseOptions = struct {
                 var idx: u32 = 1;
                 while (idx < self.nodes.items.len) : (idx += 1) {
                     const node = &self.nodes.items[idx];
-                    if (isElementLike(node.kind) and node.tag_hash == tag_hash) {
-                        self.query_accel_tag_nodes.appendAssumeCapacity(idx);
-                    }
+                    if (!isElementLike(node.kind)) continue;
+                    const node_name = node.name.slice(self.source);
+                    if (node_name.len != tag_name.len) continue;
+                    if (tags.first8Key(node_name) != tag_key) continue;
+                    self.query_accel_tag_nodes.appendAssumeCapacity(idx);
                 }
 
                 const span: IndexSpan = .{
@@ -694,7 +700,8 @@ pub const ParseOptions = struct {
                     .len = @intCast(self.query_accel_tag_nodes.items.len - start),
                 };
                 self.query_accel_tag_entries.append(self.allocator, .{
-                    .tag_hash = tag_hash,
+                    .tag_len = tag_len,
+                    .tag_key = tag_key,
                     .span = span,
                 }) catch {
                     self.query_accel_tag_disabled = true;
@@ -735,9 +742,9 @@ pub const ParseOptions = struct {
             }
 
             /// Internal tag-index lookup used by matcher acceleration path.
-            pub fn queryAccelLookupTag(self: *const DocSelf, tag_hash: tags.TagHashValue, used_index: *bool) ?[]const u32 {
+            pub fn queryAccelLookupTag(self: *const DocSelf, tag_name: []const u8, tag_key: u64, used_index: *bool) ?[]const u32 {
                 const mut_self: *DocSelf = @constCast(self);
-                const span = mut_self.ensureTagIndex(tag_hash) orelse {
+                const span = mut_self.ensureTagIndex(tag_name, tag_key) orelse {
                     used_index.* = false;
                     return null;
                 };
@@ -1801,7 +1808,7 @@ test "query accel id/tag indexes match selector results" {
     try doc.parse(&html, .{});
 
     const x = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(tags.hashBytes("a"), x.raw().tag_hash);
+    try std.testing.expectEqualStrings("a", x.raw().name.slice(doc.source));
 
     var used_id = false;
     const id_idx = doc.queryAccelLookupId("x", &used_id) orelse return error.TestUnexpectedResult;
@@ -1809,8 +1816,8 @@ test "query accel id/tag indexes match selector results" {
     try std.testing.expectEqual(x.index, id_idx);
 
     var used_tag = false;
-    const a_hash = tags.hashBytes("a");
-    const tag_candidates = doc.queryAccelLookupTag(a_hash, &used_tag) orelse return error.TestUnexpectedResult;
+    const a_key = tags.first8Key("a");
+    const tag_candidates = doc.queryAccelLookupTag("a", a_key, &used_tag) orelse return error.TestUnexpectedResult;
     try std.testing.expect(used_tag);
     try std.testing.expectEqual(@as(usize, 2), tag_candidates.len);
     try std.testing.expectEqual(x.index, tag_candidates[0]);
@@ -1840,7 +1847,7 @@ test "query accel state is invalidated by parse and clear" {
     try std.testing.expect(used_id);
 
     var used_tag = false;
-    _ = doc.queryAccelLookupTag(tags.hashBytes("a"), &used_tag);
+    _ = doc.queryAccelLookupTag("a", tags.first8Key("a"), &used_tag);
     try std.testing.expect(used_tag);
     try std.testing.expect(doc.query_accel_id_built);
     try std.testing.expect(doc.query_accel_tag_nodes.items.len != 0);

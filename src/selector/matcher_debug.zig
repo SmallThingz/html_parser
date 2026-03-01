@@ -115,8 +115,10 @@ fn classifyCompoundFailure(
 
     if (comp.has_tag != 0) {
         const tag = comp.tag.slice(selector.source);
-        const tag_hash: tags.TagHashValue = if (comp.tag_hash != 0) @intCast(comp.tag_hash) else tags.hashBytes(tag);
-        if (node.tag_hash != tag_hash or !tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), tag)) {
+        const tag_key: u64 = if (comp.tag_key != 0) comp.tag_key else tags.first8Key(tag);
+        const node_name = node.name.slice(doc.source);
+        const node_key = tags.first8Key(node_name);
+        if (!tags.equalByLenAndKeyIgnoreCase(node_name, node_key, tag, tag_key)) {
             return .{ .kind = .tag, .group_index = g, .compound_index = c, .predicate_index = predicate_index };
         }
         predicate_index += 1;
