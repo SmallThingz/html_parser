@@ -13,6 +13,10 @@ const HashClass: u32 = hashIgnoreCaseAscii("class");
 const EnableQueryAccel = true;
 const EnableMultiAttrCollect = true;
 
+inline fn isElementLike(kind: anytype) bool {
+    return kind == .element or kind == .svg;
+}
+
 /// Returns first matching node index for `selector` within optional `scope_root`.
 pub fn queryOneIndex(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, scope_root: u32) ?u32 {
     var best: ?u32 = null;
@@ -220,7 +224,7 @@ fn firstMatchForGroup(comptime Doc: type, doc: *const Doc, selector: ast.Selecto
     var i = start;
     while (i < end_excl and i < doc.nodes.items.len) : (i += 1) {
         const node = &doc.nodes.items[i];
-        if (node.kind != .element) continue;
+        if (!isElementLike(node.kind)) continue;
         if (matchGroupFromRight(Doc, doc, selector, group, rightmost, i, scope_root)) return i;
     }
     return null;
@@ -267,7 +271,7 @@ fn matchesScopeAnchor(doc: anytype, combinator: ast.Combinator, node_index: u32,
 
 fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Selector, comp: ast.Compound, node_index: u32) bool {
     const node = &doc.nodes.items[node_index];
-    if (node.kind != .element) return false;
+    if (!isElementLike(node.kind)) return false;
     // Per-node memo for attribute probes inside one compound match.
     // This preserves selector-order short-circuiting while avoiding repeated
     // full attribute traversals for the same name.
@@ -358,7 +362,7 @@ fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
             var position: usize = 0;
             var child = doc.nodes.items[p].first_child;
             while (child != InvalidIndex) : (child = doc.nodes.items[child].next_sibling) {
-                if (doc.nodes.items[child].kind != .element) continue;
+                if (!isElementLike(doc.nodes.items[child].kind)) continue;
                 position += 1;
                 if (child == node_index) break;
             }
@@ -599,7 +603,7 @@ fn parentElement(doc: anytype, node_index: u32) ?u32 {
 fn prevElementSibling(doc: anytype, node_index: u32) ?u32 {
     var prev = doc.nodes.items[node_index].prev_sibling;
     while (prev != InvalidIndex) : (prev = doc.nodes.items[prev].prev_sibling) {
-        if (doc.nodes.items[prev].kind == .element) return prev;
+        if (isElementLike(doc.nodes.items[prev].kind)) return prev;
     }
     return null;
 }
@@ -607,7 +611,7 @@ fn prevElementSibling(doc: anytype, node_index: u32) ?u32 {
 fn nextElementSibling(doc: anytype, node_index: u32) ?u32 {
     var next = doc.nodes.items[node_index].next_sibling;
     while (next != InvalidIndex) : (next = doc.nodes.items[next].next_sibling) {
-        if (doc.nodes.items[next].kind == .element) return next;
+        if (isElementLike(doc.nodes.items[next].kind)) return next;
     }
     return null;
 }

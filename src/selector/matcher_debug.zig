@@ -8,6 +8,10 @@ const selector_debug = @import("../debug/selector_debug.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
+inline fn isElementLike(kind: anytype) bool {
+    return kind == .element or kind == .svg;
+}
+
 /// Debug matcher that returns first match and records near-miss diagnostics.
 pub fn explainFirstMatch(
     comptime Doc: type,
@@ -27,7 +31,7 @@ pub fn explainFirstMatch(
     var i = start;
     while (i < end_excl and i < doc.nodes.items.len) : (i += 1) {
         const node = &doc.nodes.items[i];
-        if (node.kind != .element) continue;
+        if (!isElementLike(node.kind)) continue;
         report.visited_elements += 1;
 
         var first_failure: selector_debug.Failure = .{};
@@ -230,7 +234,7 @@ fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
             var position: usize = 0;
             var child = doc.nodes.items[p].first_child;
             while (child != InvalidIndex) : (child = doc.nodes.items[child].next_sibling) {
-                if (doc.nodes.items[child].kind != .element) continue;
+                if (!isElementLike(doc.nodes.items[child].kind)) continue;
                 position += 1;
                 if (child == node_index) break;
             }
@@ -280,7 +284,7 @@ fn parentElement(doc: anytype, node_index: u32) ?u32 {
 fn prevElementSibling(doc: anytype, node_index: u32) ?u32 {
     var prev = doc.nodes.items[node_index].prev_sibling;
     while (prev != InvalidIndex) : (prev = doc.nodes.items[prev].prev_sibling) {
-        if (doc.nodes.items[prev].kind == .element) return prev;
+        if (isElementLike(doc.nodes.items[prev].kind)) return prev;
     }
     return null;
 }
@@ -288,7 +292,7 @@ fn prevElementSibling(doc: anytype, node_index: u32) ?u32 {
 fn nextElementSibling(doc: anytype, node_index: u32) ?u32 {
     var next = doc.nodes.items[node_index].next_sibling;
     while (next != InvalidIndex) : (next = doc.nodes.items[next].next_sibling) {
-        if (doc.nodes.items[next].kind == .element) return next;
+        if (isElementLike(doc.nodes.items[next].kind)) return next;
     }
     return null;
 }

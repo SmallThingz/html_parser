@@ -5,6 +5,10 @@ const attr_inline = @import("attr_inline.zig");
 
 const InvalidIndex: u32 = std.math.maxInt(u32);
 
+inline fn isElementLike(kind: anytype) bool {
+    return kind == .element or kind == .svg;
+}
+
 /// Controls text extraction behavior for `innerText*` APIs.
 pub const TextOptions = struct {
     normalize_whitespace: bool = true,
@@ -16,7 +20,7 @@ pub fn firstChild(self: anytype) ?@TypeOf(self) {
     var idx = raw.first_child;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (isElementLike(c.kind)) return self.doc.nodeAt(idx);
     }
     return null;
 }
@@ -27,7 +31,7 @@ pub fn lastChild(self: anytype) ?@TypeOf(self) {
     var idx = raw.last_child;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].prev_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (isElementLike(c.kind)) return self.doc.nodeAt(idx);
     }
     return null;
 }
@@ -38,7 +42,7 @@ pub fn nextSibling(self: anytype) ?@TypeOf(self) {
     var idx = raw.next_sibling;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (isElementLike(c.kind)) return self.doc.nodeAt(idx);
     }
     return null;
 }
@@ -49,7 +53,7 @@ pub fn prevSibling(self: anytype) ?@TypeOf(self) {
     var idx = raw.prev_sibling;
     while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].prev_sibling) {
         const c = &self.doc.nodes.items[idx];
-        if (c.kind == .element) return self.doc.nodeAt(idx);
+        if (isElementLike(c.kind)) return self.doc.nodeAt(idx);
     }
     return null;
 }

@@ -34,6 +34,10 @@ pub const NodeType = enum(u3) {
     svg,
 };
 
+inline fn isElementLike(kind: NodeType) bool {
+    return kind == .element or kind == .svg;
+}
+
 /// Compile-time parser options and type factory for generated public API types.
 pub const ParseOptions = struct {
     // Precompute `children()` slices during parse.
@@ -219,7 +223,7 @@ pub const ParseOptions = struct {
                     }
 
                     const node = &self.doc.nodes.items[idx];
-                    if (node.kind != .element) continue;
+                    if (!isElementLike(node.kind)) continue;
 
                     if (matcher.matchesSelectorAt(DocType, self.doc, self.selector, idx, self.scope_root)) {
                         self.next_index += 1;
@@ -511,7 +515,7 @@ pub const ParseOptions = struct {
                 var i: usize = 1;
                 while (i < self.nodes.items.len) : (i += 1) {
                     const n = &self.nodes.items[i];
-                    if (n.kind != .element) continue;
+                    if (!isElementLike(n.kind)) continue;
                     if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
                 }
                 return null;
@@ -613,7 +617,7 @@ pub const ParseOptions = struct {
                 var idx: u32 = 1;
                 while (idx < self.nodes.items.len) : (idx += 1) {
                     const node = &self.nodes.items[idx];
-                    if (node.kind != .element) continue;
+                    if (!isElementLike(node.kind)) continue;
 
                     const id = attr_inline.getAttrValue(self, node, "id") orelse continue;
                     if (id.len == 0) continue;
@@ -662,7 +666,7 @@ pub const ParseOptions = struct {
 
                 var count: usize = 0;
                 for (self.nodes.items[1..]) |node| {
-                    if (node.kind == .element and node.tag_hash == tag_hash) count += 1;
+                    if (isElementLike(node.kind) and node.tag_hash == tag_hash) count += 1;
                 }
 
                 const reserve_bytes = count * @sizeOf(u32) + @sizeOf(TagIndexEntry);
@@ -680,7 +684,7 @@ pub const ParseOptions = struct {
                 var idx: u32 = 1;
                 while (idx < self.nodes.items.len) : (idx += 1) {
                     const node = &self.nodes.items[idx];
-                    if (node.kind == .element and node.tag_hash == tag_hash) {
+                    if (isElementLike(node.kind) and node.tag_hash == tag_hash) {
                         self.query_accel_tag_nodes.appendAssumeCapacity(idx);
                     }
                 }
@@ -1427,13 +1431,9 @@ test "svg subtrees are skipped including nested svg nodes" {
     var html = "<div id='before'></div><svg id='s'><g><svg id='inner'><rect id='r'/></svg><circle id='c'/></g></svg><div id='after'></div>".*;
     try doc.parse(&html, .{});
 
-    try std.testing.expect(doc.queryOne("#before") != null);
-    try std.testing.expect(doc.queryOne("#after") != null);
-    try std.testing.expect(doc.queryOne("svg") == null);
-    try std.testing.expect(doc.queryOne("#s") == null);
-    try std.testing.expect(doc.queryOne("#inner") == null);
-    try std.testing.expect(doc.queryOne("#r") == null);
-    try std.testing.expect(doc.queryOne("#c") == null);
+    const first_svg = doc.queryOne("svg") orelse return error.TestUnexpectedResult;
+    const first_svg_src = first_svg.svgSource() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("<svg id='s'><g><svg id='inner'><rect id='r'/></svg><circle id='c'/></g></svg>", first_svg_src);
 
     var svg_count: usize = 0;
     var outer_svg_idx: u32 = InvalidIndex;
@@ -1449,6 +1449,12 @@ test "svg subtrees are skipped including nested svg nodes" {
     const svg_node = doc.nodeAt(outer_svg_idx) orelse return error.TestUnexpectedResult;
     const svg_src = svg_node.svgSource() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("<svg id='s'><g><svg id='inner'><rect id='r'/></svg><circle id='c'/></g></svg>", svg_src);
+
+    try std.testing.expect(doc.queryOne("#before") != null);
+    try std.testing.expect(doc.queryOne("#after") != null);
+    try std.testing.expect(doc.queryOne("#inner") == null);
+    try std.testing.expect(doc.queryOne("#r") == null);
+    try std.testing.expect(doc.queryOne("#c") == null);
 }
 
 test "svg skip scanner ignores <svg in quoted attributes" {
@@ -1473,9 +1479,9 @@ test "self-closing svg is stored as svg node with full source span" {
     var html = "<div id='before'></div><svg id='s' viewBox='0 0 1 1' /><div id='after'></div>".*;
     try doc.parse(&html, .{});
 
-    try std.testing.expect(doc.queryOne("svg") == null);
-    try std.testing.expect(doc.queryOne("#before") != null);
-    try std.testing.expect(doc.queryOne("#after") != null);
+    const first_svg = doc.queryOne("svg") orelse return error.TestUnexpectedResult;
+    const first_svg_src = first_svg.svgSource() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("<svg id='s' viewBox='0 0 1 1' />", first_svg_src);
 
     var svg_idx: u32 = InvalidIndex;
     var i: u32 = 1;
@@ -1490,6 +1496,9 @@ test "self-closing svg is stored as svg node with full source span" {
     const svg_node = doc.nodeAt(svg_idx) orelse return error.TestUnexpectedResult;
     const svg_src = svg_node.svgSource() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("<svg id='s' viewBox='0 0 1 1' />", svg_src);
+
+    try std.testing.expect(doc.queryOne("#before") != null);
+    try std.testing.expect(doc.queryOne("#after") != null);
 }
 
 test "optional-close p/li/td-th/dt-dd/head-body preserve expected query semantics" {
