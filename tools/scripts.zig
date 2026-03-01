@@ -222,6 +222,7 @@ fn setupFixtures(alloc: std.mem.Allocator, refresh: bool) !void {
         const argv = [_][]const u8{
             "curl",
             "-L",
+            "--compressed",
             "--fail",
             "--retry",
             "2",

@@ -23,16 +23,16 @@ Source: `bench/results/latest.json` (`stable` profile).
 ### Parse Throughput (Average Across Fixtures)
 
 ```text
-ours     │████████████████████│ 1967.87 MB/s (100.00%)
-lol-html │███████████░░░░░░░░░│ 1102.76 MB/s (56.04%)
-lexbor   │██░░░░░░░░░░░░░░░░░░│ 244.55 MB/s (12.43%)
+ours     │████████████████████│ 1211.13 MB/s (100.00%)
+lol-html │███████████████░░░░░│ 920.47 MB/s (76.00%)
+lexbor   │████░░░░░░░░░░░░░░░░│ 215.87 MB/s (17.82%)
 ```
 
 ### Conformance Snapshot
 
 | Profile | nwmatcher | qwery_contextual | html5lib subset | WHATWG HTML parsing | WPT HTML parsing |
 |---|---:|---:|---:|---:|---:|
-| `strictest/fastest` | 20/20 (0 failed) | 54/54 (0 failed) | 516/600 (84 failed) | 412/500 (88 failed) | 412/500 (88 failed) |
+| `strictest/fastest` | 20/20 (0 failed) | 54/54 (0 failed) | 521/600 (79 failed) | 417/500 (83 failed) | 417/500 (83 failed) |
 
 Source: `bench/results/external_suite_report.json`
 <!-- README_AUTO_SUMMARY:END -->
