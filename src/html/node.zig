@@ -65,9 +65,9 @@ pub fn parentNode(self: anytype) ?@TypeOf(self) {
     return self.doc.nodeAt(parent);
 }
 
-/// Returns borrowed child-index slice for this node.
-pub fn children(self: anytype) []const u32 {
-    return self.doc.childrenIndexes(self.index);
+/// Returns direct-child index iterator for this node.
+pub fn children(self: anytype) @TypeOf(self.doc.childrenIter(self.index)) {
+    return self.doc.childrenIter(self.index);
 }
 
 /// Returns decoded attribute value for `name`, if present.

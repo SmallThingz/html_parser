@@ -71,6 +71,7 @@ pub const ParseOptions = struct {
         return struct {
             //! Public node wrapper that carries document pointer + node index.
             const DocType = options.GetDocument();
+            const ChildrenIterType = options.ChildrenIter();
             const QueryIterType = options.QueryIter();
 
             doc: *DocType,
@@ -142,8 +143,8 @@ pub const ParseOptions = struct {
                 return node_api.parentNode(self);
             }
 
-            /// Returns borrowed slice of child node indexes.
-            pub fn children(self: @This()) []const u32 {
+            /// Returns direct-child index iterator.
+            pub fn children(self: @This()) ChildrenIterType {
                 return node_api.children(self);
             }
 
@@ -233,12 +234,39 @@ pub const ParseOptions = struct {
         };
     }
 
+    /// Returns direct-child iterator type for this option set.
+    pub fn ChildrenIter(options: @This()) type {
+        return struct {
+            //! Iterator over direct child node indexes for a parent node.
+            const DocType = options.GetDocument();
+
+            doc: *const DocType,
+            next_idx: u32 = InvalidIndex,
+
+            /// Returns next child node index or `null` when exhausted.
+            pub fn next(noalias self: *@This()) ?u32 {
+                if (self.next_idx == InvalidIndex) return null;
+                const idx = self.next_idx;
+                self.next_idx = self.doc.nodes.items[idx].next_sibling;
+                return idx;
+            }
+
+            /// Appends all remaining child indexes into `out`.
+            pub fn collect(noalias self: *@This(), allocator: std.mem.Allocator, out: *std.ArrayListUnmanaged(u32)) !void {
+                while (self.next()) |idx| {
+                    try out.append(allocator, idx);
+                }
+            }
+        };
+    }
+
     /// Returns the document type (parser + query surface) for this option set.
     pub fn GetDocument(options: @This()) type {
         return struct {
             //! Parsed document owner and query entrypoint container.
             const DocSelf = @This();
             const RawNodeType = options.GetNodeRaw();
+            const ChildrenIterType = options.ChildrenIter();
             const NodeTypeWrapper = options.GetNode();
             const QueryIterType = options.QueryIter();
 
@@ -246,25 +274,11 @@ pub const ParseOptions = struct {
             source: []u8 = &[_]u8{},
 
             nodes: std.ArrayListUnmanaged(RawNodeType) = .{},
-            child_indexes: std.ArrayListUnmanaged(u32) = .{},
             parse_stack: std.ArrayListUnmanaged(u32) = .{},
 
             query_one_arena: ?std.heap.ArenaAllocator = null,
             query_all_arena: ?std.heap.ArenaAllocator = null,
             query_all_generation: u64 = 1,
-            // One-entry selector caches avoid recompiling hot repeated runtime selectors.
-            query_one_cached_selector: []const u8 = "",
-            query_one_cached_selector_ast: ?ast.Selector = null,
-            query_one_cache_valid: bool = false,
-            query_all_cached_selector: []const u8 = "",
-            query_all_cached_selector_ast: ?ast.Selector = null,
-            query_all_cache_valid: bool = false,
-            // One-entry queryOne result cache (source + scope -> first-match idx).
-            query_one_result_cache_valid: bool = false,
-            query_one_result_selector_len: usize = 0,
-            query_one_result_selector_hash: u64 = 0,
-            query_one_result_scope_root: u32 = InvalidIndex,
-            query_one_result_idx: u32 = InvalidIndex,
 
             query_accel_budget_bytes: usize = 0,
             query_accel_used_bytes: usize = 0,
@@ -286,7 +300,6 @@ pub const ParseOptions = struct {
             /// Releases all document-owned memory.
             pub fn deinit(noalias self: *DocSelf) void {
                 self.nodes.deinit(self.allocator);
-                self.child_indexes.deinit(self.allocator);
                 self.parse_stack.deinit(self.allocator);
                 self.query_accel_id_map.deinit(self.allocator);
                 self.query_accel_tag_entries.deinit(self.allocator);
@@ -298,11 +311,9 @@ pub const ParseOptions = struct {
             /// Clears parsed state while retaining reusable capacities.
             pub fn clear(noalias self: *DocSelf) void {
                 self.nodes.clearRetainingCapacity();
-                self.child_indexes.clearRetainingCapacity();
                 self.parse_stack.clearRetainingCapacity();
                 if (self.query_one_arena) |*arena| _ = arena.reset(.retain_capacity);
                 if (self.query_all_arena) |*arena| _ = arena.reset(.retain_capacity);
-                self.invalidateRuntimeSelectorCaches();
                 self.resetQueryAccel();
                 self.query_all_generation +%= 1;
                 if (self.query_all_generation == 0) self.query_all_generation = 1;
@@ -345,14 +356,18 @@ pub const ParseOptions = struct {
 
             fn queryOneRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
-                const sel = try mut_self.getOrCompileQueryOneSelector(selector);
+                const arena = mut_self.ensureQueryOneArena();
+                _ = arena.reset(.retain_capacity);
+                const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
                 return self.queryOneCachedFrom(sel, scope_root);
             }
 
             fn queryOneRuntimeDebugFrom(self: *const DocSelf, selector: []const u8, scope_root: u32, report: *selector_debug.QueryDebugReport) runtime_selector.Error!?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
                 report.reset(selector, scope_root, 0);
-                const sel = mut_self.getOrCompileQueryOneSelector(selector) catch |err| {
+                const arena = mut_self.ensureQueryOneArena();
+                _ = arena.reset(.retain_capacity);
+                const sel = ast.Selector.compileRuntime(arena.allocator(), selector) catch |err| {
                     report.setRuntimeParseError();
                     return err;
                 };
@@ -362,26 +377,7 @@ pub const ParseOptions = struct {
             fn queryOneCachedFrom(self: *const DocSelf, sel: ast.Selector, scope_root: u32) ?NodeTypeWrapper {
                 const mut_self: *DocSelf = @constCast(self);
                 mut_self.ensureQueryPrereqs(sel);
-                const sel_hash = hashSelectorSource(sel.source);
-                const sel_len = sel.source.len;
-
-                if (mut_self.query_one_result_cache_valid and
-                    mut_self.query_one_result_scope_root == scope_root and
-                    mut_self.query_one_result_selector_len == sel_len and
-                    mut_self.query_one_result_selector_hash == sel_hash)
-                {
-                    const idx = mut_self.query_one_result_idx;
-                    if (idx == InvalidIndex) return null;
-                    return self.nodeAt(idx);
-                }
-
                 const idx = matcher.queryOneIndex(DocSelf, self, sel, scope_root) orelse InvalidIndex;
-                mut_self.query_one_result_cache_valid = true;
-                mut_self.query_one_result_selector_len = sel_len;
-                mut_self.query_one_result_selector_hash = sel_hash;
-                mut_self.query_one_result_scope_root = scope_root;
-                mut_self.query_one_result_idx = idx;
-
                 if (idx == InvalidIndex) return null;
                 return self.nodeAt(idx);
             }
@@ -414,11 +410,14 @@ pub const ParseOptions = struct {
             fn queryAllRuntimeFrom(self: *const DocSelf, selector: []const u8, scope_root: u32) runtime_selector.Error!QueryIterType {
                 const mut_self: *DocSelf = @constCast(self);
                 // Runtime query-all iterators are invalidated when a newer runtime
-                // query-all is created, to avoid holding stale cached selector state.
+                // query-all is created, to avoid holding selector memory that may be
+                // replaced by the next runtime compile in `query_all_arena`.
                 mut_self.query_all_generation +%= 1;
                 if (mut_self.query_all_generation == 0) mut_self.query_all_generation = 1;
 
-                const sel = try mut_self.getOrCompileQueryAllSelector(selector);
+                const arena = mut_self.ensureQueryAllArena();
+                _ = arena.reset(.retain_capacity);
+                const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
                 mut_self.ensureQueryPrereqs(sel);
                 var out = if (scope_root == InvalidIndex)
                     self.queryAllCached(&sel)
@@ -486,48 +485,6 @@ pub const ParseOptions = struct {
                     .doc = @constCast(self),
                     .index = idx,
                 };
-            }
-
-            fn invalidateRuntimeSelectorCaches(noalias self: *DocSelf) void {
-                self.query_one_cache_valid = false;
-                self.query_one_cached_selector = "";
-                self.query_one_cached_selector_ast = null;
-                self.query_all_cache_valid = false;
-                self.query_all_cached_selector = "";
-                self.query_all_cached_selector_ast = null;
-                self.query_one_result_cache_valid = false;
-                self.query_one_result_selector_len = 0;
-                self.query_one_result_selector_hash = 0;
-                self.query_one_result_scope_root = InvalidIndex;
-                self.query_one_result_idx = InvalidIndex;
-            }
-
-            fn getOrCompileQueryOneSelector(noalias self: *DocSelf, selector: []const u8) runtime_selector.Error!ast.Selector {
-                if (self.query_one_cache_valid and std.mem.eql(u8, self.query_one_cached_selector, selector)) {
-                    return self.query_one_cached_selector_ast.?;
-                }
-
-                const arena = self.ensureQueryOneArena();
-                _ = arena.reset(.retain_capacity);
-                const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
-                self.query_one_cached_selector = sel.source;
-                self.query_one_cached_selector_ast = sel;
-                self.query_one_cache_valid = true;
-                return sel;
-            }
-
-            fn getOrCompileQueryAllSelector(noalias self: *DocSelf, selector: []const u8) runtime_selector.Error!ast.Selector {
-                if (self.query_all_cache_valid and std.mem.eql(u8, self.query_all_cached_selector, selector)) {
-                    return self.query_all_cached_selector_ast.?;
-                }
-
-                const arena = self.ensureQueryAllArena();
-                _ = arena.reset(.retain_capacity);
-                const sel = try ast.Selector.compileRuntime(arena.allocator(), selector);
-                self.query_all_cached_selector = sel.source;
-                self.query_all_cached_selector_ast = sel;
-                self.query_all_cache_valid = true;
-                return sel;
             }
 
             fn ensureQueryOneArena(noalias self: *DocSelf) *std.heap.ArenaAllocator {
@@ -712,16 +669,16 @@ pub const ParseOptions = struct {
                 return mut_self.query_accel_tag_nodes.items[start..end];
             }
 
-            /// Returns borrowed child indexes for `parent_idx`.
-            pub fn childrenIndexes(self: *DocSelf, parent_idx: u32) []const u32 {
-                self.child_indexes.clearRetainingCapacity();
-                if (parent_idx >= self.nodes.items.len) return self.child_indexes.items;
-
-                var child = self.nodes.items[parent_idx].first_child;
-                while (child != InvalidIndex) : (child = self.nodes.items[child].next_sibling) {
-                    self.child_indexes.append(self.allocator, child) catch @panic("out of memory building children view");
-                }
-                return self.child_indexes.items;
+            /// Returns direct-child index iterator for `parent_idx`.
+            pub fn childrenIter(self: *const DocSelf, parent_idx: u32) ChildrenIterType {
+                const first = if (parent_idx < self.nodes.items.len)
+                    self.nodes.items[parent_idx].first_child
+                else
+                    InvalidIndex;
+                return .{
+                    .doc = self,
+                    .next_idx = first,
+                };
             }
         };
     }
@@ -759,10 +716,6 @@ const Document = DefaultTypeOptions.GetDocument();
 
 fn hashIdValue(id: []const u8) u64 {
     return std.hash.Wyhash.hash(0, id);
-}
-
-fn hashSelectorSource(source: []const u8) u64 {
-    return std.hash.Wyhash.hash(0x9E3779B97F4A7C15, source);
 }
 
 fn assertNodeTypeLayouts() void {
@@ -1307,7 +1260,7 @@ test "cached selector APIs are equivalent to runtime string wrappers" {
     }
 }
 
-test "runtime query selector caches are invalidated on parse and clear" {
+test "runtime query parsing remains correct across parse and clear" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -1688,7 +1641,7 @@ test "attribute parsing still builds the DOM" {
     try std.testing.expect(doc.queryOne("#y") != null);
 }
 
-test "children() returns sibling-chain backed index slices" {
+test "children() iterator traverses sibling-chain indexes" {
     const alloc = std.testing.allocator;
     var doc = Document.init(alloc);
     defer doc.deinit();
@@ -1697,13 +1650,18 @@ test "children() returns sibling-chain backed index slices" {
     try doc.parse(&html, .{});
 
     const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
-    const kids = root.children();
-    try std.testing.expectEqual(@as(usize, 2), kids.len);
-    try std.testing.expectEqualStrings("a", (doc.nodeAt(kids[0]) orelse return error.TestUnexpectedResult).getAttributeValue("id").?);
-    try std.testing.expectEqualStrings("b", (doc.nodeAt(kids[1]) orelse return error.TestUnexpectedResult).getAttributeValue("id").?);
+    var kids = root.children();
+    var indexes: std.ArrayListUnmanaged(u32) = .{};
+    defer indexes.deinit(alloc);
+    try kids.collect(alloc, &indexes);
+    try std.testing.expectEqual(@as(usize, 2), indexes.items.len);
+    try std.testing.expectEqualStrings("a", (doc.nodeAt(indexes.items[0]) orelse return error.TestUnexpectedResult).getAttributeValue("id").?);
+    try std.testing.expectEqualStrings("b", (doc.nodeAt(indexes.items[1]) orelse return error.TestUnexpectedResult).getAttributeValue("id").?);
 
-    const again = root.children();
-    try std.testing.expectEqual(@as(usize, 2), again.len);
+    var again = root.children();
+    indexes.clearRetainingCapacity();
+    try again.collect(alloc, &indexes);
+    try std.testing.expectEqual(@as(usize, 2), indexes.items.len);
 }
 
 test "moved document keeps node-scoped queries and navigation valid" {

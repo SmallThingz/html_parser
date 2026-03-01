@@ -37,7 +37,10 @@ test "parent navigation uses in-node parent indexes" {
 
     const root = doc.queryOne("div#root") orelse return error.TestUnexpectedResult;
     try std.testing.expect(root.firstChild() != null);
-    try std.testing.expect(root.children().len == 1);
+    var child_it = root.children();
+    var count: usize = 0;
+    while (child_it.next() != null) count += 1;
+    try std.testing.expect(count == 1);
 }
 
 test "queries that need ancestry work with in-node parent pointers" {

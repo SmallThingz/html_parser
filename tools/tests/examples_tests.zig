@@ -63,9 +63,12 @@ test "example parity: navigation and children" {
 
     try std.testing.expectEqualStrings("title", first.getAttributeValue("id").?);
     try std.testing.expectEqualStrings("body", last.getAttributeValue("id").?);
-    const children = main.children();
-    try std.testing.expectEqual(@as(usize, 3), children.len);
-    const first_via_index = main.doc.nodeAt(children[0]) orelse return error.TestUnexpectedResult;
+    var children = main.children();
+    var child_indexes: std.ArrayListUnmanaged(u32) = .{};
+    defer child_indexes.deinit(std.testing.allocator);
+    try children.collect(std.testing.allocator, &child_indexes);
+    try std.testing.expectEqual(@as(usize, 3), child_indexes.items.len);
+    const first_via_index = main.doc.nodeAt(child_indexes.items[0]) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("title", first_via_index.getAttributeValue("id").?);
 }
 
