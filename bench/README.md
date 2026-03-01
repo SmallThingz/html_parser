@@ -10,10 +10,9 @@ It also benchmarks `htmlparser` query parsing throughput (runtime selector compi
 Query sections remain `htmlparser`-only; external parser comparisons are parse throughput only.
 `query-parse` is mode-independent and is measured once (`ours`) to avoid duplicate compatibility rows.
 
-`htmlparser` parse results are reported in two internal benchmark modes:
+`htmlparser` parse/query benchmark results are reported as:
 
-- `ours-strictest`: most-work parse option bundle
-- `ours-fastest`: least-work parse option bundle (lazy child views + whitespace text-node dropping)
+- `ours`: fastest parse option bundle (lazy child views + whitespace text-node dropping)
 
 Default fixture set includes:
 - `rust-lang.html`
@@ -21,6 +20,22 @@ Default fixture set includes:
 - `mdn-html.html`
 - `w3-html52.html`
 - `hn.html`
+- `python-org.html`
+- `kernel-org.html`
+- `gnu-org.html`
+- `ziglang-org.html`
+- `ziglang-doc-master.html`
+- `wikipedia-unicode-list.html`
+- `whatwg-html-spec.html`
+- `synthetic-forms.html`
+- `synthetic-table-grid.html`
+- `synthetic-list-nested.html`
+- `synthetic-comments-doctype.html`
+- `synthetic-template-rich.html`
+- `synthetic-whitespace-noise.html`
+- `synthetic-news-feed.html`
+- `synthetic-ecommerce.html`
+- `synthetic-forum-thread.html`
 
 ## Setup
 
@@ -67,4 +82,4 @@ Results are written to:
 
 The benchmark output also includes a hard gate table:
 
-- `PASS/FAIL: ours-fastest > lol-html` per fixture
+- `PASS/FAIL: ours > lol-html` per fixture

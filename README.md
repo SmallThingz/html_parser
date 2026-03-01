@@ -18,15 +18,14 @@ Performance numbers are **not** conformance claims. The parser is intentionally 
 
 <!-- README_AUTO_SUMMARY:START -->
 
-Source: `bench/results/latest.json` (`stable` profile).
+Source: `bench/results/latest.json` (`quick` profile).
 
 ### Parse Throughput (Average Across Fixtures)
 
 ```text
-ours-fastest   │████████████████████│ 1671.03 MB/s (100.00%)
-ours-strictest │████████████████████│ 1670.89 MB/s (99.99%)
-lol-html       │███████████████░░░░░│ 1224.32 MB/s (73.27%)
-lexbor         │███░░░░░░░░░░░░░░░░░│ 286.31 MB/s (17.13%)
+ours     │████████████████████│ 1645.13 MB/s (100.00%)
+lol-html │████████████░░░░░░░░│ 955.36 MB/s (58.07%)
+lexbor   │███░░░░░░░░░░░░░░░░░│ 210.20 MB/s (12.78%)
 ```
 
 ### Conformance Snapshot

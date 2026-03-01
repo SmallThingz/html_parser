@@ -187,39 +187,55 @@ Warning: throughput numbers are not conformance claims. This parser is permissiv
 
 <!-- BENCHMARK_SNAPSHOT:START -->
 
-Source: `bench/results/latest.json` (`stable` profile).
+Source: `bench/results/latest.json` (`quick` profile).
 
 #### Parse Throughput Comparison (MB/s)
 
-| Fixture | ours-fastest | ours-strictest | lol-html | lexbor |
-|---|---:|---:|---:|---:|
-| `rust-lang.html` | 1793.63 | 1805.72 | 1485.65 | 338.79 |
-| `wiki-html.html` | 1592.09 | 1626.85 | 1197.90 | 267.40 |
-| `mdn-html.html` | 2665.37 | 2631.01 | 1840.10 | 405.93 |
-| `w3-html52.html` | 1041.27 | 1067.65 | 739.42 | 197.44 |
-| `hn.html` | 1262.78 | 1223.22 | 858.51 | 222.01 |
+| Fixture | ours | lol-html | lexbor |
+|---|---:|---:|---:|
+| `rust-lang.html` | 1268.48 | 1014.95 | 235.85 |
+| `wiki-html.html` | 1201.71 | 997.62 | 230.75 |
+| `mdn-html.html` | 2048.73 | 1476.83 | 327.76 |
+| `w3-html52.html` | 880.85 | 709.20 | 176.47 |
+| `hn.html` | 1139.01 | 838.57 | 215.48 |
+| `python-org.html` | 12842.89 | 3125.54 | 512.60 |
+| `kernel-org.html` | 1421.24 | 1180.06 | 270.49 |
+| `gnu-org.html` | 1767.56 | 1223.40 | 281.50 |
+| `ziglang-org.html` | 1315.18 | 1028.18 | 253.44 |
+| `ziglang-doc-master.html` | 920.71 | 851.15 | 210.79 |
+| `wikipedia-unicode-list.html` | 1280.31 | 994.43 | 199.70 |
+| `whatwg-html-spec.html` | 856.61 | 810.04 | 196.23 |
+| `synthetic-forms.html` | 975.65 | 717.80 | 148.20 |
+| `synthetic-table-grid.html` | 696.44 | 699.27 | 138.77 |
+| `synthetic-list-nested.html` | 856.61 | 627.55 | 156.74 |
+| `synthetic-comments-doctype.html` | 1323.85 | 775.32 | 191.61 |
+| `synthetic-template-rich.html` | 631.79 | 399.83 | 129.11 |
+| `synthetic-whitespace-noise.html` | 983.29 | 877.60 | 147.90 |
+| `synthetic-news-feed.html` | 702.18 | 573.83 | 123.64 |
+| `synthetic-ecommerce.html` | 690.67 | 509.90 | 128.91 |
+| `synthetic-forum-thread.html` | 743.85 | 631.43 | 138.34 |
 
 #### Query Match Throughput (ours)
 
-| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
-|---|---:|---:|---:|---:|
-| `attr-heavy-button` | 1096635.57 | 911.88 | 1157408.79 | 864.00 |
-| `attr-heavy-nav` | 1096348.31 | 912.12 | 1240981.35 | 805.81 |
+| Case | ours ops/s | ours ns/op |
+|---|---:|---:|
+| `attr-heavy-button` | 1237399.82 | 808.15 |
+| `attr-heavy-nav` | 1124363.32 | 889.39 |
 
 #### Cached Query Throughput (ours)
 
-| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |
-|---|---:|---:|---:|---:|
-| `attr-heavy-button` | 1251564.49 | 799.00 | 1429552.76 | 699.52 |
-| `attr-heavy-nav` | 1268503.74 | 788.33 | 1459951.22 | 684.95 |
+| Case | ours ops/s | ours ns/op |
+|---|---:|---:|
+| `attr-heavy-button` | 1190918.72 | 839.69 |
+| `attr-heavy-nav` | 1160560.94 | 861.65 |
 
 #### Query Parse Throughput (ours)
 
 | Selector case | Ops/s | ns/op |
 |---|---:|---:|
-| `simple` | 18369247.97 | 54.44 |
-| `complex` | 6344494.00 | 157.62 |
-| `grouped` | 6762290.76 | 147.88 |
+| `simple` | 18459598.22 | 54.17 |
+| `complex` | 6121884.27 | 163.35 |
+| `grouped` | 7212833.22 | 138.64 |
 
 For full per-parser, per-fixture tables and gate output:
 - `bench/results/latest.md`

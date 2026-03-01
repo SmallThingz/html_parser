@@ -25,24 +25,21 @@ const ParserCapability = struct {
 };
 
 const parser_capabilities = [_]ParserCapability{
-    .{ .parser = "ours-strictest", .capability = "dom" },
-    .{ .parser = "ours-fastest", .capability = "dom" },
+    .{ .parser = "ours", .capability = "dom" },
     .{ .parser = "strlen", .capability = "scan" },
     .{ .parser = "lexbor", .capability = "dom" },
     .{ .parser = "lol-html", .capability = "streaming" },
 };
 
 const parse_parsers = [_][]const u8{
-    "ours-strictest",
-    "ours-fastest",
+    "ours",
     "strlen",
     "lexbor",
     "lol-html",
 };
 
 const query_modes = [_]struct { parser: []const u8, mode: []const u8 }{
-    .{ .parser = "ours-strictest", .mode = "strictest" },
-    .{ .parser = "ours-fastest", .mode = "fastest" },
+    .{ .parser = "ours", .mode = "fastest" },
 };
 
 const query_parse_modes = [_]struct { parser: []const u8, mode: []const u8 }{
@@ -81,6 +78,22 @@ const quick_fixtures = [_]FixtureCase{
     .{ .name = "mdn-html.html", .iterations = 30 },
     .{ .name = "w3-html52.html", .iterations = 30 },
     .{ .name = "hn.html", .iterations = 30 },
+    .{ .name = "python-org.html", .iterations = 30 },
+    .{ .name = "kernel-org.html", .iterations = 30 },
+    .{ .name = "gnu-org.html", .iterations = 30 },
+    .{ .name = "ziglang-org.html", .iterations = 30 },
+    .{ .name = "ziglang-doc-master.html", .iterations = 30 },
+    .{ .name = "wikipedia-unicode-list.html", .iterations = 30 },
+    .{ .name = "whatwg-html-spec.html", .iterations = 20 },
+    .{ .name = "synthetic-forms.html", .iterations = 20 },
+    .{ .name = "synthetic-table-grid.html", .iterations = 20 },
+    .{ .name = "synthetic-list-nested.html", .iterations = 20 },
+    .{ .name = "synthetic-comments-doctype.html", .iterations = 20 },
+    .{ .name = "synthetic-template-rich.html", .iterations = 20 },
+    .{ .name = "synthetic-whitespace-noise.html", .iterations = 20 },
+    .{ .name = "synthetic-news-feed.html", .iterations = 20 },
+    .{ .name = "synthetic-ecommerce.html", .iterations = 20 },
+    .{ .name = "synthetic-forum-thread.html", .iterations = 20 },
 };
 
 const stable_fixtures = [_]FixtureCase{
@@ -89,6 +102,22 @@ const stable_fixtures = [_]FixtureCase{
     .{ .name = "mdn-html.html", .iterations = 300 },
     .{ .name = "w3-html52.html", .iterations = 300 },
     .{ .name = "hn.html", .iterations = 300 },
+    .{ .name = "python-org.html", .iterations = 300 },
+    .{ .name = "kernel-org.html", .iterations = 300 },
+    .{ .name = "gnu-org.html", .iterations = 300 },
+    .{ .name = "ziglang-org.html", .iterations = 300 },
+    .{ .name = "ziglang-doc-master.html", .iterations = 300 },
+    .{ .name = "wikipedia-unicode-list.html", .iterations = 300 },
+    .{ .name = "whatwg-html-spec.html", .iterations = 120 },
+    .{ .name = "synthetic-forms.html", .iterations = 120 },
+    .{ .name = "synthetic-table-grid.html", .iterations = 120 },
+    .{ .name = "synthetic-list-nested.html", .iterations = 120 },
+    .{ .name = "synthetic-comments-doctype.html", .iterations = 120 },
+    .{ .name = "synthetic-template-rich.html", .iterations = 120 },
+    .{ .name = "synthetic-whitespace-noise.html", .iterations = 120 },
+    .{ .name = "synthetic-news-feed.html", .iterations = 120 },
+    .{ .name = "synthetic-ecommerce.html", .iterations = 120 },
+    .{ .name = "synthetic-forum-thread.html", .iterations = 120 },
 };
 
 const quick_query_parse = [_]QueryCase{
@@ -169,6 +198,13 @@ fn setupFixtures(alloc: std.mem.Allocator, refresh: bool) !void {
         .{ .url = "https://developer.mozilla.org/en-US/docs/Web/HTML", .out = "mdn-html.html" },
         .{ .url = "https://www.w3.org/TR/html52/", .out = "w3-html52.html" },
         .{ .url = "https://news.ycombinator.com/", .out = "hn.html" },
+        .{ .url = "https://www.python.org/", .out = "python-org.html" },
+        .{ .url = "https://www.kernel.org/", .out = "kernel-org.html" },
+        .{ .url = "https://www.gnu.org/", .out = "gnu-org.html" },
+        .{ .url = "https://ziglang.org/", .out = "ziglang-org.html" },
+        .{ .url = "https://ziglang.org/documentation/master/", .out = "ziglang-doc-master.html" },
+        .{ .url = "https://en.wikipedia.org/wiki/List_of_Unicode_characters", .out = "wikipedia-unicode-list.html" },
+        .{ .url = "https://html.spec.whatwg.org/", .out = "whatwg-html-spec.html" },
     };
     for (targets) |item| {
         const target = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ FIXTURES_DIR, item.out });
@@ -285,7 +321,7 @@ const QueryResult = struct {
 
 const GateRow = struct {
     fixture: []const u8,
-    ours_fastest_mb_s: f64,
+    ours_mb_s: f64,
     lol_html_mb_s: f64,
     pass: bool,
 };
@@ -338,16 +374,7 @@ const ExternalSuiteReport = struct {
 
 fn runnerCmdParse(alloc: std.mem.Allocator, parser_name: []const u8, fixture: []const u8, iterations: usize) ![]const []const u8 {
     const iter_s = try std.fmt.allocPrint(alloc, "{d}", .{iterations});
-    if (std.mem.eql(u8, parser_name, "ours-strictest")) {
-        const argv = try alloc.alloc([]const u8, 5);
-        argv[0] = "zig-out/bin/htmlparser-bench";
-        argv[1] = "parse";
-        argv[2] = "strictest";
-        argv[3] = fixture;
-        argv[4] = iter_s;
-        return argv;
-    }
-    if (std.mem.eql(u8, parser_name, "ours-fastest")) {
+    if (std.mem.eql(u8, parser_name, "ours")) {
         const argv = try alloc.alloc([]const u8, 5);
         argv[0] = "zig-out/bin/htmlparser-bench";
         argv[1] = "parse";
@@ -582,13 +609,11 @@ fn renderDocumentationBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBen
     try w.print("Source: `bench/results/latest.json` (`{s}` profile).\n\n", .{snap.profile});
 
     try w.writeAll("#### Parse Throughput Comparison (MB/s)\n\n");
-    try w.writeAll("| Fixture | ours-fastest | ours-strictest | lol-html | lexbor |\n");
-    try w.writeAll("|---|---:|---:|---:|---:|\n");
+    try w.writeAll("| Fixture | ours | lol-html | lexbor |\n");
+    try w.writeAll("|---|---:|---:|---:|\n");
     for (fixtures.items) |fixture| {
         try w.print("| `{s}` | ", .{fixture});
-        try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "ours-fastest", fixture));
-        try w.writeAll(" | ");
-        try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "ours-strictest", fixture));
+        try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "ours", fixture));
         try w.writeAll(" | ");
         try writeMaybeF64(w, findReadmeParseThroughput(snap.parse_results, "lol-html", fixture));
         try w.writeAll(" | ");
@@ -597,36 +622,26 @@ fn renderDocumentationBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBen
     }
 
     try w.writeAll("\n#### Query Match Throughput (ours)\n\n");
-    try w.writeAll("| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |\n");
-    try w.writeAll("|---|---:|---:|---:|---:|\n");
+    try w.writeAll("| Case | ours ops/s | ours ns/op |\n");
+    try w.writeAll("|---|---:|---:|\n");
     for (query_match_cases.items) |case_name| {
-        const strictest = findReadmeQuery(snap.query_match_results, "ours-strictest", case_name);
-        const fastest = findReadmeQuery(snap.query_match_results, "ours-fastest", case_name);
+        const ours = findReadmeQuery(snap.query_match_results, "ours", case_name);
         try w.print("| `{s}` | ", .{case_name});
-        try writeMaybeF64(w, if (strictest) |s| s.ops_s else null);
+        try writeMaybeF64(w, if (ours) |s| s.ops_s else null);
         try w.writeAll(" | ");
-        try writeMaybeF64(w, if (strictest) |s| s.ns_per_op else null);
-        try w.writeAll(" | ");
-        try writeMaybeF64(w, if (fastest) |s| s.ops_s else null);
-        try w.writeAll(" | ");
-        try writeMaybeF64(w, if (fastest) |s| s.ns_per_op else null);
+        try writeMaybeF64(w, if (ours) |s| s.ns_per_op else null);
         try w.writeAll(" |\n");
     }
 
     try w.writeAll("\n#### Cached Query Throughput (ours)\n\n");
-    try w.writeAll("| Case | strictest ops/s | strictest ns/op | fastest ops/s | fastest ns/op |\n");
-    try w.writeAll("|---|---:|---:|---:|---:|\n");
+    try w.writeAll("| Case | ours ops/s | ours ns/op |\n");
+    try w.writeAll("|---|---:|---:|\n");
     for (query_match_cases.items) |case_name| {
-        const strictest = findReadmeQuery(snap.query_cached_results, "ours-strictest", case_name);
-        const fastest = findReadmeQuery(snap.query_cached_results, "ours-fastest", case_name);
+        const ours = findReadmeQuery(snap.query_cached_results, "ours", case_name);
         try w.print("| `{s}` | ", .{case_name});
-        try writeMaybeF64(w, if (strictest) |s| s.ops_s else null);
+        try writeMaybeF64(w, if (ours) |s| s.ops_s else null);
         try w.writeAll(" | ");
-        try writeMaybeF64(w, if (strictest) |s| s.ns_per_op else null);
-        try w.writeAll(" | ");
-        try writeMaybeF64(w, if (fastest) |s| s.ops_s else null);
-        try w.writeAll(" | ");
-        try writeMaybeF64(w, if (fastest) |s| s.ns_per_op else null);
+        try writeMaybeF64(w, if (ours) |s| s.ns_per_op else null);
         try w.writeAll(" |\n");
     }
 
@@ -634,9 +649,7 @@ fn renderDocumentationBenchmarkSection(alloc: std.mem.Allocator, snap: ReadmeBen
     try w.writeAll("| Selector case | Ops/s | ns/op |\n");
     try w.writeAll("|---|---:|---:|\n");
     for (query_parse_cases.items) |case_name| {
-        const ours = findReadmeQuery(snap.query_parse_results, "ours", case_name) orelse
-            findReadmeQuery(snap.query_parse_results, "ours-strictest", case_name) orelse
-            findReadmeQuery(snap.query_parse_results, "ours-fastest", case_name);
+        const ours = findReadmeQuery(snap.query_parse_results, "ours", case_name);
         try w.print("| `{s}` | ", .{case_name});
         try writeMaybeF64(w, if (ours) |r| r.ops_s else null);
         try w.writeAll(" | ");
@@ -709,7 +722,7 @@ fn writeRepeatGlyph(w: anytype, glyph: []const u8, count: usize) !void {
 }
 
 fn parseAverageRows(alloc: std.mem.Allocator, snap: ReadmeBenchSnapshot) ![]ParseAverageRow {
-    const parser_names = [_][]const u8{ "ours-fastest", "ours-strictest", "lol-html", "lexbor" };
+    const parser_names = [_][]const u8{ "ours", "lol-html", "lexbor" };
     var rows = std.ArrayList(ParseAverageRow).empty;
     errdefer rows.deinit(alloc);
 
@@ -1002,13 +1015,13 @@ fn writeMarkdown(
     try writeQuerySection(alloc, &out, "## Query Cached Throughput", query_cached_results);
 
     if (gate_rows.len > 0) {
-        try w.writeAll("## Fastest vs lol-html Gate\n\n");
-        try w.writeAll("| Fixture | ours-fastest (MB/s) | lol-html (MB/s) | Result |\n");
+        try w.writeAll("## Ours vs lol-html Gate\n\n");
+        try w.writeAll("| Fixture | ours (MB/s) | lol-html (MB/s) | Result |\n");
         try w.writeAll("|---|---:|---:|---|\n");
         for (gate_rows) |g| {
             try w.print("| {s} | {d:.2} | {d:.2} | {s} |\n", .{
                 g.fixture,
-                g.ours_fastest_mb_s,
+                g.ours_mb_s,
                 g.lol_html_mb_s,
                 if (g.pass) "PASS" else "FAIL",
             });
@@ -1062,11 +1075,11 @@ fn evaluateGateRows(alloc: std.mem.Allocator, profile: Profile, parse_results: [
     var rows = std.ArrayList(GateRow).empty;
     errdefer rows.deinit(alloc);
     for (profile.fixtures) |fx| {
-        const ours = findParseThroughput(parse_results, "ours-fastest", fx.name) orelse continue;
+        const ours = findParseThroughput(parse_results, "ours", fx.name) orelse continue;
         const lol = findParseThroughput(parse_results, "lol-html", fx.name) orelse continue;
         try rows.append(alloc, .{
             .fixture = fx.name,
-            .ours_fastest_mb_s = ours,
+            .ours_mb_s = ours,
             .lol_html_mb_s = lol,
             .pass = ours > lol,
         });
@@ -1093,14 +1106,14 @@ fn rerunFailedGateRows(alloc: std.mem.Allocator, profile: Profile, gate_rows: []
 
         std.debug.print("re-running flaky gate fixture {s} at {d} iters\n", .{ row.fixture, iters });
 
-        const ours = try benchParseOne(alloc, "ours-fastest", row.fixture, iters);
+        const ours = try benchParseOne(alloc, "ours", row.fixture, iters);
         defer alloc.free(ours.samples_ns);
         const lol = try benchParseOne(alloc, "lol-html", row.fixture, iters);
         defer alloc.free(lol.samples_ns);
 
-        row.ours_fastest_mb_s = ours.throughput_mb_s;
+        row.ours_mb_s = ours.throughput_mb_s;
         row.lol_html_mb_s = lol.throughput_mb_s;
-        row.pass = row.ours_fastest_mb_s > row.lol_html_mb_s;
+        row.pass = row.ours_mb_s > row.lol_html_mb_s;
     }
 }
 
@@ -1193,8 +1206,8 @@ fn renderConsole(
     try renderQueryConsoleSection(alloc, &out, "Query Cached Throughput", query_cached_results);
 
     if (gate_rows.len > 0) {
-        try w.writeAll("Fastest vs lol-html Gate\n\n");
-        const headers = [_][]const u8{ "Fixture", "ours-fastest (MB/s)", "lol-html (MB/s)", "Result" };
+        try w.writeAll("Ours vs lol-html Gate\n\n");
+        const headers = [_][]const u8{ "Fixture", "ours (MB/s)", "lol-html (MB/s)", "Result" };
         const aligns = [_]bool{ false, true, true, false };
         var widths = [_]usize{ headers[0].len, headers[1].len, headers[2].len, headers[3].len };
 
@@ -1206,7 +1219,7 @@ fn renderConsole(
         for (gate_rows) |g| {
             var cells: [4][]u8 = undefined;
             cells[0] = try alloc.dupe(u8, g.fixture);
-            cells[1] = try std.fmt.allocPrint(alloc, "{d:.2}", .{g.ours_fastest_mb_s});
+            cells[1] = try std.fmt.allocPrint(alloc, "{d:.2}", .{g.ours_mb_s});
             cells[2] = try std.fmt.allocPrint(alloc, "{d:.2}", .{g.lol_html_mb_s});
             cells[3] = try alloc.dupe(u8, if (g.pass) "PASS" else "FAIL");
             inline for (0..4) |i| widths[i] = @max(widths[i], cells[i].len);
@@ -1398,7 +1411,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
         .generated_unix = common.nowUnix(),
         .profile = profile.name,
         .repeats = repeats,
-        .bench_modes = .{ .parse = &[_][]const u8{ "strictest", "fastest" }, .query = &[_][]const u8{ "strictest", "fastest" } },
+        .bench_modes = .{ .parse = &[_][]const u8{"ours"}, .query = &[_][]const u8{"ours"} },
         .parser_capabilities = &parser_capabilities,
         .parse_results = parse_results.items,
         .query_parse_results = query_parse_results.items,
@@ -1436,7 +1449,7 @@ fn runBenchmarks(alloc: std.mem.Allocator, args: []const []const u8) !void {
 
     for (gate_rows) |g| {
         if (std.mem.eql(u8, profile.name, "stable") and !g.pass) {
-            const msg = try std.fmt.allocPrint(alloc, "stable fastest-vs-lol fail: {s} ours-fastest {d:.2} <= lol-html {d:.2}", .{ g.fixture, g.ours_fastest_mb_s, g.lol_html_mb_s });
+            const msg = try std.fmt.allocPrint(alloc, "stable ours-vs-lol fail: {s} ours {d:.2} <= lol-html {d:.2}", .{ g.fixture, g.ours_mb_s, g.lol_html_mb_s });
             try failures.append(alloc, msg);
         }
     }
