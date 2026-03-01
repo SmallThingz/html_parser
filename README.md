@@ -16,6 +16,8 @@ Performance numbers are **not** conformance claims. The parser is intentionally 
 
 ## 🏁 Performance
 
+See the [latest benchmark snapshot](./DOCUMENTATION.md#latest-benchmark-snapshot) for more details
+
 <!-- README_AUTO_SUMMARY:START -->
 
 Source: `bench/results/latest.json` (`stable` profile).
