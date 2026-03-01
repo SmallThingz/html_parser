@@ -138,7 +138,6 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             const name_start = self.i;
             var tag_name_key: u64 = 0;
-            var tag_key_len: u8 = 0;
 
             outer: {
                 inline for (0..8) |len| {
@@ -147,10 +146,11 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                         var c = self.input[self.i];
                         c = tables.lower(c);
                     } else {
-                        tag_key_len = len;
                         @memcpy(std.mem.asBytes(&tag_name_key)[0 .. len], self.input[name_start..][0 .. len]);
                         break :outer;
                     }
+                } else {
+                    @memcpy(std.mem.asBytes(&tag_name_key), self.input[name_start..][0 .. 8]);
                 }
                 while (self.i < self.input.len and tables.TagNameCharTable[self.input[self.i]]) : (self.i += 1) {}
             }

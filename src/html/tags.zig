@@ -142,7 +142,7 @@ pub fn isRawTextTagWithKey(name: []const u8, key: u64) bool {
 }
 
 /// Returns true when `new_tag` can trigger optional-close logic.
-pub fn mayTriggerImplicitCloseWithKey(new_tag: []const u8, new_key: u64) bool {
+pub inline fn mayTriggerImplicitCloseWithKey(new_tag: []const u8, new_key: u64) bool {
     return switch (new_tag.len) {
         1 => new_key == KEY.P,
         2 => switch (new_key) {
