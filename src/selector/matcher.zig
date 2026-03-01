@@ -360,15 +360,12 @@ fn matchesPseudo(doc: anytype, node_index: u32, pseudo: ast.Pseudo) bool {
         .first_child => prevElementSibling(doc, node_index) == null,
         .last_child => nextElementSibling(doc, node_index) == null,
         .nth_child => blk: {
-            const p = parentElement(doc, node_index) orelse break :blk false;
-            var position: usize = 0;
-            var child = doc.nodes.items[p].first_child;
-            while (child != InvalidIndex) : (child = doc.nodes.items[child].next_sibling) {
-                if (!isElementLike(doc.nodes.items[child].kind)) continue;
+            _ = parentElement(doc, node_index) orelse break :blk false;
+            var position: usize = 1;
+            var prev = doc.nodes.items[node_index].prev_sibling;
+            while (prev != InvalidIndex) : (prev = doc.nodes.items[prev].prev_sibling) {
                 position += 1;
-                if (child == node_index) break;
             }
-            if (position == 0) break :blk false;
             break :blk pseudo.nth.matches(position);
         },
     };
@@ -611,9 +608,7 @@ fn prevElementSibling(doc: anytype, node_index: u32) ?u32 {
 }
 
 fn nextElementSibling(doc: anytype, node_index: u32) ?u32 {
-    var next = doc.nodes.items[node_index].next_sibling;
-    while (next != InvalidIndex) : (next = doc.nodes.items[next].next_sibling) {
-        if (isElementLike(doc.nodes.items[next].kind)) return next;
-    }
-    return null;
+    const next = doc.nextElementSiblingIndex(node_index);
+    if (next == InvalidIndex) return null;
+    return next;
 }

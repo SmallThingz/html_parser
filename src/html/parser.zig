@@ -363,12 +363,10 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
 
             if (build_links) {
                 var p = &self.doc.nodes.items[parent_idx];
-                if (p.first_child == InvalidIndex) {
-                    p.first_child = idx;
+                if (p.last_child == InvalidIndex) {
                     p.last_child = idx;
                 } else {
                     const prev = p.last_child;
-                    self.doc.nodes.items[prev].next_sibling = idx;
                     self.doc.nodes.items[idx].prev_sibling = prev;
                     p.last_child = idx;
                 }

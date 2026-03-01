@@ -56,10 +56,8 @@ pub const ParseOptions = struct {
             // Attribute bytes begin at `name.end` and end at `attr_end`.
             attr_end: u32 = 0,
 
-            first_child: u32 = InvalidIndex,
             last_child: u32 = InvalidIndex,
             prev_sibling: u32 = InvalidIndex,
-            next_sibling: u32 = InvalidIndex,
             parent: u32 = InvalidIndex,
 
             subtree_end: u32 = 0,
@@ -247,7 +245,7 @@ pub const ParseOptions = struct {
             pub fn next(noalias self: *@This()) ?u32 {
                 if (self.next_idx == InvalidIndex) return null;
                 const idx = self.next_idx;
-                self.next_idx = self.doc.nodes.items[idx].next_sibling;
+                self.next_idx = self.doc.nextElementSiblingIndex(idx);
                 return idx;
             }
 
@@ -669,15 +667,59 @@ pub const ParseOptions = struct {
                 return mut_self.query_accel_tag_nodes.items[start..end];
             }
 
+            /// Returns first direct element-like child index for `parent_idx`, if any.
+            pub fn firstElementChildIndex(self: *const DocSelf, parent_idx: u32) u32 {
+                if (parent_idx >= self.nodes.items.len) return InvalidIndex;
+
+                const candidate1: u32 = parent_idx + 1;
+                if (candidate1 >= self.nodes.items.len) return InvalidIndex;
+
+                const node1 = &self.nodes.items[candidate1];
+                if (node1.kind != .text) {
+                    if (node1.parent == parent_idx and isElementLike(node1.kind)) return candidate1;
+                    return InvalidIndex;
+                }
+
+                const candidate2: u32 = candidate1 + 1;
+                if (candidate2 >= self.nodes.items.len) return InvalidIndex;
+
+                const node2 = &self.nodes.items[candidate2];
+                if (node2.kind == .text) {
+                    @branchHint(.cold);
+                    var scan: u32 = candidate2;
+                    while (scan < self.nodes.items.len and self.nodes.items[scan].kind == .text) : (scan += 1) {}
+                    if (scan >= self.nodes.items.len) return InvalidIndex;
+                    const scanned = &self.nodes.items[scan];
+                    if (scanned.parent == parent_idx and isElementLike(scanned.kind)) return scan;
+                    return InvalidIndex;
+                }
+                if (node2.parent == parent_idx and isElementLike(node2.kind)) return candidate2;
+                return InvalidIndex;
+            }
+
+            /// Returns next direct element-like sibling index for `node_idx`, if any.
+            pub fn nextElementSiblingIndex(self: *const DocSelf, node_idx: u32) u32 {
+                if (node_idx >= self.nodes.items.len) return InvalidIndex;
+                const node = &self.nodes.items[node_idx];
+                if (!isElementLike(node.kind)) return InvalidIndex;
+                const parent_idx = node.parent;
+                if (parent_idx == InvalidIndex) return InvalidIndex;
+
+                var candidate: u32 = node.subtree_end + 1;
+                while (candidate < self.nodes.items.len) : (candidate += 1) {
+                    const cand = &self.nodes.items[candidate];
+                    if (cand.parent != parent_idx) return InvalidIndex;
+                    if (isElementLike(cand.kind)) return candidate;
+                    if (cand.kind != .text) return InvalidIndex;
+                }
+                return InvalidIndex;
+            }
+
             /// Returns direct-child index iterator for `parent_idx`.
             pub fn childrenIter(self: *const DocSelf, parent_idx: u32) ChildrenIterType {
-                const first = if (parent_idx < self.nodes.items.len)
-                    self.nodes.items[parent_idx].first_child
-                else
-                    InvalidIndex;
                 return .{
                     .doc = self,
-                    .next_idx = first,
+                    .next_idx = self.firstElementChildIndex(parent_idx),
                 };
             }
         };

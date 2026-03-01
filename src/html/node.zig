@@ -16,13 +16,9 @@ pub const TextOptions = struct {
 
 /// Returns first element child of this node.
 pub fn firstChild(self: anytype) ?@TypeOf(self) {
-    const raw = &self.doc.nodes.items[self.index];
-    var idx = raw.first_child;
-    while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
-        const c = &self.doc.nodes.items[idx];
-        if (isElementLike(c.kind)) return self.doc.nodeAt(idx);
-    }
-    return null;
+    const idx = self.doc.firstElementChildIndex(self.index);
+    if (idx == InvalidIndex) return null;
+    return self.doc.nodeAt(idx);
 }
 
 /// Returns last element child of this node.
@@ -38,13 +34,9 @@ pub fn lastChild(self: anytype) ?@TypeOf(self) {
 
 /// Returns next element sibling of this node.
 pub fn nextSibling(self: anytype) ?@TypeOf(self) {
-    const raw = &self.doc.nodes.items[self.index];
-    var idx = raw.next_sibling;
-    while (idx != InvalidIndex) : (idx = self.doc.nodes.items[idx].next_sibling) {
-        const c = &self.doc.nodes.items[idx];
-        if (isElementLike(c.kind)) return self.doc.nodeAt(idx);
-    }
-    return null;
+    const idx = self.doc.nextElementSiblingIndex(self.index);
+    if (idx == InvalidIndex) return null;
+    return self.doc.nodeAt(idx);
 }
 
 /// Returns previous element sibling of this node.
