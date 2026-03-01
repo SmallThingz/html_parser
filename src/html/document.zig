@@ -53,8 +53,8 @@ pub const ParseOptions = struct {
             name: Span = .{},
             text: Span = .{},
 
-            // In-place attribute byte range inside the opening tag.
-            attr_bytes: Span = .{},
+            // Attribute bytes begin at `name.end` and end at `attr_end`.
+            attr_end: u32 = 0,
 
             first_child: u32 = InvalidIndex,
             last_child: u32 = InvalidIndex,
@@ -1110,7 +1110,8 @@ test "parse-time attribute decoding is off by default and query-time lookup deco
     try doc.parse(&html, .{});
 
     const node = doc.findFirstTag("div") orelse return error.TestUnexpectedResult;
-    const span = doc.source[node.raw().attr_bytes.start..node.raw().attr_bytes.end];
+    const attr_start: usize = node.raw().name.end;
+    const span = doc.source[attr_start..@as(usize, @intCast(node.raw().attr_end))];
     try std.testing.expect(std.mem.indexOf(u8, span, "&amp;") != null);
 
     const value = node.getAttributeValue("data-v") orelse return error.TestUnexpectedResult;
@@ -1200,7 +1201,8 @@ test "inplace attr lazy parse updates state markers and supports selector-trigge
     try std.testing.expectEqualStrings("&z", q);
     try std.testing.expectEqualStrings("a&b", n);
 
-    const span = doc.source[node.raw().attr_bytes.start..node.raw().attr_bytes.end];
+    const attr_start: usize = node.raw().name.end;
+    const span = doc.source[attr_start..@as(usize, @intCast(node.raw().attr_end))];
     const q_marker = [_]u8{ 'q', 0, 0 };
     const q_pos = std.mem.indexOf(u8, span, &q_marker) orelse return error.TestUnexpectedResult;
     try std.testing.expect(q_pos < span.len);
@@ -1227,7 +1229,8 @@ test "attribute matching short-circuits and does not parse later attrs on early 
     try std.testing.expect((try doc.queryOneRuntime("div[href^=https][class*=button]")) == null);
 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
-    const span = doc.source[node.raw().attr_bytes.start..node.raw().attr_bytes.end];
+    const attr_start: usize = node.raw().name.end;
+    const span = doc.source[attr_start..@as(usize, @intCast(node.raw().attr_end))];
     const class_pos = std.mem.indexOf(u8, span, "class") orelse return error.TestUnexpectedResult;
     const marker_pos = class_pos + "class".len;
     try std.testing.expect(marker_pos < span.len);

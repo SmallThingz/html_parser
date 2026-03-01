@@ -199,8 +199,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
                 const node_idx = try self.appendNode(.svg, parent_idx);
                 var node = &self.doc.nodes.items[node_idx];
                 node.name = .{ .start = @intCast(name_start), .end = @intCast(name_end) };
-                node.attr_bytes.start = @intCast(attr_bytes_start);
-                node.attr_bytes.end = @intCast(attr_bytes_end);
+                node.attr_end = @intCast(attr_bytes_end);
                 node.subtree_end = node_idx;
 
                 const svg_end: usize = if (svg_self_close)
@@ -225,8 +224,7 @@ fn Parser(comptime Doc: type, comptime opts: anytype) type {
             const node_idx = try self.appendNode(.element, parent_idx);
             var node = &self.doc.nodes.items[node_idx];
             node.name = .{ .start = @intCast(name_start), .end = @intCast(name_end) };
-            node.attr_bytes.start = @intCast(attr_bytes_start);
-            node.attr_bytes.end = @intCast(attr_bytes_end);
+            node.attr_end = @intCast(attr_bytes_end);
 
             if (!self_close and tag_name.len >= 5 and tag_name.len <= 6 and tags.isRawTextTagWithKey(tag_name, tag_name_key)) {
                 const content_start = self.i;
