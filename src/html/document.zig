@@ -49,10 +49,10 @@ pub const ParseOptions = struct {
             //! Backing node storage record for parsed DOM state.
             kind: NodeType,
 
-            name: Span = .{},
-            text: Span = .{},
+            name_or_text: Span = .{},
 
-            // Attribute bytes begin at `name.end` and end at `attr_end`.
+            // Attribute bytes begin at `name_or_text.end` for element nodes and
+            // end at `attr_end`.
             attr_end: u32 = 0,
 
             last_child: u32 = InvalidIndex, // first_child can be derived from the index of this node
@@ -81,7 +81,7 @@ pub const ParseOptions = struct {
 
             /// Returns element tag name bytes from parsed source.
             pub fn tagName(self: @This()) []const u8 {
-                return self.raw().name.slice(self.doc.source);
+                return self.raw().name_or_text.slice(self.doc.source);
             }
 
             /// Returns text content of this subtree; may borrow or allocate in `arena_alloc`.
@@ -464,7 +464,7 @@ pub const ParseOptions = struct {
                 while (i < self.nodes.items.len) : (i += 1) {
                     const n = &self.nodes.items[i];
                     if (!isElementLike(n.kind)) continue;
-                    if (tables.eqlIgnoreCaseAscii(n.name.slice(self.source), name)) return self.nodeAt(@intCast(i));
+                    if (tables.eqlIgnoreCaseAscii(n.name_or_text.slice(self.source), name)) return self.nodeAt(@intCast(i));
                 }
                 return null;
             }
@@ -573,7 +573,7 @@ pub const ParseOptions = struct {
                 var count: usize = 0;
                 for (self.nodes.items[1..]) |node| {
                     if (!isElementLike(node.kind)) continue;
-                    const node_name = node.name.slice(self.source);
+                    const node_name = node.name_or_text.slice(self.source);
                     if (node_name.len != tag_name.len) continue;
                     if (tags.first8Key(node_name) != tag_key) continue;
                     count += 1;
@@ -595,7 +595,7 @@ pub const ParseOptions = struct {
                 while (idx < self.nodes.items.len) : (idx += 1) {
                     const node = &self.nodes.items[idx];
                     if (!isElementLike(node.kind)) continue;
-                    const node_name = node.name.slice(self.source);
+                    const node_name = node.name_or_text.slice(self.source);
                     if (node_name.len != tag_name.len) continue;
                     if (tags.first8Key(node_name) != tag_key) continue;
                     self.query_accel_tag_nodes.appendAssumeCapacity(idx);
@@ -910,7 +910,7 @@ test "raw text element metadata remains valid after child append growth" {
 
     const text_node = doc.nodes.items[script.index + 1];
     try std.testing.expect(text_node.kind == .text);
-    try std.testing.expectEqualStrings("const x = 1;", text_node.text.slice(doc.source));
+    try std.testing.expectEqualStrings("const x = 1;", text_node.name_or_text.slice(doc.source));
 
     const div = doc.queryOne("div") orelse return error.TestUnexpectedResult;
     try std.testing.expect(div.index > script.raw().subtree_end);
@@ -1080,7 +1080,7 @@ test "parse-time text normalization is off by default and query-time normalizati
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
     const text_node = doc.nodes.items[node.index + 1];
     try std.testing.expect(text_node.kind == .text);
-    try std.testing.expectEqualStrings("  alpha  &amp;   beta  ", text_node.text.slice(doc.source));
+    try std.testing.expectEqualStrings("  alpha  &amp;   beta  ", text_node.name_or_text.slice(doc.source));
 
     const raw = try node.innerTextWithOptions(arena.allocator(), .{ .normalize_whitespace = false });
     try std.testing.expectEqualStrings("  alpha  &   beta  ", raw);
@@ -1098,7 +1098,7 @@ test "parse-time attribute decoding is off by default and query-time lookup deco
     try doc.parse(&html, .{});
 
     const node = doc.findFirstTag("div") orelse return error.TestUnexpectedResult;
-    const attr_start: usize = node.raw().name.end;
+    const attr_start: usize = node.raw().name_or_text.end;
     const span = doc.source[attr_start..@as(usize, @intCast(node.raw().attr_end))];
     try std.testing.expect(std.mem.indexOf(u8, span, "&amp;") != null);
 
@@ -1141,14 +1141,14 @@ test "innerTextOwned always returns allocated output and does not mutate source 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
     const text_node_before = doc.nodes.items[node.index + 1];
     try std.testing.expect(text_node_before.kind == .text);
-    try std.testing.expectEqualStrings("a &amp; b", text_node_before.text.slice(doc.source));
+    try std.testing.expectEqualStrings("a &amp; b", text_node_before.name_or_text.slice(doc.source));
 
     const owned = try node.innerTextOwned(arena.allocator());
     try std.testing.expectEqualStrings("a & b", owned);
     try std.testing.expect(!doc.isOwned(owned));
 
     const text_node_after = doc.nodes.items[node.index + 1];
-    try std.testing.expectEqualStrings("a &amp; b", text_node_after.text.slice(doc.source));
+    try std.testing.expectEqualStrings("a &amp; b", text_node_after.name_or_text.slice(doc.source));
 }
 
 test "inplace attribute parser treats explicit empty assignment as name-only" {
@@ -1189,7 +1189,7 @@ test "inplace attr lazy parse updates state markers and supports selector-trigge
     try std.testing.expectEqualStrings("&z", q);
     try std.testing.expectEqualStrings("a&b", n);
 
-    const attr_start: usize = node.raw().name.end;
+    const attr_start: usize = node.raw().name_or_text.end;
     const span = doc.source[attr_start..@as(usize, @intCast(node.raw().attr_end))];
     const q_marker = [_]u8{ 'q', 0, 0 };
     const q_pos = std.mem.indexOf(u8, span, &q_marker) orelse return error.TestUnexpectedResult;
@@ -1217,7 +1217,7 @@ test "attribute matching short-circuits and does not parse later attrs on early 
     try std.testing.expect((try doc.queryOneRuntime("div[href^=https][class*=button]")) == null);
 
     const node = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
-    const attr_start: usize = node.raw().name.end;
+    const attr_start: usize = node.raw().name_or_text.end;
     const span = doc.source[attr_start..@as(usize, @intCast(node.raw().attr_end))];
     const class_pos = std.mem.indexOf(u8, span, "class") orelse return error.TestUnexpectedResult;
     const marker_pos = class_pos + "class".len;
@@ -1697,7 +1697,7 @@ test "query accel id/tag indexes match selector results" {
     try doc.parse(&html, .{});
 
     const x = doc.queryOne("#x") orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("a", x.raw().name.slice(doc.source));
+    try std.testing.expectEqualStrings("a", x.raw().name_or_text.slice(doc.source));
 
     var used_id = false;
     const id_idx = doc.queryAccelLookupId("x", &used_id) orelse return error.TestUnexpectedResult;
@@ -1710,7 +1710,7 @@ test "query accel id/tag indexes match selector results" {
     try std.testing.expect(used_tag);
     try std.testing.expectEqual(@as(usize, 2), tag_candidates.len);
     try std.testing.expectEqual(x.index, tag_candidates[0]);
-    try std.testing.expectEqualStrings("a", doc.nodes.items[tag_candidates[1]].name.slice(doc.source));
+    try std.testing.expectEqualStrings("a", doc.nodes.items[tag_candidates[1]].name_or_text.slice(doc.source));
 
     const sel_hit = doc.queryOne("a[href^=https][class*=button]") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(x.index, sel_hit.index);

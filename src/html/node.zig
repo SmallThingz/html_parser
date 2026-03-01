@@ -76,7 +76,7 @@ pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOption
     if (raw.kind == .text) {
         const mut_node = &doc.nodes.items[self.index];
         _ = decodeTextNode(mut_node, doc);
-        if (!opts.normalize_whitespace) return mut_node.text.slice(doc.source);
+        if (!opts.normalize_whitespace) return mut_node.name_or_text.slice(doc.source);
         return normalizeTextNodeInPlace(mut_node, doc);
     }
 
@@ -96,7 +96,7 @@ pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOption
     if (count == 1) {
         // Single text-node result can stay fully borrowed/non-alloc.
         const only = &doc.nodes.items[first_idx];
-        if (!opts.normalize_whitespace) return only.text.slice(doc.source);
+        if (!opts.normalize_whitespace) return only.name_or_text.slice(doc.source);
         return normalizeTextNodeInPlace(only, doc);
     }
 
@@ -108,7 +108,7 @@ pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOption
         while (idx <= raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
             const node = &doc.nodes.items[idx];
             if (node.kind != .text) continue;
-            const seg = node.text.slice(doc.source);
+            const seg = node.name_or_text.slice(doc.source);
             try ensureOutExtra(&out, arena_alloc, seg.len);
             out.appendSliceAssumeCapacity(seg);
         }
@@ -118,7 +118,7 @@ pub fn innerText(self: anytype, arena_alloc: std.mem.Allocator, opts: TextOption
         while (idx <= raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
             const node = &doc.nodes.items[idx];
             if (node.kind != .text) continue;
-            try appendNormalizedSegment(&out, arena_alloc, node.text.slice(doc.source), &state);
+            try appendNormalizedSegment(&out, arena_alloc, node.name_or_text.slice(doc.source), &state);
         }
     }
 
@@ -135,7 +135,7 @@ pub fn innerTextOwned(self: anytype, alloc: std.mem.Allocator, opts: TextOptions
     defer out.deinit(alloc);
 
     if (raw.kind == .text) {
-        const text = raw.text.slice(doc.source);
+        const text = raw.name_or_text.slice(doc.source);
         if (!opts.normalize_whitespace) {
             try appendDecodedSegment(&out, alloc, text);
         } else {
@@ -150,7 +150,7 @@ pub fn innerTextOwned(self: anytype, alloc: std.mem.Allocator, opts: TextOptions
         while (idx <= raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
             const node = &doc.nodes.items[idx];
             if (node.kind != .text) continue;
-            try appendDecodedSegment(&out, alloc, node.text.slice(doc.source));
+            try appendDecodedSegment(&out, alloc, node.name_or_text.slice(doc.source));
         }
         return try out.toOwnedSlice(alloc);
     }
@@ -160,23 +160,23 @@ pub fn innerTextOwned(self: anytype, alloc: std.mem.Allocator, opts: TextOptions
     while (idx <= raw.subtree_end and idx < doc.nodes.items.len) : (idx += 1) {
         const node = &doc.nodes.items[idx];
         if (node.kind != .text) continue;
-        try appendDecodedNormalizedSegment(&out, alloc, node.text.slice(doc.source), &state);
+        try appendDecodedNormalizedSegment(&out, alloc, node.name_or_text.slice(doc.source), &state);
     }
     return try out.toOwnedSlice(alloc);
 }
 
 fn decodeTextNode(noalias node: anytype, doc: anytype) []const u8 {
-    const text_mut = node.text.sliceMut(doc.source);
+    const text_mut = node.name_or_text.sliceMut(doc.source);
     const new_len = entities.decodeInPlaceIfEntity(text_mut);
-    node.text.end = node.text.start + @as(u32, @intCast(new_len));
-    return node.text.slice(doc.source);
+    node.name_or_text.end = node.name_or_text.start + @as(u32, @intCast(new_len));
+    return node.name_or_text.slice(doc.source);
 }
 
 fn normalizeTextNodeInPlace(noalias node: anytype, doc: anytype) []const u8 {
-    const text_mut = node.text.sliceMut(doc.source);
+    const text_mut = node.name_or_text.sliceMut(doc.source);
     const new_len = normalizeWhitespaceInPlace(text_mut);
-    node.text.end = node.text.start + @as(u32, @intCast(new_len));
-    return node.text.slice(doc.source);
+    node.name_or_text.end = node.name_or_text.start + @as(u32, @intCast(new_len));
+    return node.name_or_text.slice(doc.source);
 }
 
 fn normalizeWhitespaceInPlace(bytes: []u8) usize {

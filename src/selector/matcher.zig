@@ -284,7 +284,7 @@ fn matchesCompound(comptime Doc: type, noalias doc: *const Doc, selector: ast.Se
     if (comp.has_tag != 0) {
         const tag = comp.tag.slice(selector.source);
         const tag_key: u64 = if (comp.tag_key != 0) comp.tag_key else tags.first8Key(tag);
-        const node_name = node.name.slice(doc.source);
+        const node_name = node.name_or_text.slice(doc.source);
         const node_key = tags.first8Key(node_name);
         if (!tags.equalByLenAndKeyIgnoreCase(node_name, node_key, tag, tag_key)) return false;
     }
@@ -344,7 +344,7 @@ fn matchesNotSimple(
     item: ast.NotSimple,
 ) bool {
     return switch (item.kind) {
-        .tag => tables.eqlIgnoreCaseAscii(node.name.slice(doc.source), item.text.slice(selector_source)),
+        .tag => tables.eqlIgnoreCaseAscii(node.name_or_text.slice(doc.source), item.text.slice(selector_source)),
         .id => blk: {
             const id = item.text.slice(selector_source);
             const v = attrValueByHashFrom(doc, node, probe, collected, "id", HashId) orelse break :blk false;

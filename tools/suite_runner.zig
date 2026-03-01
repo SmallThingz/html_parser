@@ -147,7 +147,7 @@ fn runParseTagsFile(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []c
 
     for (doc.nodes.items) |*n| {
         if (n.kind != .element) continue;
-        try tags.append(alloc, n.name.slice(doc.source));
+        try tags.append(alloc, n.name_or_text.slice(doc.source));
     }
 
     var out_buf = std.ArrayList(u8).empty;

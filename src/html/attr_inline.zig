@@ -38,7 +38,7 @@ pub fn getAttrValue(noalias doc_ptr: anytype, node: anytype, name: []const u8) ?
     const lookup_kind = classifyLookupName(name);
     const lookup_hash = if (lookup_kind == .generic) hashIgnoreCaseAscii(name) else 0;
 
-    var i: usize = node.name.end;
+    var i: usize = node.name_or_text.end;
     const end: usize = @intCast(node.attr_end);
     if (i >= end) return null;
 
@@ -109,7 +109,7 @@ pub fn collectSelectedValues(noalias doc_ptr: anytype, node: anytype, selected_n
     if (selected_names.len == 0) return;
     if (selected_names.len != out_values.len) return;
 
-    var i: usize = node.name.end;
+    var i: usize = node.name_or_text.end;
     const end: usize = @intCast(node.attr_end);
     var remaining: usize = 0;
     for (out_values) |v| {
@@ -197,7 +197,7 @@ pub fn collectSelectedValuesByHash(
     if (selected_names.len == 0) return;
     if (selected_names.len != out_values.len or selected_names.len != selected_hashes.len) return;
 
-    var i: usize = node.name.end;
+    var i: usize = node.name_or_text.end;
     const end: usize = @intCast(node.attr_end);
     var remaining: usize = 0;
     for (out_values) |v| {
