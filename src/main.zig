@@ -14,7 +14,7 @@ pub fn bufferedPrint() !void {
 }
 
 pub fn main() !void {
-    try htmlparser.bufferedPrint();
+    try bufferedPrint();
 
     var doc = Document.init(std.heap.page_allocator);
     defer doc.deinit();
