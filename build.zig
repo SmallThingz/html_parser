@@ -1,5 +1,6 @@
 const std = @import("std");
 
+/// Configures build artifacts, helper steps, and test/check pipelines.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});

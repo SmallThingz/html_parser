@@ -2630,6 +2630,7 @@ fn usage() void {
     , .{});
 }
 
+/// CLI entrypoint for repository maintenance, benchmarking, and conformance tasks.
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();

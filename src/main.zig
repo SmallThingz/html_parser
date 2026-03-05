@@ -13,6 +13,7 @@ pub fn bufferedPrint() !void {
     try stdout.flush();
 }
 
+/// Demo executable entrypoint that parses a tiny document and prints one query result.
 pub fn main() !void {
     try bufferedPrint();
 

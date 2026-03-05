@@ -1,14 +1,17 @@
 const std = @import("std");
 
+/// Returns true when `path` exists relative to the current working directory.
 pub fn fileExists(path: []const u8) bool {
     std.fs.cwd().access(path, .{}) catch return false;
     return true;
 }
 
+/// Creates `path` and any missing parent directories.
 pub fn ensureDir(path: []const u8) !void {
     try std.fs.cwd().makePath(path);
 }
 
+/// Renders argv-like tokens as a shell-style debug string.
 pub fn joinArgs(alloc: std.mem.Allocator, argv: []const []const u8) ![]u8 {
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(alloc);
@@ -26,6 +29,7 @@ pub fn joinArgs(alloc: std.mem.Allocator, argv: []const []const u8) ![]u8 {
     return out.toOwnedSlice(alloc);
 }
 
+/// Runs a child process inheriting stdio, returning error on non-zero exit.
 pub fn runInherit(alloc: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8) !void {
     const pretty = try joinArgs(alloc, argv);
     defer alloc.free(pretty);
@@ -44,6 +48,7 @@ pub fn runInherit(alloc: std.mem.Allocator, argv: []const []const u8, cwd: ?[]co
     }
 }
 
+/// Runs a child process and returns combined stdout/stderr output.
 pub fn runCaptureCombined(alloc: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8) ![]u8 {
     const res = try std.process.Child.run(.{
         .allocator = alloc,
@@ -68,6 +73,7 @@ pub fn runCaptureCombined(alloc: std.mem.Allocator, argv: []const []const u8, cw
     return out.toOwnedSlice(alloc);
 }
 
+/// Runs a child process and returns trimmed stdout output.
 pub fn runCaptureStdout(alloc: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8) ![]u8 {
     const res = try std.process.Child.run(.{
         .allocator = alloc,
@@ -84,6 +90,7 @@ pub fn runCaptureStdout(alloc: std.mem.Allocator, argv: []const []const u8, cwd:
     return alloc.dupe(u8, std.mem.trim(u8, res.stdout, " \r\n\t"));
 }
 
+/// Parses the last decimal integer token found in `text`.
 pub fn parseLastInt(text: []const u8) !u64 {
     var i: usize = text.len;
     while (i > 0) : (i -= 1) {
@@ -96,6 +103,7 @@ pub fn parseLastInt(text: []const u8) !u64 {
     return std.fmt.parseInt(u64, text[start..i], 10);
 }
 
+/// Returns median value from `vals` (upper median for even length).
 pub fn medianU64(alloc: std.mem.Allocator, vals: []const u64) !u64 {
     if (vals.len == 0) return error.EmptyInput;
     const copy = try alloc.dupe(u64, vals);
@@ -104,16 +112,19 @@ pub fn medianU64(alloc: std.mem.Allocator, vals: []const u64) !u64 {
     return copy[copy.len / 2];
 }
 
+/// Writes `bytes` to `path`, truncating any existing file.
 pub fn writeFile(path: []const u8, bytes: []const u8) !void {
     const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
     try file.writeAll(bytes);
 }
 
+/// Reads an entire file into allocator-owned memory.
 pub fn readFileAlloc(alloc: std.mem.Allocator, path: []const u8) ![]u8 {
     return try std.fs.cwd().readFileAlloc(alloc, path, std.math.maxInt(usize));
 }
 
+/// Returns current UNIX timestamp in seconds.
 pub fn nowUnix() i64 {
     return std.time.timestamp();
 }

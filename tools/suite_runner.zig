@@ -165,6 +165,7 @@ fn usage() noreturn {
     std.process.exit(2);
 }
 
+/// CLI entrypoint used by external-suite tooling to execute selector/parser probes.
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();

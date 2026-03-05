@@ -25,6 +25,7 @@ fn parseDocForBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void 
     }
 }
 
+/// Runs a built-in synthetic parse/query workload and prints elapsed ns.
 pub fn runSynthetic() !void {
     const alloc = std.heap.page_allocator;
 
@@ -51,6 +52,7 @@ pub fn runSynthetic() !void {
     std.debug.print("query ns: {d}\n", .{query_end - query_start});
 }
 
+/// Benchmarks parse throughput for one fixture and mode; returns total elapsed ns.
 pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -89,6 +91,7 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     return @intCast(end - start);
 }
 
+/// Benchmarks runtime selector parse cost; returns total elapsed ns.
 pub fn runQueryParse(selector: []const u8, iterations: usize) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -108,6 +111,7 @@ pub fn runQueryParse(selector: []const u8, iterations: usize) !u64 {
     return @intCast(end - start);
 }
 
+/// Benchmarks runtime query execution over a pre-parsed document.
 pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -133,6 +137,7 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, 
     return @intCast(end - start);
 }
 
+/// Benchmarks cached-selector query execution over a pre-parsed document.
 pub fn runQueryCached(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -163,6 +168,7 @@ pub fn runQueryCached(path: []const u8, selector: []const u8, iterations: usize,
     return @intCast(end - start);
 }
 
+/// CLI entrypoint for parser/query benchmarking utilities.
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
