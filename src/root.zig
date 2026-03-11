@@ -83,3 +83,135 @@ test "tag-name state keeps < inside malformed start tag name" {
     const first = doc.nodeAt(1) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("div<div", first.tagName());
 }
+
+test "writeHtml serializes node subtree" {
+    const alloc = std.testing.allocator;
+    const opts: ParseOptions = .{};
+    const Document = opts.GetDocument();
+
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var src = "<div id='a'><span>v</span></div>".*;
+    try doc.parse(&src, .{});
+
+    const div = doc.queryOne("div") orelse return error.TestUnexpectedResult;
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(alloc);
+    try div.writeHtml(out.writer(alloc));
+    try std.testing.expectEqualStrings("<div id='a'><span>v</span></div>", out.items);
+}
+
+test "writeHtml respects in-place attr parsing and void tags" {
+    const alloc = std.testing.allocator;
+    const opts: ParseOptions = .{};
+    const Document = opts.GetDocument();
+
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var src = "<img id='i' class='x' data-q='1>2'/>".*;
+    try doc.parse(&src, .{});
+
+    const img = doc.queryOne("img#i") orelse return error.TestUnexpectedResult;
+    _ = img.getAttributeValue("class") orelse return error.TestUnexpectedResult;
+    _ = img.getAttributeValue("data-q") orelse return error.TestUnexpectedResult;
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(alloc);
+    try img.writeHtml(out.writer(alloc));
+    try std.testing.expectEqualStrings("<img id=\"i\" class=\"x\" data-q=\"1>2\">", out.items);
+}
+
+test "writeHtml reflects in-place text decoding" {
+    const alloc = std.testing.allocator;
+    const opts: ParseOptions = .{};
+    const Document = opts.GetDocument();
+
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var src = "<p>&amp; &lt;</p>".*;
+    try doc.parse(&src, .{});
+
+    const p = doc.queryOne("p") orelse return error.TestUnexpectedResult;
+    _ = try p.innerText(alloc);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(alloc);
+    try p.writeHtml(out.writer(alloc));
+    try std.testing.expectEqualStrings("<p>& <</p>", out.items);
+}
+
+test "writeHtml drops whitespace-only text nodes when configured" {
+    const alloc = std.testing.allocator;
+    const opts: ParseOptions = .{};
+    const Document = opts.GetDocument();
+
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    var src = "<div> a <span> b </span> c </div>".*;
+    try doc.parse(&src, .{ .drop_whitespace_text_nodes = true });
+
+    const div = doc.queryOne("div") orelse return error.TestUnexpectedResult;
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(alloc);
+    try div.writeHtml(out.writer(alloc));
+    try std.testing.expectEqualStrings("<div> a <span> b </span> c </div>", out.items);
+}
+
+test "writeHtml parses and prints complex document" {
+    const alloc = std.testing.allocator;
+    const opts: ParseOptions = .{};
+    const Document = opts.GetDocument();
+
+    var doc = Document.init(alloc);
+    defer doc.deinit();
+
+    const src_const =
+        \\<!DOCTYPE html>
+        \\<html><head>
+        \\<title>Title</title>
+        \\<meta charset='utf-8'><!-- Single quotes are converted to double quotes when formatting -->
+        \\<script>var x = 1 < 2;</script>
+        \\</head><body>
+        \\<div id='root' class='a b' data-q='1>2'>Hello&nbsp;<span>World</span></div>
+        \\<img src='x.png' alt='hi'>
+        \\<br>
+        \\<ul><li>One</li><li>Two</li></ul>
+        \\</body></html>
+    ;
+    const src = try alloc.dupe(u8, src_const);
+    defer alloc.free(src);
+    try doc.parse(src, .{.drop_whitespace_text_nodes = false});
+
+    const html = doc.html() orelse return error.TestUnexpectedResult;
+
+    // at index 6 is the meta node; here is why
+    // +1 = head
+    // +2 = `\n` [text node]
+    // +3 = title
+    //   +4 = `Title` [text node]
+    // +5 = `\n` [text node]
+    try std.testing.expectEqualStrings("utf-8", doc.nodeAt(html.index + 6).?.getAttributeValue("charset").?);
+    const rendered = try std.fmt.allocPrint(alloc, "{f}", .{html});
+    defer alloc.free(rendered);
+
+    try std.testing.expectEqualStrings(
+        \\<html><head>
+        \\<title>Title</title>
+        \\<meta charset="utf-8">
+        \\<script>var x = 1 < 2;</script>
+        \\</head><body>
+        \\<div id='root' class='a b' data-q='1>2'>Hello&nbsp;<span>World</span></div>
+        \\<img src='x.png' alt='hi'>
+        \\<br>
+        \\<ul><li>One</li><li>Two</li></ul>
+        \\</body></html>
+    ,
+        rendered,
+    );
+}

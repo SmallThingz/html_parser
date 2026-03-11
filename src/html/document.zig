@@ -40,7 +40,7 @@ const isElementLike = common.isElementLike;
 /// Compile-time parser options and type factory for generated public API types.
 pub const ParseOptions = struct {
     // In fastest-mode style runs, whitespace-only text nodes can be dropped.
-    drop_whitespace_text_nodes: bool = false,
+    drop_whitespace_text_nodes: bool = true,
 
     /// Returns the raw node storage layout used by `Document.nodes`.
     pub fn GetNodeRaw(_: @This()) type {
@@ -81,6 +81,16 @@ pub const ParseOptions = struct {
             /// Returns element tag name bytes from parsed source.
             pub fn tagName(self: @This()) []const u8 {
                 return self.raw().name_or_text.slice(self.doc.source);
+            }
+
+            /// Writes HTML serialization of this node and its subtree to `writer`.
+            pub fn writeHtml(self: @This(), writer: anytype) node_api.WriterError(@TypeOf(writer))!void {
+                return node_api.writeHtml(self, writer);
+            }
+
+            /// Default formatter uses HTML serialization for this node.
+            pub fn format(self: *const @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+                return self.writeHtml(writer);
             }
 
             /// Returns text content of this subtree; may borrow or allocate in `arena_alloc`.
@@ -469,13 +479,24 @@ pub const ParseOptions = struct {
             }
 
             /// Wraps raw node index as public `Node` wrapper when valid.
-            pub fn nodeAt(self: *const DocSelf, idx: u32) ?NodeTypeWrapper {
+            pub inline fn nodeAt(self: *const DocSelf, idx: u32) ?NodeTypeWrapper {
                 if (idx == InvalidIndex or idx >= self.nodes.items.len) return null;
                 return .{
                     .doc = @constCast(self),
                     .index = idx,
                 };
             }
+
+            /// Writes HTML serialization of this node and its subtree to `writer`.
+            pub fn writeHtml(self: @This(), writer: anytype) node_api.WriterError(@TypeOf(writer))!void {
+                return node_api.writeHtml(self.nodeAt(0).?, writer);
+            }
+
+            /// Default formatter uses HTML serialization for this node.
+            pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+                return self.writeHtml(writer);
+            }
+
 
             fn ensureQueryOneArena(noalias self: *DocSelf) *std.heap.ArenaAllocator {
                 if (self.query_one_arena == null) {
