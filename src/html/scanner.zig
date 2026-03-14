@@ -8,7 +8,7 @@ pub const TagEnd = struct {
     attr_end: usize,
 
     /// Formats this tag end summary for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("TagEnd{{gt_index={}, attr_end={}}}", .{ self.gt_index, self.attr_end });
     }
 };

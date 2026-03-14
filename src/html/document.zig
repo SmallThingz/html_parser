@@ -35,7 +35,7 @@ pub const NodeType = enum(u3) {
     text,
 
     /// Formats this node type for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(@tagName(self));
     }
 };
@@ -48,7 +48,7 @@ pub const ParseOptions = struct {
     drop_whitespace_text_nodes: bool = true,
 
     /// Formats parse options for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("ParseOptions{{drop_whitespace_text_nodes={}}}", .{self.drop_whitespace_text_nodes});
     }
 
@@ -104,7 +104,7 @@ pub const ParseOptions = struct {
             }
 
             /// Default formatter uses HTML serialization for this node.
-            pub fn format(self: *const @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            pub fn format(self: *const @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 return self.writeHtml(writer);
             }
 
@@ -248,7 +248,7 @@ pub const ParseOptions = struct {
             }
 
             /// Formats iterator state for human-readable output.
-            pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 try writer.print("QueryIter{{scope_root={}, next_index={}, runtime_generation={}}}", .{
                     self.scope_root,
                     self.next_index,
@@ -283,7 +283,7 @@ pub const ParseOptions = struct {
             }
 
             /// Formats iterator state for human-readable output.
-            pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 try writer.print("ChildrenIter{{next_idx={}}}", .{self.next_idx});
             }
         };
@@ -527,7 +527,7 @@ pub const ParseOptions = struct {
             }
 
             /// Default formatter uses HTML serialization for this node.
-            pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 return self.writeHtml(writer);
             }
 
@@ -797,7 +797,7 @@ pub const Span = struct {
     }
 
     /// Formats this span for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Span{{start={}, end={}}}", .{ self.start, self.end });
     }
 };
@@ -1819,24 +1819,22 @@ test "query accel state is invalidated by parse and clear" {
 test "runtime attr-heavy selector stress uses in-node parents" {
     const alloc = std.testing.allocator;
 
-    var builder = std.ArrayList(u8).empty;
-    defer builder.deinit(alloc);
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
     const prefix = "<html><body><div id='root'>";
     const suffix = "</div></body></html>";
-    try builder.ensureUnusedCapacity(alloc, prefix.len + suffix.len);
-    builder.appendSliceAssumeCapacity(prefix);
+    try builder.writer.writeAll(prefix);
     var i: usize = 0;
     while (i < 1024) : (i += 1) {
         if ((i % 4) == 0) {
-            try std.fmt.format(builder.writer(alloc), "<a id='a{d}' href='https://example/{d}' class='nav button'>x</a>", .{ i, i });
+            try builder.writer.print("<a id='a{d}' href='https://example/{d}' class='nav button'>x</a>", .{ i, i });
         } else {
-            try std.fmt.format(builder.writer(alloc), "<a id='a{d}' href='/local/{d}' class='nav link'>x</a>", .{ i, i });
+            try builder.writer.print("<a id='a{d}' href='/local/{d}' class='nav link'>x</a>", .{ i, i });
         }
     }
-    try builder.ensureUnusedCapacity(alloc, suffix.len);
-    builder.appendSliceAssumeCapacity(suffix);
+    try builder.writer.writeAll(suffix);
 
-    const html = try builder.toOwnedSlice(alloc);
+    const html = try builder.toOwnedSlice();
     defer alloc.free(html);
 
     var doc = Document.init(alloc);
@@ -1861,7 +1859,7 @@ test "runtime attr-heavy selector stress uses in-node parents" {
 test "bench fixture attr-heavy runtime and cached query smoke" {
     const alloc = std.testing.allocator;
     const fixture_path = "bench/fixtures/rust-lang.html";
-    const fixture = std.fs.cwd().readFileAlloc(alloc, fixture_path, 64 * 1024 * 1024) catch |err| switch (err) {
+    const fixture = std.Io.Dir.cwd().readFileAlloc(std.testing.io, fixture_path, alloc, std.Io.Limit.limited(64 * 1024 * 1024)) catch |err| switch (err) {
         error.FileNotFound => return error.SkipZigTest,
         else => return err,
     };
@@ -2014,14 +2012,14 @@ test "instrumentation wrappers invoke compile-time hooks and preserve results" {
     var hooks: HookProbe = .{};
 
     var html = "<div><a id='x' href='https://example'></a></div>".*;
-    try instrumentation.parseWithHooks(&doc, &html, .{}, &hooks);
+    try instrumentation.parseWithHooks(std.testing.io, &doc, &html, .{}, &hooks);
     try std.testing.expectEqual(@as(usize, 1), hooks.parse_start_calls);
     try std.testing.expectEqual(@as(usize, 1), hooks.parse_end_calls);
     try std.testing.expect(hooks.last_parse_stats.elapsed_ns > 0);
     try std.testing.expectEqual(html.len, hooks.last_input_len);
     try std.testing.expect(hooks.last_parse_stats.node_count >= 2);
 
-    const runtime_one = try instrumentation.queryOneRuntimeWithHooks(&doc, "a#x", &hooks);
+    const runtime_one = try instrumentation.queryOneRuntimeWithHooks(std.testing.io, &doc, "a#x", &hooks);
     try std.testing.expect(runtime_one != null);
     try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.one_runtime, hooks.last_query_kind);
     try std.testing.expectEqual(@as(?bool, true), hooks.last_query_stats.matched);
@@ -2030,16 +2028,16 @@ test "instrumentation wrappers invoke compile-time hooks and preserve results" {
     defer arena.deinit();
     const sel = try ast.Selector.compileRuntime(arena.allocator(), "a#x");
 
-    const cached_one = instrumentation.queryOneCachedWithHooks(&doc, &sel, &hooks);
+    const cached_one = instrumentation.queryOneCachedWithHooks(std.testing.io, &doc, &sel, &hooks);
     try std.testing.expect(cached_one != null);
     try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.one_cached, hooks.last_query_kind);
     try std.testing.expectEqual(@as(?bool, true), hooks.last_query_stats.matched);
 
-    _ = try instrumentation.queryAllRuntimeWithHooks(&doc, "a", &hooks);
+    _ = try instrumentation.queryAllRuntimeWithHooks(std.testing.io, &doc, "a", &hooks);
     try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.all_runtime, hooks.last_query_kind);
     try std.testing.expectEqual(@as(?bool, null), hooks.last_query_stats.matched);
 
-    _ = instrumentation.queryAllCachedWithHooks(&doc, &sel, &hooks);
+    _ = instrumentation.queryAllCachedWithHooks(std.testing.io, &doc, &sel, &hooks);
     try std.testing.expectEqual(instrumentation.QueryInstrumentationKind.all_cached, hooks.last_query_kind);
     try std.testing.expectEqual(@as(?bool, null), hooks.last_query_stats.matched);
     try std.testing.expect(hooks.query_start_calls >= 4);

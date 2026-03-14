@@ -45,7 +45,7 @@ pub const ComptimeAllocator = struct {
     }
 
     /// Formats this allocator marker for human-readable output.
-    pub fn format(_: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(_: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll("ComptimeAllocator{}");
     }
 };

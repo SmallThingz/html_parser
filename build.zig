@@ -111,11 +111,13 @@ pub fn build(b: *std.Build) void {
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
+        .test_runner = .{ .path = b.path("tools/test_runner.zig"), .mode = .simple },
     });
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
+        .test_runner = .{ .path = b.path("tools/test_runner.zig"), .mode = .simple },
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
@@ -128,6 +130,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "htmlparser", .module = mod },
             },
         }),
+        .test_runner = .{ .path = b.path("tools/test_runner.zig"), .mode = .simple },
     });
     const run_examples_tests = b.addRunArtifact(examples_tests);
 
@@ -140,6 +143,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "htmlparser", .module = mod },
             },
         }),
+        .test_runner = .{ .path = b.path("tools/test_runner.zig"), .mode = .simple },
     });
     const run_behavioral_tests = b.addRunArtifact(behavioral_tests);
 

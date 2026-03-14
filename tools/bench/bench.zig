@@ -8,6 +8,15 @@ const BenchMode = enum {
     fastest,
 };
 
+fn elapsedNs(start: i96, finish: i96) u64 {
+    if (finish <= start) return 0;
+    return @intCast(finish - start);
+}
+
+fn nowNs(io: std.Io) i96 {
+    return std.Io.Timestamp.now(io, .awake).toNanoseconds();
+}
+
 fn parseMode(arg: []const u8) !BenchMode {
     if (std.mem.eql(u8, arg, "strictest")) return .strictest;
     if (std.mem.eql(u8, arg, "fastest")) return .fastest;
@@ -26,7 +35,7 @@ fn parseDocForBench(noalias doc: *Document, input: []u8, mode: BenchMode) !void 
 }
 
 /// Runs a built-in synthetic parse/query workload and prints elapsed ns.
-pub fn runSynthetic() !void {
+pub fn runSynthetic(io: std.Io) !void {
     const alloc = std.heap.smp_allocator;
 
     var doc = Document.init(alloc);
@@ -34,29 +43,29 @@ pub fn runSynthetic() !void {
 
     var src = "<html><body><ul><li class='x'>1</li><li class='x'>2</li><li>3</li></ul></body></html>".*;
 
-    const parse_start = std.time.nanoTimestamp();
+    const parse_start = nowNs(io);
     var i: usize = 0;
     while (i < 10_000) : (i += 1) {
         try doc.parse(&src, .{});
     }
-    const parse_end = std.time.nanoTimestamp();
+    const parse_end = nowNs(io);
 
-    const query_start = std.time.nanoTimestamp();
+    const query_start = nowNs(io);
     i = 0;
     while (i < 100_000) : (i += 1) {
         _ = doc.queryOne("li.x");
     }
-    const query_end = std.time.nanoTimestamp();
+    const query_end = nowNs(io);
 
-    std.debug.print("parse ns: {d}\n", .{parse_end - parse_start});
-    std.debug.print("query ns: {d}\n", .{query_end - query_start});
+    std.debug.print("parse ns: {d}\n", .{elapsedNs(parse_start, parse_end)});
+    std.debug.print("query ns: {d}\n", .{elapsedNs(query_start, query_end)});
 }
 
 /// Benchmarks parse throughput for one fixture and mode; returns total elapsed ns.
-pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
+pub fn runParseFile(io: std.Io, path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     const alloc = std.heap.smp_allocator;
 
-    const input = try std.fs.cwd().readFileAlloc(alloc, path, std.math.maxInt(usize));
+    const input = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .unlimited);
     defer alloc.free(input);
 
     var working_opt: ?[]u8 = null;
@@ -68,7 +77,7 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
     var parse_arena = std.heap.ArenaAllocator.init(alloc);
     defer parse_arena.deinit();
 
-    const start = std.time.nanoTimestamp();
+    const start = nowNs(io);
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         const iter_alloc = parse_arena.allocator();
@@ -84,34 +93,34 @@ pub fn runParseFile(path: []const u8, iterations: usize, mode: BenchMode) !u64 {
         }
         _ = parse_arena.reset(.retain_capacity);
     }
-    const end = std.time.nanoTimestamp();
+    const end = nowNs(io);
 
-    return @intCast(end - start);
+    return elapsedNs(start, end);
 }
 
 /// Benchmarks runtime selector parse cost; returns total elapsed ns.
-pub fn runQueryParse(selector: []const u8, iterations: usize) !u64 {
+pub fn runQueryParse(io: std.Io, selector: []const u8, iterations: usize) !u64 {
     const alloc = std.heap.smp_allocator;
 
     var arena = std.heap.ArenaAllocator.init(alloc);
     defer arena.deinit();
 
-    const start = std.time.nanoTimestamp();
+    const start = nowNs(io);
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         _ = arena.reset(.retain_capacity);
         _ = try root.Selector.compileRuntime(arena.allocator(), selector);
     }
-    const end = std.time.nanoTimestamp();
+    const end = nowNs(io);
 
-    return @intCast(end - start);
+    return elapsedNs(start, end);
 }
 
 /// Benchmarks runtime query execution over a pre-parsed document.
-pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
+pub fn runQueryMatch(io: std.Io, path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
     const alloc = std.heap.smp_allocator;
 
-    const input = try std.fs.cwd().readFileAlloc(alloc, path, std.math.maxInt(usize));
+    const input = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .unlimited);
     defer alloc.free(input);
 
     const working = try alloc.dupe(u8, input);
@@ -121,21 +130,21 @@ pub fn runQueryMatch(path: []const u8, selector: []const u8, iterations: usize, 
     defer doc.deinit();
     try parseDocForBench(&doc, working, mode);
 
-    const start = std.time.nanoTimestamp();
+    const start = nowNs(io);
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         _ = doc.queryOneRuntime(selector) catch null;
     }
-    const end = std.time.nanoTimestamp();
+    const end = nowNs(io);
 
-    return @intCast(end - start);
+    return elapsedNs(start, end);
 }
 
 /// Benchmarks cached-selector query execution over a pre-parsed document.
-pub fn runQueryCached(path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
+pub fn runQueryCached(io: std.Io, path: []const u8, selector: []const u8, iterations: usize, mode: BenchMode) !u64 {
     const alloc = std.heap.smp_allocator;
 
-    const input = try std.fs.cwd().readFileAlloc(alloc, path, std.math.maxInt(usize));
+    const input = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .unlimited);
     defer alloc.free(input);
 
     const working = try alloc.dupe(u8, input);
@@ -150,38 +159,36 @@ pub fn runQueryCached(path: []const u8, selector: []const u8, iterations: usize,
     defer doc.deinit();
     try parseDocForBench(&doc, working, mode);
 
-    const start = std.time.nanoTimestamp();
+    const start = nowNs(io);
     var i: usize = 0;
     while (i < iterations) : (i += 1) {
         _ = doc.queryOneCached(&sel);
     }
-    const end = std.time.nanoTimestamp();
+    const end = nowNs(io);
 
-    return @intCast(end - start);
+    return elapsedNs(start, end);
 }
 
 /// CLI entrypoint for parser/query benchmarking utilities.
-pub fn main() !void {
-    const alloc = std.heap.smp_allocator;
-
-    const args = try std.process.argsAlloc(alloc);
-    defer std.process.argsFree(alloc, args);
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (args.len == 1) {
-        try runSynthetic();
+        try runSynthetic(io);
         return;
     }
 
     if (args.len == 4 and std.mem.eql(u8, args[1], "query-parse")) {
         const iterations = try std.fmt.parseInt(usize, args[3], 10);
-        const total_ns = try runQueryParse(args[2], iterations);
+        const total_ns = try runQueryParse(io, args[2], iterations);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
 
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-match")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryMatch(args[2], args[3], iterations, .fastest);
+        const total_ns = try runQueryMatch(io, args[2], args[3], iterations, .fastest);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -189,14 +196,14 @@ pub fn main() !void {
     if (args.len == 6 and std.mem.eql(u8, args[1], "query-match")) {
         const mode = try parseMode(args[2]);
         const iterations = try std.fmt.parseInt(usize, args[5], 10);
-        const total_ns = try runQueryMatch(args[3], args[4], iterations, mode);
+        const total_ns = try runQueryMatch(io, args[3], args[4], iterations, mode);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
 
     if (args.len == 5 and std.mem.eql(u8, args[1], "query-cached")) {
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runQueryCached(args[2], args[3], iterations, .fastest);
+        const total_ns = try runQueryCached(io, args[2], args[3], iterations, .fastest);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -204,7 +211,7 @@ pub fn main() !void {
     if (args.len == 6 and std.mem.eql(u8, args[1], "query-cached")) {
         const mode = try parseMode(args[2]);
         const iterations = try std.fmt.parseInt(usize, args[5], 10);
-        const total_ns = try runQueryCached(args[3], args[4], iterations, mode);
+        const total_ns = try runQueryCached(io, args[3], args[4], iterations, mode);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -212,7 +219,7 @@ pub fn main() !void {
     if (args.len == 5 and std.mem.eql(u8, args[1], "parse")) {
         const mode = try parseMode(args[2]);
         const iterations = try std.fmt.parseInt(usize, args[4], 10);
-        const total_ns = try runParseFile(args[3], iterations, mode);
+        const total_ns = try runParseFile(io, args[3], iterations, mode);
         std.debug.print("{d}\n", .{total_ns});
         return;
     }
@@ -226,6 +233,6 @@ pub fn main() !void {
     }
 
     const iterations = try std.fmt.parseInt(usize, args[2], 10);
-    const total_ns = try runParseFile(args[1], iterations, .fastest);
+    const total_ns = try runParseFile(io, args[1], iterations, .fastest);
     std.debug.print("{d}\n", .{total_ns});
 }

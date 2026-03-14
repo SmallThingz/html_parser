@@ -14,7 +14,7 @@ pub const TextOptions = struct {
     normalize_whitespace: bool = true,
 
     /// Formats text extraction options for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("TextOptions{{normalize_whitespace={}}}", .{self.normalize_whitespace});
     }
 };

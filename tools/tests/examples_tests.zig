@@ -171,8 +171,8 @@ test "example parity: instrumentation hooks" {
     var hooks: Hooks = .{};
 
     var input = "<div><span id='x'></span></div>".*;
-    try html.parseWithHooks(&doc, &input, .{}, &hooks);
-    _ = try html.queryOneRuntimeWithHooks(&doc, "span#x", &hooks);
+    try html.parseWithHooks(std.testing.io, &doc, &input, .{}, &hooks);
+    _ = try html.queryOneRuntimeWithHooks(std.testing.io, &doc, "span#x", &hooks);
 
     try std.testing.expectEqual(@as(usize, 1), hooks.parse_start_calls);
     try std.testing.expectEqual(@as(usize, 1), hooks.parse_end_calls);

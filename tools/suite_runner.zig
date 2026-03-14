@@ -55,8 +55,8 @@ fn printJsonStringArray(writer: anytype, items: []const []const u8) !void {
     try writer.writeByte(']');
 }
 
-fn runSelectorIds(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, selector: []const u8) !void {
-    const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
+fn runSelectorIds(io: std.Io, alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, selector: []const u8) !void {
+    const input = try std.Io.Dir.cwd().readFileAlloc(io, fixture_path, alloc, .unlimited);
     defer alloc.free(input);
 
     const working = try alloc.dupe(u8, input);
@@ -76,15 +76,15 @@ fn runSelectorIds(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []con
         }
     }
 
-    var out_buf = std.ArrayList(u8).empty;
-    defer out_buf.deinit(alloc);
-    try printJsonStringArray(out_buf.writer(alloc), out_ids.items);
-    try out_buf.append(alloc, '\n');
-    try std.fs.File.stdout().writeAll(out_buf.items);
+    var out_buf: std.Io.Writer.Allocating = .init(alloc);
+    defer out_buf.deinit();
+    try printJsonStringArray(&out_buf.writer, out_ids.items);
+    try out_buf.writer.writeByte('\n');
+    try std.Io.File.stdout().writeStreamingAll(io, out_buf.written());
 }
 
-fn runSelectorCount(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, selector: []const u8) !void {
-    const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
+fn runSelectorCount(io: std.Io, alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, selector: []const u8) !void {
+    const input = try std.Io.Dir.cwd().readFileAlloc(io, fixture_path, alloc, .unlimited);
     defer alloc.free(input);
 
     const working = try alloc.dupe(u8, input);
@@ -100,14 +100,14 @@ fn runSelectorCount(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []c
         count += 1;
     }
 
-    var out_buf = std.ArrayList(u8).empty;
-    defer out_buf.deinit(alloc);
-    try out_buf.writer(alloc).print("{d}\n", .{count});
-    try std.fs.File.stdout().writeAll(out_buf.items);
+    var out_buf: std.Io.Writer.Allocating = .init(alloc);
+    defer out_buf.deinit();
+    try out_buf.writer.print("{d}\n", .{count});
+    try std.Io.File.stdout().writeStreamingAll(io, out_buf.written());
 }
 
-fn runSelectorCountScopeTag(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, scope_tag: []const u8, selector: []const u8) !void {
-    const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
+fn runSelectorCountScopeTag(io: std.Io, alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8, scope_tag: []const u8, selector: []const u8) !void {
+    const input = try std.Io.Dir.cwd().readFileAlloc(io, fixture_path, alloc, .unlimited);
     defer alloc.free(input);
 
     const working = try alloc.dupe(u8, input);
@@ -125,14 +125,14 @@ fn runSelectorCountScopeTag(alloc: std.mem.Allocator, mode: ParseMode, fixture_p
         }
     }
 
-    var out_buf = std.ArrayList(u8).empty;
-    defer out_buf.deinit(alloc);
-    try out_buf.writer(alloc).print("{d}\n", .{count});
-    try std.fs.File.stdout().writeAll(out_buf.items);
+    var out_buf: std.Io.Writer.Allocating = .init(alloc);
+    defer out_buf.deinit();
+    try out_buf.writer.print("{d}\n", .{count});
+    try std.Io.File.stdout().writeStreamingAll(io, out_buf.written());
 }
 
-fn runParseTagsFile(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8) !void {
-    const input = try std.fs.cwd().readFileAlloc(alloc, fixture_path, std.math.maxInt(usize));
+fn runParseTagsFile(io: std.Io, alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []const u8) !void {
+    const input = try std.Io.Dir.cwd().readFileAlloc(io, fixture_path, alloc, .unlimited);
     defer alloc.free(input);
 
     const working = try alloc.dupe(u8, input);
@@ -150,11 +150,11 @@ fn runParseTagsFile(alloc: std.mem.Allocator, mode: ParseMode, fixture_path: []c
         try tags.append(alloc, n.name_or_text.slice(doc.source));
     }
 
-    var out_buf = std.ArrayList(u8).empty;
-    defer out_buf.deinit(alloc);
-    try printJsonStringArray(out_buf.writer(alloc), tags.items);
-    try out_buf.append(alloc, '\n');
-    try std.fs.File.stdout().writeAll(out_buf.items);
+    var out_buf: std.Io.Writer.Allocating = .init(alloc);
+    defer out_buf.deinit();
+    try printJsonStringArray(&out_buf.writer, tags.items);
+    try out_buf.writer.writeByte('\n');
+    try std.Io.File.stdout().writeStreamingAll(io, out_buf.written());
 }
 
 fn usage() noreturn {
@@ -166,41 +166,38 @@ fn usage() noreturn {
 }
 
 /// CLI entrypoint used by external-suite tooling to execute selector/parser probes.
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
-
-    const args = try std.process.argsAlloc(alloc);
-    defer std.process.argsFree(alloc, args);
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (args.len < 2) usage();
 
     if (std.mem.eql(u8, args[1], "selector-ids")) {
         if (args.len != 5) usage();
         const mode = parseMode(args[2]) orelse usage();
-        try runSelectorIds(alloc, mode, args[3], args[4]);
+        try runSelectorIds(io, alloc, mode, args[3], args[4]);
         return;
     }
 
     if (std.mem.eql(u8, args[1], "selector-count")) {
         if (args.len != 5) usage();
         const mode = parseMode(args[2]) orelse usage();
-        try runSelectorCount(alloc, mode, args[3], args[4]);
+        try runSelectorCount(io, alloc, mode, args[3], args[4]);
         return;
     }
 
     if (std.mem.eql(u8, args[1], "selector-count-scope-tag")) {
         if (args.len != 6) usage();
         const mode = parseMode(args[2]) orelse usage();
-        try runSelectorCountScopeTag(alloc, mode, args[3], args[4], args[5]);
+        try runSelectorCountScopeTag(io, alloc, mode, args[3], args[4], args[5]);
         return;
     }
 
     if (std.mem.eql(u8, args[1], "parse-tags-file")) {
         if (args.len != 4) usage();
         const mode = parseMode(args[2]) orelse usage();
-        try runParseTagsFile(alloc, mode, args[3]);
+        try runParseTagsFile(io, alloc, mode, args[3]);
         return;
     }
 

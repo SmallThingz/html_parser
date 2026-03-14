@@ -9,7 +9,7 @@ pub const Combinator = enum(u8) {
     sibling,
 
     /// Formats this combinator for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(@tagName(self));
     }
 };
@@ -25,7 +25,7 @@ pub const AttrOp = enum(u8) {
     dash_match,
 
     /// Formats this attribute operator for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(@tagName(self));
     }
 };
@@ -61,7 +61,7 @@ pub const Range = extern struct {
     }
 
     /// Formats this range for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Range{{start={}, len={}}}", .{ self.start, self.len });
     }
 };
@@ -74,7 +74,7 @@ pub const AttrSelector = extern struct {
     value: Range = .{},
 
     /// Formats this attribute selector for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll("AttrSelector{name=");
         try self.name.format(writer);
         try writer.print(", name_hash={}, op={s}, value=", .{ self.name_hash, @tagName(self.op) });
@@ -100,7 +100,7 @@ pub const NthExpr = extern struct {
     }
 
     /// Formats this nth expression for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("NthExpr{{a={}, b={}}}", .{ self.a, self.b });
     }
 };
@@ -112,7 +112,7 @@ pub const PseudoKind = enum(u8) {
     nth_child,
 
     /// Formats this pseudo kind for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(@tagName(self));
     }
 };
@@ -123,7 +123,7 @@ pub const Pseudo = extern struct {
     nth: NthExpr = .{ .a = 0, .b = 1 },
 
     /// Formats this pseudo selector for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Pseudo{{kind={s}, nth=", .{@tagName(self.kind)});
         try self.nth.format(writer);
         try writer.writeAll("}");
@@ -138,7 +138,7 @@ pub const NotKind = enum(u8) {
     attr,
 
     /// Formats this not-kind for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(@tagName(self));
     }
 };
@@ -150,7 +150,7 @@ pub const NotSimple = extern struct {
     attr: AttrSelector = .{ .name = .{}, .op = .exists, .value = .{} },
 
     /// Formats this `:not` predicate for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("NotSimple{{kind={s}, text=", .{@tagName(self.kind)});
         try self.text.format(writer);
         try writer.writeAll(", attr=");
@@ -183,7 +183,7 @@ pub const Compound = extern struct {
     not_len: u32 = 0,
 
     /// Formats this compound selector for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Compound{{combinator={s}, has_tag={}, tag=", .{ @tagName(self.combinator), self.has_tag });
         try self.tag.format(writer);
         try writer.print(", tag_key={}, has_id={}, id=", .{ self.tag_key, self.has_id });
@@ -210,7 +210,7 @@ pub const Group = extern struct {
     compound_len: u32,
 
     /// Formats this selector group for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("Group{{compound_start={}, compound_len={}}}", .{ self.compound_start, self.compound_len });
     }
 };
@@ -249,7 +249,7 @@ pub const Selector = struct {
     }
 
     /// Formats this selector summary for human-readable output.
-    pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print(
             "Selector{{source=\"{s}\", requires_parent={}, groups={}, compounds={}, classes={}, attrs={}, pseudos={}, not_items={}}}",
             .{
