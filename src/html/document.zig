@@ -531,7 +531,6 @@ pub const ParseOptions = struct {
                 return self.writeHtml(writer);
             }
 
-
             fn ensureQueryOneArena(noalias self: *DocSelf) *std.heap.ArenaAllocator {
                 if (self.query_one_arena == null) {
                     self.query_one_arena = std.heap.ArenaAllocator.init(self.allocator);
